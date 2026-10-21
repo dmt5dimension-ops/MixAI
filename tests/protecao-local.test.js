@@ -5,7 +5,8 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const http = require("node:http");
+const { spawn, spawnSync } = require("node:child_process");
 
 const RAIZ = path.resolve(__dirname, "..");
 const PASTA = path.join(RAIZ, "local");
@@ -28,32 +29,79 @@ function ollamaFalso(dir, codigo = 0) {
   return { comando: `node "${falso}"`, marca };
 }
 
-function rodar(entrada, env) {
-  return spawnSync(process.execPath, [RODAR], { input: entrada, encoding: "utf8", env: { ...process.env, ...env } });
+// Servidor falso do Ollama: responde /api/ps com o modelo carregado `naPlaca` (fração na placa)
+// e anota os pedidos de descarregar. Roda o rodar-local.js apontando para ele.
+async function rodar(entrada, env, naPlaca = 1) {
+  const descargas = [];
+  const servidor = http.createServer((req, res) => {
+    let corpo = "";
+    req.on("data", (d) => (corpo += d)).on("end", () => {
+      if (req.url === "/api/ps") {
+        res.end(JSON.stringify({ models: [{ name: "mixai-local:latest", size: 1000, size_vram: Math.round(1000 * naPlaca) }] }));
+      } else {
+        if (req.url === "/api/generate") descargas.push(JSON.parse(corpo));
+        res.end("{}");
+      }
+    });
+  });
+  await new Promise((ok) => servidor.listen(0, "127.0.0.1", ok));
+  const url = `http://127.0.0.1:${servidor.address().port}`;
+  try {
+    return await new Promise((ok) => {
+      const filho = spawn(process.execPath, [RODAR], { env: { ...process.env, MIXAI_OLLAMA_URL: url, ...env } });
+      let stdout = "";
+      let stderr = "";
+      filho.stdout.on("data", (d) => (stdout += d));
+      filho.stderr.on("data", (d) => (stderr += d));
+      filho.on("close", (status) => ok({ status, stdout, stderr, descargas }));
+      filho.stdin.end(entrada);
+    });
+  } finally {
+    servidor.close();
+  }
 }
 
-test("com pouca memória livre o modelo local nem é chamado e a tarefa sobe na escada", () => {
+test("com pouca memória livre o modelo local nem é chamado e a tarefa sobe na escada", async () => {
   const dir = pastaTemporaria();
   const { comando, marca } = ollamaFalso(dir);
-  const r = rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "100000" });
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "100000" });
   assert.notStrictEqual(r.status, 0, "a escada só passa adiante quando o local sai com erro");
   assert.match(r.stderr, /memória livre/i);
   assert.ok(!fs.existsSync(marca), "o Ollama não pode ser chamado com a memória no limite");
 });
 
-test("com memória suficiente a tarefa vai para o mixai-local e a resposta volta inteira", () => {
+test("com memória suficiente a tarefa vai para o mixai-local e a resposta volta inteira", async () => {
   const dir = pastaTemporaria();
   const { comando, marca } = ollamaFalso(dir);
-  const r = rodar("tarefa curta", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" });
+  const r = await rodar("tarefa curta", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(r.stdout, "TAREFA CURTA");
   assert.strictEqual(fs.readFileSync(marca, "utf8"), "run mixai-local");
 });
 
-test("se o Ollama falhar, o rodar-local também falha", () => {
+test("se parte do modelo foi para o processador, descarrega na hora e a tarefa sobe na escada", async () => {
+  // O num_gpu 99 pede a placa, mas sozinho não garante (revisão do Codex no PR #11).
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, 0.4);
+  assert.notStrictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, "", "resposta de modelo fora da placa não é entregue");
+  assert.match(r.stderr, /60% do modelo foi para o processador/);
+  assert.deepStrictEqual(r.descargas, [{ model: "mixai-local", keep_alive: 0 }]);
+});
+
+test("com o modelo inteiro na placa, nada é descarregado", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, 1);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.deepStrictEqual(r.descargas, []);
+});
+
+test("se o Ollama falhar, o rodar-local também falha", async () => {
   const dir = pastaTemporaria();
   const { comando } = ollamaFalso(dir, 1);
-  const r = rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" });
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" });
   assert.notStrictEqual(r.status, 0);
 });
 
@@ -73,20 +121,20 @@ function ollamaQueFalhaAntes(dir, falhas) {
   return { comando: `node "${falso}"`, vezes: () => Number(fs.readFileSync(contador, "utf8")) };
 }
 
-test("se a placa falhar por falta de espaço na primeira carga, tenta mais uma vez", () => {
+test("se a placa falhar por falta de espaço na primeira carga, tenta mais uma vez", async () => {
   // Visto no PC: logo depois de reiniciar o Ollama, a primeira carga falhou e a segunda funcionou.
   const dir = pastaTemporaria();
   const o = ollamaQueFalhaAntes(dir, 1);
-  const r = rodar("tarefa", { MIXAI_OLLAMA: o.comando, MIXAI_MEMORIA_MINIMA_GB: "0", MIXAI_ESPERA_MS: "10" });
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: o.comando, MIXAI_MEMORIA_MINIMA_GB: "0", MIXAI_ESPERA_MS: "10" });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(r.stdout, "ok");
   assert.strictEqual(o.vezes(), 2);
 });
 
-test("se a placa continuar sem espaço, desiste depois da segunda tentativa", () => {
+test("se a placa continuar sem espaço, desiste depois da segunda tentativa", async () => {
   const dir = pastaTemporaria();
   const o = ollamaQueFalhaAntes(dir, 5);
-  const r = rodar("tarefa", { MIXAI_OLLAMA: o.comando, MIXAI_MEMORIA_MINIMA_GB: "0", MIXAI_ESPERA_MS: "10" });
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: o.comando, MIXAI_MEMORIA_MINIMA_GB: "0", MIXAI_ESPERA_MS: "10" });
   assert.notStrictEqual(r.status, 0);
   assert.strictEqual(o.vezes(), 2);
 });

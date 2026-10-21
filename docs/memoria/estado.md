@@ -35,7 +35,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - Modelo local (2026-10-21): qwen2.5-coder:7b no Ollama, chamado sempre pelo nome `mixai-local`. O Claude usa pelas ferramentas do MCP `local-llm` (mcp-local-llm, instalado em `D:\MixAI-ferramentas\mcp-local-llm`, registrado no escopo de usuário do Claude Code). Modelos ficam em `D:\OllamaModels`.
 - Uso do modelo local: só tarefa mecânica e bem empacotada (rascunho de teste, extrair dados, resumir, reformatar). Teste com 5 tarefas reais: acertou 4. Errou classificar tamanho de tarefa (chamou tudo de "pequena"), então não usar para classificar nem decidir.
 - PC: RX 6600M 8 GB e 16 GB de RAM quase cheios. Acima de contexto 8192 o 7B não cabe.
-- Modelo local nunca no processador (2026-10-21): com a memória do Windows cheia, a placa não reservava espaço e o Ollama jogava o modelo no processador (8,2 GB de RAM, PC travado). Agora tudo passa por `local/rodar-local.js` (mínimo de 2 GB livres, em `local/protecao.json`), o `mixai-local` tem `num_gpu 99` e `num_gpu: 0` é proibido. Ver `orquestra/ESCADA.md`.
+- Modelo local nunca no processador (2026-10-21): com a memória do Windows cheia, a placa não reservava espaço e o Ollama jogava o modelo no processador (8,2 GB de RAM, PC travado). Agora tudo passa por `local/rodar-local.js` (mínimo de 2 GB livres, em `local/protecao.json`), o `mixai-local` tem `num_gpu 99`, o `rodar-local.js` descarrega o modelo se parte dele foi para o processador, e `num_gpu: 0` é proibido. O MCP `local-llm` não passa por essas proteções (só o `num_gpu 99`); ver `orquestra/ESCADA.md`.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
