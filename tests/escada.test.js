@@ -78,8 +78,8 @@ test("local erra, Codex resolve, vira regra, local acerta com a regra e a regra 
   // na próxima vez o local já recebe a regra e resolve sozinho
   const r2 = escada.resolver({
     entrada: "Converta a data 03/04/2026 para o formato ISO.", cabeNoLocal: true,
-    verificar: (s) => ({ ok: s.trim() === "2026-10-21" }), arquivos: f,
-    agentes: { local, superiores: [{ nome: "codex", chamar: () => { throw new Error("não devia subir"); } }] },
+    verificar: (s) => ({ ok: s.trim() === "2026-04-03" }), arquivos: f,
+    agentes: { local: (p) => (p.includes("Escreva sempre ano-mes-dia") ? "2026-04-03" : "errado"), superiores: [{ nome: "codex", chamar: () => { throw new Error("não devia subir"); } }] },
   });
   assert.strictEqual(r2.resolvidoPor, "local");
   assert.deepStrictEqual(r2.regrasUsadas, ["data-iso"]);
@@ -152,4 +152,29 @@ test("o caso guarda entrada, regra, saída e quem resolveu, e exporta no formato
   assert.deepStrictEqual(t.messages.map((m) => m.role), ["user", "assistant"]);
   assert.strictEqual(t.messages[0].content, ENTRADA);
   assert.strictEqual(t.messages[1].content, "2026-10-21");
+});
+
+test("sem verificador a escada se recusa a decidir", () => {
+  assert.throws(() => escada.resolver({ entrada: ENTRADA, cabeNoLocal: true, agentes: { local: () => "x", superiores: [] }, arquivos: pastaTemp() }), /verificador/);
+});
+
+test("regra com id repetido não sobrescreve a existente", () => {
+  const f = pastaTemp();
+  const codex = (p) => p.includes("REGRA")
+    ? JSON.stringify({ id: "data-iso", palavras: ["data"], regra: "Nova regra ano-mes-dia.", exemplo: { entrada: "a", saida: "b" } })
+    : "2026-10-21";
+  fs.writeFileSync(f.regras, JSON.stringify({ regras: [{ id: "data-iso", palavras: ["nada"], regra: "Antiga.", exemplo: { entrada: "a", saida: "b" }, status: "confirmada" }] }));
+  const r = escada.resolver({
+    entrada: ENTRADA, cabeNoLocal: true, verificar, arquivos: f,
+    agentes: { local: (p) => (p.includes("Nova regra") ? "2026-10-21" : "x"), superiores: [{ nome: "codex", chamar: codex }] },
+  });
+  assert.strictEqual(r.regraSalva, "data-iso-2");
+  const ids = JSON.parse(fs.readFileSync(f.regras, "utf8")).regras.map((x) => x.id);
+  assert.deepStrictEqual(ids, ["data-iso", "data-iso-2"]);
+});
+
+test("arquivo de regras corrompido dá erro em vez de ser apagado", () => {
+  const f = pastaTemp();
+  fs.writeFileSync(f.regras, "{quebrado");
+  assert.throws(() => escada.resolver({ entrada: ENTRADA, cabeNoLocal: true, verificar, arquivos: f, agentes: { local: () => "x", superiores: [] } }), /JSON inválido/);
 });

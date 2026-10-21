@@ -11,7 +11,7 @@ Ideia: tarefa bem delimitada tenta primeiro o modelo local (`mixai-local`, grát
 ## Como usar
 
 ```
-node orquestra/escada.js resolver tarefa.txt --cabe-no-local --verificar "node confere.js"
+node orquestra/escada.js resolver tarefa.txt --cabe-no-local --verificar "node confere.js"   # --verificar é obrigatório
 node orquestra/escada.js regras      # lista as regras salvas
 node orquestra/escada.js exportar    # gera orquestra/casos/treino.jsonl
 ```

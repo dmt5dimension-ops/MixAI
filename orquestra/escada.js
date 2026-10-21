@@ -19,14 +19,18 @@ function lerRegras(arquivo) {
     const dados = JSON.parse(fs.readFileSync(arquivo, 'utf8'));
     return Array.isArray(dados.regras) ? dados.regras : [];
   } catch (erro) {
-    if (erro instanceof SyntaxError) return [];
+    if (erro instanceof SyntaxError) throw new Error(`${arquivo} está com JSON inválido; conserte antes de continuar (nada foi apagado).`);
     throw erro;
   }
 }
 
 function salvarRegra(arquivo, regra) {
-  const regras = lerRegras(arquivo).filter((r) => r.id !== regra.id);
-  regras.push(regra);
+  const regras = lerRegras(arquivo);
+  const ids = new Set(regras.map((r) => r.id));
+  let id = regra.id;
+  for (let n = 2; ids.has(id); n += 1) id = `${regra.id}-${n}`; // nunca sobrescreve regra existente
+  regras.push({ ...regra, id });
+  regra.id = id;
   let aviso;
   try {
     aviso = JSON.parse(fs.readFileSync(arquivo, 'utf8')).aviso;
@@ -105,6 +109,7 @@ function tentar(chamar, prompt) {
 }
 
 function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS }) {
+  if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = (saida) => verificar(saida).ok === true;
   const usadas = escolherRegras(lerRegras(arquivos.regras), entrada);
   const ids = usadas.map((r) => r.id);
@@ -142,8 +147,10 @@ function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVO
       const funcionou = segunda !== null && ok(segunda);
       regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
       if (funcionou) {
-        salvarRegra(arquivos.regras, { ...regra, criadaEm: base.data, origem: nome });
-        regraSalva = regra.id;
+        const nova = { ...regra, criadaEm: base.data, origem: nome };
+        salvarRegra(arquivos.regras, nova);
+        regra = nova;
+        regraSalva = nova.id;
       }
     }
   }
@@ -154,11 +161,13 @@ function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVO
 
 function chamarComando(comando) {
   return (prompt) => {
-    const r = spawnSync(comando, { shell: true, input: prompt, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const r = spawnSync(comando, { shell: true, input: prompt, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, timeout: TEMPO_MAXIMO_MS });
     if (r.error || r.status !== 0) throw new Error(r.error?.message || r.stderr || `saiu com ${r.status}`);
     return r.stdout;
   };
 }
+
+const TEMPO_MAXIMO_MS = 10 * 60 * 1000;
 
 const COMANDOS = {
   local: 'ollama run mixai-local',
@@ -167,8 +176,7 @@ const COMANDOS = {
 };
 
 function verificadorPorComando(comando) {
-  if (!comando) return () => ({ ok: true });
-  return (saida) => ({ ok: spawnSync(comando, { shell: true, input: saida, encoding: 'utf8' }).status === 0 });
+  return (saida) => ({ ok: spawnSync(comando, { shell: true, input: saida, encoding: 'utf8', timeout: TEMPO_MAXIMO_MS }).status === 0 });
 }
 
 function exportar(arquivos = ARQUIVOS) {
@@ -189,15 +197,19 @@ function principal(argumentos) {
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] [--verificar "<comando que lê a resposta e sai 0 se estiver certa>"] | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');
+  if (iv < 0 || !resto[iv + 1]) {
+    console.error('Falta --verificar "<comando>": sem conferência automática a escada não sabe se a resposta está certa.');
+    return 2;
+  }
   const cfg = JSON.parse(fs.readFileSync(path.join(pasta, 'escada.json'), 'utf8'));
   const r = resolver({
     entrada: fs.readFileSync(path.resolve(alvo), 'utf8').trim(),
     cabeNoLocal: resto.includes('--cabe-no-local'),
-    verificar: verificadorPorComando(iv >= 0 ? resto[iv + 1] : null),
+    verificar: verificadorPorComando(resto[iv + 1]),
     agentes: {
       local: chamarComando(COMANDOS.local),
       superiores: cfg.superiores.map((nome) => ({ nome, chamar: chamarComando(COMANDOS[nome]) })),
