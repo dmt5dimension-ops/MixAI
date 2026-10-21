@@ -4,7 +4,7 @@
 // Quem decide se a tarefa "cabe no local" é o Claude (o 7B erra ao julgar tamanho de tarefa).
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const pasta = __dirname;
 const ARQUIVOS = {
@@ -99,26 +99,26 @@ function paraTreino(caso) {
   return { messages: [{ role: 'user', content: caso.entrada }, { role: 'assistant', content: caso.saida }] };
 }
 
-function tentar(chamar, prompt) {
+async function tentar(chamar, prompt) {
   try {
-    const saida = chamar(prompt);
+    const saida = await chamar(prompt);
     return typeof saida === 'string' ? saida.trim() : null;
   } catch (erro) {
     return null; // sem cota ou falha: o chamador tenta o próximo
   }
 }
 
-function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS }) {
+async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS }) {
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
-  const ok = (saida) => verificar(saida).ok === true;
+  const ok = async (saida) => (await verificar(saida)).ok === true;
   const usadas = escolherRegras(lerRegras(arquivos.regras), entrada);
   const ids = usadas.map((r) => r.id);
   const base = { entrada, data: new Date().toISOString() };
   let saidaLocal = null;
 
   if (cabeNoLocal) {
-    saidaLocal = tentar(agentes.local, montarPrompt(entrada, usadas));
-    if (saidaLocal !== null && ok(saidaLocal)) {
+    saidaLocal = await tentar(agentes.local, montarPrompt(entrada, usadas));
+    if (saidaLocal !== null && (await ok(saidaLocal))) {
       registrarCaso(arquivos.casos, { ...base, regra: usadas[0] || null, regrasUsadas: ids, saida: saidaLocal, resolvidoPor: 'local' });
       return { ok: true, resolvidoPor: 'local', saida: saidaLocal, regrasUsadas: ids, regraSalva: null };
     }
@@ -128,8 +128,8 @@ function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVO
   let chamarSuperior = null;
   let saida = null;
   for (const s of agentes.superiores) {
-    const tentativa = tentar(s.chamar, montarPrompt(entrada, []));
-    if (tentativa !== null && ok(tentativa)) {
+    const tentativa = await tentar(s.chamar, montarPrompt(entrada, []));
+    if (tentativa !== null && (await ok(tentativa))) {
       nome = s.nome;
       chamarSuperior = s.chamar;
       saida = tentativa;
@@ -141,10 +141,10 @@ function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVO
   let regra = null;
   let regraSalva = null;
   if (cabeNoLocal && saidaLocal !== null) {
-    const candidata = lerRegraGerada(tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
+    const candidata = lerRegraGerada(await tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
     if (candidata) {
-      const segunda = tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
-      const funcionou = segunda !== null && ok(segunda);
+      const segunda = await tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
+      const funcionou = segunda !== null && (await ok(segunda));
       regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
       if (funcionou) {
         const nova = { ...regra, criadaEm: base.data, origem: nome };
@@ -160,11 +160,17 @@ function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVO
 }
 
 function chamarComando(comando) {
-  return (prompt) => {
-    const r = spawnSync(comando, { shell: true, input: prompt, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, timeout: TEMPO_MAXIMO_MS });
-    if (r.error || r.status !== 0) throw new Error(r.error?.message || r.stderr || `saiu com ${r.status}`);
-    return r.stdout;
-  };
+  return (prompt) => new Promise((resolve, reject) => {
+    const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS });
+    let saida = '';
+    let erro = '';
+    filho.stdout.on('data', (d) => { saida += d; });
+    filho.stderr.on('data', (d) => { erro += d; });
+    filho.on('error', reject);
+    filho.on('close', (codigo) => (codigo === 0 ? resolve(saida) : reject(new Error(erro || `saiu com ${codigo}`))));
+    filho.stdin.on('error', () => {});
+    filho.stdin.end(prompt);
+  });
 }
 
 const TEMPO_MAXIMO_MS = 10 * 60 * 1000;
@@ -179,6 +185,59 @@ function verificadorPorComando(comando) {
   return (saida) => ({ ok: spawnSync(comando, { shell: true, input: saida, encoding: 'utf8', timeout: TEMPO_MAXIMO_MS }).status === 0 });
 }
 
+const MAX_CONTEXTO = 1500;
+
+function validarPlano(microtarefas) {
+  if (!Array.isArray(microtarefas) || microtarefas.length === 0) throw new Error('plano vazio: precisa de ao menos uma microtarefa.');
+  const ids = new Set();
+  for (const m of microtarefas) {
+    const nome = `microtarefa ${m && m.id}`;
+    if (!m || !m.id || ids.has(m.id)) throw new Error(`${nome}: id ausente ou repetido.`);
+    ids.add(m.id);
+    if (!String(m.instrucao || '').trim()) throw new Error(`${nome}: falta a instrução exata.`);
+    if (!String(m.verificar || '').trim()) throw new Error(`${nome}: falta o comando que confere o resultado.`);
+    if (!Array.isArray(m.escopo) || m.escopo.length === 0) throw new Error(`${nome}: falta o escopo (arquivos que pode tocar).`);
+    if (String(m.contexto || '').length > MAX_CONTEXTO) throw new Error(`${nome}: contexto grande demais (máx. ${MAX_CONTEXTO} caracteres); entregue só o que ela precisa.`);
+  }
+}
+
+const normaliza = (p) => path.resolve(String(p)).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const sobrepoe = (a, b) => a.some((x) => b.some((y) => {
+  const [p, q] = [normaliza(x), normaliza(y)];
+  return p === q || p.startsWith(q + '/') || q.startsWith(p + '/');
+}));
+
+function promptMicro(m) {
+  return [m.instrucao.trim(), m.contexto ? `Contexto:
+${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
+    .filter(Boolean).join('\n');
+}
+
+// O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
+// Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
+async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, arquivos = ARQUIVOS }) {
+  validarPlano(microtarefas);
+  if (!Number.isInteger(paralelismo) || paralelismo < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
+  const limite = paralelismo;
+  const resultados = new Map();
+  const pendentes = [...microtarefas];
+  const rodando = new Map();
+
+  while (pendentes.length || rodando.size) {
+    while (rodando.size < limite) {
+      const i = pendentes.findIndex((m) => ![...rodando.keys()].some((r) => sobrepoe(r.escopo, m.escopo)));
+      if (i < 0) break;
+      const [m] = pendentes.splice(i, 1);
+      const feito = resolver({ entrada: promptMicro(m), cabeNoLocal: true, verificar: verificadorDe(m), agentes, arquivos })
+        .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
+        .then((r) => { resultados.set(m.id, { id: m.id, ...r }); rodando.delete(m); });
+      rodando.set(m, feito);
+    }
+    await Promise.race(rodando.values());
+  }
+  return microtarefas.map((m) => resultados.get(m.id));
+}
+
 function exportar(arquivos = ARQUIVOS) {
   const linhas = lerCasos(arquivos.casos).map((c) => JSON.stringify(paraTreino(c)));
   fs.mkdirSync(path.dirname(arquivos.treino), { recursive: true });
@@ -186,18 +245,34 @@ function exportar(arquivos = ARQUIVOS) {
   return linhas.length;
 }
 
-function principal(argumentos) {
+async function principal(argumentos) {
   const [comando, alvo, ...resto] = argumentos;
   if (comando === 'exportar') {
     console.log(`${exportar()} exemplos escritos em ${ARQUIVOS.treino}`);
     return 0;
+  }
+  if (comando === 'lote' && alvo) {
+    const ip = resto.indexOf('--paralelo');
+    const cfgLote = JSON.parse(fs.readFileSync(path.join(pasta, 'escada.json'), 'utf8'));
+    const microtarefas = JSON.parse(fs.readFileSync(path.resolve(alvo), 'utf8'));
+    const resultados = await lote({
+      microtarefas,
+      verificadorDe: (m) => verificadorPorComando(m.verificar),
+      paralelismo: ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
+      agentes: {
+        local: chamarComando(COMANDOS.local),
+        superiores: cfgLote.superiores.map((nome) => ({ nome, chamar: chamarComando(COMANDOS[nome]) })),
+      },
+    });
+    for (const r of resultados) console.log(`${r.id}: ${r.ok ? `ok (${r.resolvidoPor})` : 'FALHOU'}`);
+    return resultados.every((r) => r.ok) ? 0 : 1;
   }
   if (comando === 'regras') {
     for (const r of lerRegras(ARQUIVOS.regras)) console.log(`${r.id} [${r.status}]: ${r.regra}`);
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');
@@ -206,7 +281,7 @@ function principal(argumentos) {
     return 2;
   }
   const cfg = JSON.parse(fs.readFileSync(path.join(pasta, 'escada.json'), 'utf8'));
-  const r = resolver({
+  const r = await resolver({
     entrada: fs.readFileSync(path.resolve(alvo), 'utf8').trim(),
     cabeNoLocal: resto.includes('--cabe-no-local'),
     verificar: verificadorPorComando(resto[iv + 1]),
@@ -224,13 +299,11 @@ function principal(argumentos) {
   return 0;
 }
 
-module.exports = { escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
-  try {
-    process.exitCode = principal(process.argv.slice(2));
-  } catch (erro) {
+  principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
     console.error(`Erro na escada: ${erro.message}`);
     process.exitCode = 1;
-  }
+  });
 }
