@@ -176,10 +176,32 @@ test("CODEX.md confere as chaves de API sem mostrar o valor", () => {
   assert.match(texto, /Test-Path "Env:\$n"/);
 });
 
-test("trava e guarda forçam a saída em UTF-8 (no Windows o padrão é cp1252 e estraga nomes com acento)", () => {
-  for (const arquivo of ["trava_de_escopo.py", "guarda_testes.py"]) {
-    const texto = fs.readFileSync(path.resolve(__dirname, "..", ".github", "scripts", arquivo), "utf8");
-    assert.match(texto, /sys\.stdout\.reconfigure\(encoding="utf-8"\)/, arquivo);
-    assert.match(texto, /sys\.stderr\.reconfigure\(encoding="utf-8"\)/, arquivo);
-  }
+test("com a saída padrão em cp1252 (Windows), a trava e o guarda ainda imprimem o nome com acento em UTF-8", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escopo-enc-"));
+  const git = (...args) => execFileSync("git", args, { cwd: dir });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  fs.mkdirSync(path.join(dir, "tests"));
+  fs.writeFileSync(path.join(dir, "tests", "ação.test.js"), "x");
+  fs.writeFileSync(path.join(dir, "base.txt"), "x");
+  git("add", ".");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD").toString().trim();
+  fs.rmSync(path.join(dir, "tests", "ação.test.js"));
+  fs.mkdirSync(path.join(dir, "src"));
+  fs.writeFileSync(path.join(dir, "src", "ação.js"), "y");
+  git("add", "-A");
+  git("commit", "-qm", "mudanca");
+  const head = git("rev-parse", "HEAD").toString().trim();
+  const evento = path.join(dir, "..", path.basename(dir) + "-evento.json");
+  fs.writeFileSync(evento, JSON.stringify({ pull_request: { body: escopo("outro/"), labels: [] } }));
+  const env = { ...process.env, GITHUB_EVENT_PATH: evento, PYTHONIOENCODING: "cp1252", PYTHONUTF8: "0" };
+  const scripts = path.resolve(__dirname, "..", ".github", "scripts");
+  const trava = spawnSync(PYTHON, [path.join(scripts, "trava_de_escopo.py"), base, head], { cwd: dir, env, encoding: "buffer" });
+  assert.strictEqual(trava.status, 1);
+  assert.ok(trava.stdout.toString("utf8").includes("src/ação.js"), trava.stdout.toString("utf8"));
+  const guarda = spawnSync(PYTHON, [path.join(scripts, "guarda_testes.py"), base, head], { cwd: dir, env, encoding: "buffer" });
+  assert.strictEqual(guarda.status, 1);
+  assert.ok(guarda.stdout.toString("utf8").includes("tests/ação.test.js"), guarda.stdout.toString("utf8"));
 });
