@@ -110,6 +110,19 @@ async function tentar(chamar, prompt) {
   }
 }
 
+// O grande resolveu depois de o local errar: pede a regra, deixa o local tentar de novo com ela e só salva se ele acertar.
+async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data }) {
+  const candidata = lerRegraGerada(await tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
+  if (!candidata) return { regra: null, regraSalva: null };
+  const segunda = await tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
+  const funcionou = segunda !== null && (await ok(segunda));
+  const regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
+  if (!funcionou) return { regra, regraSalva: null };
+  const nova = { ...regra, criadaEm: data, origem: nome };
+  salvarRegra(arquivos.regras, nova);
+  return { regra: nova, regraSalva: nova.id };
+}
+
 async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS }) {
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
@@ -143,18 +156,7 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   let regra = null;
   let regraSalva = null;
   if (cabeNoLocal && saidaLocal !== null) {
-    const candidata = lerRegraGerada(await tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
-    if (candidata) {
-      const segunda = await tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
-      const funcionou = segunda !== null && (await ok(segunda));
-      regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
-      if (funcionou) {
-        const nova = { ...regra, criadaEm: base.data, origem: nome };
-        salvarRegra(arquivos.regras, nova);
-        regra = nova;
-        regraSalva = nova.id;
-      }
-    }
+    ({ regra, regraSalva } = await aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data: base.data }));
   }
 
   registrarCaso(arquivos.casos, { ...base, regra, regrasUsadas: ids, saida, resolvidoPor: nome });
@@ -232,12 +234,13 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
     return { ok: false, motivo: 'nenhum outro agente grande disponível para conferir (sem cota?); sem checagem antagônica a resposta não vale' };
   };
 
-  const concluir = (saida, resolvidoPor, tentativas, antagonista) => {
+  const ok = async (saida) => (await verificar(saida)).ok === true;
+  const concluir = (saida, resolvidoPor, tentativas, antagonista, regra = null, regraSalva = null) => {
     if (erradas.length && verificarComando) {
       registrarCaso(arquivos.falhas, { ...base, saidasErradas: erradas.map((e) => e.saida), motivos: erradas.map((e) => e.motivo), saidaCerta: saida, verificar: verificarComando, resolvidoPor });
     }
-    registrarCaso(arquivos.casos, { ...base, regra: usadas[0] || null, regrasUsadas: usadas.map((r) => r.id), saida, resolvidoPor });
-    return { ok: true, resolvidoPor, saida, tentativas, antagonista };
+    registrarCaso(arquivos.casos, { ...base, regra: regra || usadas[0] || null, regrasUsadas: usadas.map((r) => r.id), saida, resolvidoPor });
+    return { ok: true, resolvidoPor, saida, tentativas, antagonista, regraSalva };
   };
 
   let instrucao = entrada;
@@ -263,7 +266,13 @@ Instrução do revisor: ${dica}`; break; }
     const saida = await tentar(s.chamar, montarPrompt(entrada, []));
     if (saida === null) continue;
     const j = await julgar(saida, s.nome);
-    if (j.ok) return concluir(saida, s.nome, maxTentativas, j.antagonista);
+    if (j.ok) {
+      const ultimaDoLocal = erradas.filter((e) => e.saida).pop();
+      const aprendida = ultimaDoLocal
+        ? await aprenderRegra({ entrada, saidaLocal: ultimaDoLocal.saida, saida, nome: s.nome, chamarSuperior: s.chamar, usadas, ok, agentes, arquivos, data: base.data })
+        : { regra: null, regraSalva: null };
+      return concluir(saida, s.nome, maxTentativas, j.antagonista, aprendida.regra, aprendida.regraSalva);
+    }
     erradas.push({ saida, motivo: j.motivo });
   }
   registrarCaso(arquivos.pendentes, { ...base, saidasErradas: erradas.map((e) => e.saida), motivos: erradas.map((e) => e.motivo), verificar: verificarComando });

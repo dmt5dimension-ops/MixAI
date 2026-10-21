@@ -364,3 +364,19 @@ test("loop: com --antagonico, sem nenhum outro grande para conferir a resposta n
   assert.strictEqual(r.ok, false);
   assert.strictEqual(escada.lerCasos(f.pendentes).length, 1);
 });
+
+test("loop: quando o grande resolve depois do local errar, a regra também é aprendida e salva", async () => {
+  const f = pastaTemp();
+  const codex = (p) => {
+    if (p.includes("REINSTRUIR")) return "dica";
+    if (p.includes("REGRA")) return JSON.stringify({ id: "alfa-regra", palavras: ["alfa"], regra: "REGRA-X: devolva alfa em minúsculas.", exemplo: { entrada: "beta", saida: "beta" } });
+    return "alfa";
+  };
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 2,
+    agentes: { local: (p) => (p.includes("REGRA-X") ? "alfa" : "x"), superiores: [{ nome: "codex", chamar: codex }] },
+  });
+  assert.strictEqual(r.resolvidoPor, "codex");
+  assert.strictEqual(r.regraSalva, "alfa-regra");
+  assert.strictEqual(JSON.parse(fs.readFileSync(f.regras, "utf8")).regras[0].status, "confirmada");
+});
