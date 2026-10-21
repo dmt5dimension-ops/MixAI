@@ -15,39 +15,58 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$kit = Join-Path $PSScriptRoot 'modelos'
+# A lista do que vai para o outro repo fica em kit-arquivos.json; os arquivos saem deste proprio repo.
+$origem = Split-Path $PSScriptRoot
+$kit = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'kit-arquivos.json')) | ConvertFrom-Json
 
 function Write-Passo($texto) { Write-Host "`n==> $texto" -ForegroundColor Cyan }
 function Write-Ok($texto)    { Write-Host "    ok: $texto" -ForegroundColor Green }
 function Write-Aviso($texto) { Write-Host "    atencao: $texto" -ForegroundColor Yellow }
 
-$Repo = (Resolve-Path $Repo).Path
-git -C $Repo rev-parse --is-inside-work-tree *> $null
-if ($LASTEXITCODE -ne 0) { throw "$Repo nao e um repositorio Git." }
-
-Write-Passo "Copiando modelos para $Repo"
-$arquivos = Get-ChildItem $kit -Recurse -File -Force
-foreach ($arq in $arquivos) {
-    $relativo = $arq.FullName.Substring($kit.Length + 1)
+function Copiar-Arquivo($de, $relativo) {
     $destino = Join-Path $Repo $relativo
     New-Item -ItemType Directory -Force -Path (Split-Path $destino) | Out-Null
     if ((Test-Path $destino) -and -not $Sobrescrever) {
         $alternativo = [IO.Path]::Combine((Split-Path $destino), [IO.Path]::GetFileNameWithoutExtension($destino) + '.orquestrador' + [IO.Path]::GetExtension($destino))
-        Copy-Item $arq.FullName $alternativo -Force
+        Copy-Item $de $alternativo -Force
         Write-Aviso "$relativo ja existia; a versao do kit foi salva ao lado como $(Split-Path $alternativo -Leaf). Junte os dois a mao."
     } else {
-        Copy-Item $arq.FullName $destino -Force
+        Copy-Item $de $destino -Force
         Write-Ok $relativo
     }
 }
+
+$Repo = (Resolve-Path $Repo).Path
+git -C $Repo rev-parse --is-inside-work-tree *> $null
+if ($LASTEXITCODE -ne 0) { throw "$Repo nao e um repositorio Git." }
+
+Write-Passo "Copiando regras e portoes para $Repo"
+foreach ($item in $kit.copiar) {
+    $caminho = Join-Path $origem $item
+    if (-not (Test-Path $caminho)) { throw "O kit manda copiar $item, mas ele nao existe em $origem." }
+    if ($item.EndsWith('/')) {
+        $base = (Resolve-Path $caminho).Path.TrimEnd('\', '/')
+        foreach ($arq in Get-ChildItem $base -Recurse -File -Force) {
+            Copiar-Arquivo $arq.FullName ($item + $arq.FullName.Substring($base.Length + 1).Replace('\', '/'))
+        }
+    } else {
+        Copiar-Arquivo $caminho $item
+    }
+}
+Copiar-Arquivo (Join-Path $origem $kit.memoriaVazia.de) $kit.memoriaVazia.para
 
 if ($ComandoTeste) {
     $agents = Join-Path $Repo 'AGENTS.md'
     if (Test-Path $agents) {
         $texto = [IO.File]::ReadAllText($agents)
-        $texto = $texto.Replace('<COMANDO_DE_TESTE>', $ComandoTeste)
-        [IO.File]::WriteAllText($agents, $texto, (New-Object Text.UTF8Encoding $false))
-        Write-Ok "comando de teste gravado no AGENTS.md: $ComandoTeste"
+        $ancora = [regex]$kit.ancoraComandoTeste
+        if ($ancora.IsMatch($texto)) {
+            $texto = $ancora.Replace($texto, '${1}' + $ComandoTeste.Replace('$', '$$') + '${3}', 1)
+            [IO.File]::WriteAllText($agents, $texto, (New-Object Text.UTF8Encoding $false))
+            Write-Ok "comando de teste gravado no AGENTS.md: $ComandoTeste"
+        } else {
+            Write-Aviso 'nao achei a secao do comando de teste no AGENTS.md; grave o comando a mao.'
+        }
     }
 }
 
@@ -70,7 +89,8 @@ try {
         @('feito-por:codex',   '10A37F', 'Implementado pelo Codex'),
         @('revisado-por:claude', 'F0B39B', 'Revisao adversaria feita pelo Claude Code'),
         @('revisado-por:codex',  '7FD1B9', 'Revisao adversaria feita pelo Codex'),
-        @('permitir-remocao-de-teste', 'B60205', 'Libera apagar ou pular teste neste PR (so voce deve usar)')
+        @('permitir-remocao-de-teste', 'B60205', 'Libera apagar ou pular teste neste PR (so voce deve usar)'),
+        @('permitir-fora-do-escopo', 'B60205', 'Libera mexer fora do escopo declarado neste PR (so voce deve usar)')
     )
     foreach ($l in $labels) {
         gh label create $l[0] --color $l[1] --description $l[2] --force | Out-Null

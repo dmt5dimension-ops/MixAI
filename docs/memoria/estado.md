@@ -12,6 +12,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) | `tests/modelo-local.test.js` |
 | Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) | tests/papeis.test.js |
 | Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
+| Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) | `tests/preparar-repo.test.js` |
 
 ## Em andamento
 
@@ -19,7 +20,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Apps a trazer para o sistema (`/integrar-app`)
 
-- 3D Maker / criador de sólidos e gráficos paramétricos mecânicos
+- **LangGraphicus** (primeiro da fila, decidido pelo dono em 2026-10-21): app de criar sólidos conversando e poder editar. O código está só no PC do dono; nada dele está no GitHub ainda. Primeiro passo em casa: `ferramentas\preparar-repo.ps1 -Repo <pasta do LangGraphicus>`, depois `/integrar-app`.
 - App de atendimento
 - Fluxo de e-mail (hoje com bugs e lento)
 
@@ -37,3 +38,5 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
+- O `AGENTS.md` copiado pelo kit cita `orquestra/` e `local/`, que só existem no MixAI. No repo de outro app esses comandos não existem; falta decidir se ele chama os scripts pela pasta do MixAI ou se o kit passa a levar essas pastas.
+- O `preparar-repo.ps1` não foi rodado num Windows de verdade depois do conserto (a sessão na nuvem não tem PowerShell). Rodar uma vez numa pasta de teste antes de usar no LangGraphicus.
