@@ -1,0 +1,16 @@
+{
+  "dia": {
+    "modelo": "qwen2.5-coder:7b",
+    "contexto": 4096,
+    "nucleos": 4,
+    "manterNaMemoria": "2m",
+    "prioridade": "BelowNormal"
+  },
+  "noite": {
+    "modelo": "qwen2.5-coder:7b",
+    "contexto": 8192,
+    "nucleos": 8,
+    "manterNaMemoria": "30m",
+    "prioridade": "Normal"
+  }
+}
