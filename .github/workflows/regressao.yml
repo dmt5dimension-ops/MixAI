@@ -1,0 +1,57 @@
+# Roda a suite de regressao inteira em todo PR e em todo push na branch principal.
+# O comando vem da variavel do repositorio REGRESSION_CMD (Settings > Secrets and variables > Actions > Variables).
+# Sem a variavel, tenta adivinhar: npm test (package.json) ou pytest (pyproject.toml / requirements.txt).
+name: regressao
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regressao-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regressao:
+    name: regressao
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: lts/*
+
+      - uses: actions/setup-python@v5
+        if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        with:
+          python-version: '3.12'
+
+      - name: Suite de regressao
+        env:
+          REGRESSION_CMD: ${{ vars.REGRESSION_CMD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REGRESSION_CMD:-}" ]; then
+            echo "Rodando: $REGRESSION_CMD"
+            bash -c "$REGRESSION_CMD"
+          elif [ -f package.json ]; then
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+            npm test
+          elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            if [ -f pyproject.toml ]; then pip install -e ".[test]" || pip install -e .; fi
+            pip install pytest
+            pytest
+          else
+            echo "Nao sei rodar os testes deste repo. Defina a variavel REGRESSION_CMD."
+            exit 1
+          fi

@@ -1,0 +1,9 @@
+{
+  "name": "mixai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Projeto orquestrado por Claude Code e Codex",
+  "scripts": {
+    "test": "node --test"
+  }
+}
