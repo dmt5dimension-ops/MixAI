@@ -19,7 +19,7 @@ node orquestra/escada.js exportar    # gera orquestra/casos/treino.jsonl
 ## Proteção do PC
 
 - O modelo local é chamado sempre por `node local/rodar-local.js` (a escada e o `chamar.js` já fazem isso). Ele confere a memória livre do Windows antes de carregar o modelo. Abaixo do mínimo de `local/protecao.json` (2 GB), ele não chama o Ollama e sai com erro, e a tarefa sobe para o Codex.
-- O `mixai-local` é criado com `num_gpu 99`, que pede o modelo inteiro na placa de vídeo. Como isso sozinho não garante, o `rodar-local.js` confere depois de cada resposta (`/api/ps`). Se parte do modelo foi para o processador, ele descarrega na hora, não entrega a resposta e sai com erro. No processador o modelo ocupou 8,2 GB de RAM e travou o PC.
+- O `mixai-local` é criado com `num_gpu 99`, que pede o modelo inteiro na placa de vídeo. Como isso sozinho não garante, o `rodar-local.js` primeiro carrega o modelo sem tarefa e confere onde ele ficou (`/api/ps`). Se parte do modelo foi para o processador, ou se não der para conferir, ele descarrega na hora e sai com erro sem rodar a tarefa. No processador o modelo ocupou 8,2 GB de RAM e travou o PC.
 - **O MCP `local-llm` não tem essas proteções.** Ele chama o Ollama direto, sem conferir a memória e sem conferir a placa; vale só o `num_gpu 99`. Use o MCP só para pedido avulso e curto, e o `rodar-local.js` (escada) para trabalho em série.
 - **Proibido** mandar `num_gpu: 0` (ou qualquer opção que tire o modelo da placa) pela API do Ollama ou no Modelfile. Um teste (`tests/protecao-local.test.js`) recusa isso em `orquestra/` e `local/`.
 - O log do servidor fica em `%LOCALAPPDATA%\Ollama\mixai-servidor.log` (recriado a cada `local\modo.ps1`). Procure `offloaded` para ver se o modelo foi para a placa.

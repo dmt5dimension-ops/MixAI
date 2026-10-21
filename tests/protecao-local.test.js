@@ -29,31 +29,43 @@ function ollamaFalso(dir, codigo = 0) {
   return { comando: `node "${falso}"`, marca };
 }
 
-// Servidor falso do Ollama: responde /api/ps com o modelo carregado `naPlaca` (fração na placa)
-// e anota os pedidos de descarregar. Roda o rodar-local.js apontando para ele.
-async function rodar(entrada, env, naPlaca = 1) {
-  const descargas = [];
+// Servidor falso do Ollama. Opções: naPlaca (fração do modelo na placa), falhasCarga (quantas cargas
+// falham por falta de espaço), psStatus (código HTTP do /api/ps), semModelo (/api/ps sem o mixai-local).
+// Anota os pedidos feitos ao /api/generate (carregar e descarregar). Roda o rodar-local.js apontando para ele.
+async function rodar(entrada, env, opcoes = {}) {
+  const { naPlaca = 1, falhasCarga = 0, psStatus = 200, semModelo = false } = opcoes;
+  const pedidos = [];
   const servidor = http.createServer((req, res) => {
     let corpo = "";
     req.on("data", (d) => (corpo += d)).on("end", () => {
       if (req.url === "/api/ps") {
-        res.end(JSON.stringify({ models: [{ name: "mixai-local:latest", size: 1000, size_vram: Math.round(1000 * naPlaca) }] }));
-      } else {
-        if (req.url === "/api/generate") descargas.push(JSON.parse(corpo));
-        res.end("{}");
+        res.statusCode = psStatus;
+        if (psStatus !== 200) return res.end(JSON.stringify({ error: "falha" }));
+        const models = semModelo ? [] : [{ name: "mixai-local:latest", size: 1000, size_vram: Math.round(1000 * naPlaca) }];
+        return res.end(JSON.stringify({ models }));
       }
+      if (req.url === "/api/generate") {
+        const pedido = JSON.parse(corpo);
+        pedidos.push(pedido);
+        const cargas = pedidos.filter((p) => p.keep_alive === undefined).length;
+        if (pedido.keep_alive === undefined && cargas <= falhasCarga) {
+          res.statusCode = 500;
+          return res.end(JSON.stringify({ error: "llama-server reported out-of-memory during startup: failed to allocate Vulkan0 buffer" }));
+        }
+      }
+      res.end("{}");
     });
   });
   await new Promise((ok) => servidor.listen(0, "127.0.0.1", ok));
   const url = `http://127.0.0.1:${servidor.address().port}`;
   try {
     return await new Promise((ok) => {
-      const filho = spawn(process.execPath, [RODAR], { env: { ...process.env, MIXAI_OLLAMA_URL: url, ...env } });
+      const filho = spawn(process.execPath, [RODAR], { env: { ...process.env, MIXAI_OLLAMA_URL: url, MIXAI_ESPERA_MS: "10", ...env } });
       let stdout = "";
       let stderr = "";
       filho.stdout.on("data", (d) => (stdout += d));
       filho.stderr.on("data", (d) => (stderr += d));
-      filho.on("close", (status) => ok({ status, stdout, stderr, descargas }));
+      filho.on("close", (status) => ok({ status, stdout, stderr, pedidos }));
       filho.stdin.end(entrada);
     });
   } finally {
@@ -61,82 +73,85 @@ async function rodar(entrada, env, naPlaca = 1) {
   }
 }
 
-test("com pouca memória livre o modelo local nem é chamado e a tarefa sobe na escada", async () => {
+const CARREGAR = { model: "mixai-local" };
+const DESCARREGAR = { model: "mixai-local", keep_alive: 0 };
+
+test("com pouca memória livre o modelo local nem é carregado e a tarefa sobe na escada", async () => {
   const dir = pastaTemporaria();
   const { comando, marca } = ollamaFalso(dir);
   const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "100000" });
   assert.notStrictEqual(r.status, 0, "a escada só passa adiante quando o local sai com erro");
   assert.match(r.stderr, /memória livre/i);
+  assert.deepStrictEqual(r.pedidos, [], "nada pode ser carregado com a memória no limite");
   assert.ok(!fs.existsSync(marca), "o Ollama não pode ser chamado com a memória no limite");
 });
 
-test("com memória suficiente a tarefa vai para o mixai-local e a resposta volta inteira", async () => {
+test("com memória suficiente o modelo carrega na placa, roda a tarefa e a resposta volta inteira", async () => {
   const dir = pastaTemporaria();
   const { comando, marca } = ollamaFalso(dir);
   const r = await rodar("tarefa curta", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(r.stdout, "TAREFA CURTA");
   assert.strictEqual(fs.readFileSync(marca, "utf8"), "run mixai-local");
+  assert.deepStrictEqual(r.pedidos, [CARREGAR], "carrega uma vez e não descarrega");
 });
 
-test("se parte do modelo foi para o processador, descarrega na hora e a tarefa sobe na escada", async () => {
-  // O num_gpu 99 pede a placa, mas sozinho não garante (revisão do Codex no PR #11).
+test("se parte do modelo foi para o processador, descarrega ANTES de rodar a tarefa", async () => {
+  // Revisão do Codex no PR #11: o num_gpu 99 pede a placa, mas sozinho não garante,
+  // e conferir só depois deixava a tarefa rodar no processador.
   const dir = pastaTemporaria();
-  const { comando } = ollamaFalso(dir);
-  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, 0.4);
+  const { comando, marca } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, { naPlaca: 0.4 });
   assert.notStrictEqual(r.status, 0);
-  assert.strictEqual(r.stdout, "", "resposta de modelo fora da placa não é entregue");
+  assert.strictEqual(r.stdout, "");
   assert.match(r.stderr, /60% do modelo foi para o processador/);
-  assert.deepStrictEqual(r.descargas, [{ model: "mixai-local", keep_alive: 0 }]);
+  assert.ok(!fs.existsSync(marca), "a tarefa não pode rodar com o modelo fora da placa");
+  assert.deepStrictEqual(r.pedidos, [CARREGAR, DESCARREGAR]);
 });
 
-test("com o modelo inteiro na placa, nada é descarregado", async () => {
+test("se o /api/ps responder com erro, não confia e não roda a tarefa", async () => {
+  // Revisão do Codex no PR #11: erro HTTP com JSON virava lista vazia e a resposta era entregue.
   const dir = pastaTemporaria();
-  const { comando } = ollamaFalso(dir);
-  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, 1);
-  assert.strictEqual(r.status, 0, r.stderr);
-  assert.deepStrictEqual(r.descargas, []);
+  const { comando, marca } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, { psStatus: 500 });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /não deu para conferir/);
+  assert.ok(!fs.existsSync(marca));
+  assert.deepStrictEqual(r.pedidos, [CARREGAR, DESCARREGAR]);
 });
 
-test("se o Ollama falhar, o rodar-local também falha", async () => {
+test("se o /api/ps não mostrar o mixai-local carregado, não roda a tarefa", async () => {
+  const dir = pastaTemporaria();
+  const { comando, marca } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, { semModelo: true });
+  assert.notStrictEqual(r.status, 0);
+  assert.ok(!fs.existsSync(marca));
+});
+
+test("se o Ollama falhar ao rodar a tarefa, o rodar-local também falha", async () => {
   const dir = pastaTemporaria();
   const { comando } = ollamaFalso(dir, 1);
   const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" });
   assert.notStrictEqual(r.status, 0);
 });
 
-// Um "ollama" falso que falha por falta de espaço na placa nas primeiras `falhas` chamadas.
-function ollamaQueFalhaAntes(dir, falhas) {
-  const contador = path.join(dir, "vezes.txt");
-  const falso = path.join(dir, "ollama-instavel.js");
-  fs.writeFileSync(falso, `
-    const fs = require("node:fs");
-    const n = (fs.existsSync(${JSON.stringify(contador)}) ? Number(fs.readFileSync(${JSON.stringify(contador)}, "utf8")) : 0) + 1;
-    fs.writeFileSync(${JSON.stringify(contador)}, String(n));
-    let e = ""; process.stdin.on("data", (d) => (e += d)).on("end", () => {
-      if (n <= ${falhas}) { process.stderr.write("Error: llama-server reported out-of-memory during startup: failed to allocate Vulkan0 buffer"); process.exit(1); }
-      process.stdout.write("ok"); process.exit(0);
-    });
-  `);
-  return { comando: `node "${falso}"`, vezes: () => Number(fs.readFileSync(contador, "utf8")) };
-}
-
-test("se a placa falhar por falta de espaço na primeira carga, tenta mais uma vez", async () => {
+test("se a placa falhar por falta de espaço na primeira carga, tenta carregar mais uma vez", async () => {
   // Visto no PC: logo depois de reiniciar o Ollama, a primeira carga falhou e a segunda funcionou.
   const dir = pastaTemporaria();
-  const o = ollamaQueFalhaAntes(dir, 1);
-  const r = await rodar("tarefa", { MIXAI_OLLAMA: o.comando, MIXAI_MEMORIA_MINIMA_GB: "0", MIXAI_ESPERA_MS: "10" });
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, { falhasCarga: 1 });
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.strictEqual(r.stdout, "ok");
-  assert.strictEqual(o.vezes(), 2);
+  assert.strictEqual(r.stdout, "TAREFA");
+  assert.deepStrictEqual(r.pedidos, [CARREGAR, CARREGAR]);
 });
 
-test("se a placa continuar sem espaço, desiste depois da segunda tentativa", async () => {
+test("se a placa continuar sem espaço, desiste depois da segunda carga e não roda a tarefa", async () => {
   const dir = pastaTemporaria();
-  const o = ollamaQueFalhaAntes(dir, 5);
-  const r = await rodar("tarefa", { MIXAI_OLLAMA: o.comando, MIXAI_MEMORIA_MINIMA_GB: "0", MIXAI_ESPERA_MS: "10" });
+  const { comando, marca } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "0" }, { falhasCarga: 5 });
   assert.notStrictEqual(r.status, 0);
-  assert.strictEqual(o.vezes(), 2);
+  assert.deepStrictEqual(r.pedidos, [CARREGAR, CARREGAR]);
+  assert.ok(!fs.existsSync(marca));
 });
 
 test("o mínimo de memória livre padrão fica em local/protecao.json", () => {
