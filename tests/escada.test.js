@@ -329,3 +329,28 @@ test("loop: limite de tentativas inválido é recusado", async () => {
     await assert.rejects(() => escada.resolverComLoop({ entrada: "x", verificar: () => ({ ok: true }), maxTentativas: m, agentes: { local: () => "x", superiores: [] }, arquivos: pastaTemp() }), /tentativas/);
   }
 });
+
+test("loop: antagonista sem resposta passa para o próximo grande e só 'OK' isolado aprova", async () => {
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: pastaTemp(), maxTentativas: 1, antagonico: true,
+    agentes: {
+      local: () => "alfa",
+      superiores: [
+        { nome: "codex", chamar: (p) => { if (p.includes("ANTAGONISTA")) throw new Error("usage limit"); return "alfa"; } },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK, mas PROBLEMA: esqueceu o caso vazio" : "alfa") },
+      ],
+    },
+  });
+  assert.notStrictEqual(r.resolvidoPor, "local");
+});
+
+test("lote: pedir tentativas usa o loop e registra a falha resolvida", async () => {
+  const f = pastaTemp();
+  const [res] = await escada.lote({
+    microtarefas: [micro("a")], verificadorDe: () => (s) => (s.trim() === "a" ? { ok: true } : { ok: false, motivo: "não é a" }),
+    paralelismo: 1, maxTentativas: 1, arquivos: f,
+    agentes: { local: () => "x", superiores: [{ nome: "codex", chamar: (p) => (p.includes("REINSTRUIR") ? "dica" : "a") }] },
+  });
+  assert.strictEqual(res.resolvidoPor, "codex");
+  assert.strictEqual(escada.lerCasos(f.falhas).length, 1);
+});

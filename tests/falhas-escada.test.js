@@ -8,10 +8,15 @@ const { lerCasos } = require(path.resolve(__dirname, "..", "orquestra", "escada.
 
 const ARQUIVO = path.resolve(__dirname, "..", "orquestra", "falhas", "falhas.jsonl");
 
-test("toda falha registrada continua tendo uma resposta certa que passa no verificador", () => {
+test("existe ao menos um caso permanente (senão este teste não confere nada)", () => {
+  assert.ok(lerCasos(ARQUIVO).length >= 1);
+});
+
+test("toda falha registrada: a resposta certa passa no verificador e as erradas continuam reprovadas", () => {
+  const rodar = (falha, saida) => spawnSync(falha.verificar, { shell: true, input: saida, encoding: "utf8", cwd: path.resolve(__dirname, "..") }).status;
   for (const falha of lerCasos(ARQUIVO)) {
     assert.ok(falha.verificar, `falha sem comando de verificação: ${falha.entrada}`);
-    const r = spawnSync(falha.verificar, { shell: true, input: falha.saidaCerta, encoding: "utf8", cwd: path.resolve(__dirname, "..") });
-    assert.strictEqual(r.status, 0, `a resposta certa deixou de passar em "${falha.verificar}" (${falha.entrada})`);
+    assert.strictEqual(rodar(falha, falha.saidaCerta), 0, `a resposta certa deixou de passar em "${falha.verificar}"`);
+    for (const errada of falha.saidasErradas) assert.notStrictEqual(rodar(falha, errada), 0, `o verificador passou a aceitar a resposta errada "${errada}"`);
   }
 });

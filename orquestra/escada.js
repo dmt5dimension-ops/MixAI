@@ -223,12 +223,13 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
     const v = await verificar(saida);
     if (v.ok !== true) return { ok: false, motivo: v.motivo || 'o verificador reprovou' };
     if (!antagonico) return { ok: true, antagonista: null };
-    const outro = supers.find((s) => s.nome !== produtor);
-    if (!outro) return { ok: true, antagonista: null };
-    const parecer = await tentar(outro.chamar, promptAntagonista(entrada, saida));
-    if (parecer === null) return { ok: true, antagonista: null }; // sem cota: vale só o verificador
-    if (/^\s*OK\b/i.test(parecer)) return { ok: true, antagonista: outro.nome };
-    return { ok: false, motivo: parecer };
+    for (const outro of supers.filter((x) => x.nome !== produtor)) {
+      const parecer = await tentar(outro.chamar, promptAntagonista(entrada, saida));
+      if (parecer === null) continue; // este não respondeu (sem cota): tenta o próximo
+      if (/^\s*OK\s*[.!]?\s*$/i.test(parecer)) return { ok: true, antagonista: outro.nome };
+      return { ok: false, motivo: parecer };
+    }
+    return { ok: true, antagonista: null }; // nenhum outro grande respondeu: vale só o verificador
   };
 
   const concluir = (saida, resolvidoPor, tentativas, antagonista) => {
@@ -299,7 +300,7 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 
 // O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
-async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, maxTentativas = 1, antagonico = false, arquivos = ARQUIVOS }) {
+async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
   if (!Number.isInteger(paralelismo) || paralelismo < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
   const limite = paralelismo;
@@ -313,8 +314,8 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, max
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
-      const execucao = maxTentativas > 1 || antagonico
-        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes, maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
+      const execucao = maxTentativas !== undefined || antagonico
+        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
         : resolver({ entrada, cabeNoLocal: true, verificar: verificadorDe(m), agentes, arquivos });
       const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
@@ -347,7 +348,7 @@ async function principal(argumentos) {
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
       paralelismo: ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
-      maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : 1,
+      maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : undefined,
       antagonico: resto.includes('--antagonico'),
       agentes: {
         local: chamarComando(COMANDOS.local),
