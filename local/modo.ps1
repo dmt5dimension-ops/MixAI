@@ -40,14 +40,7 @@ $vigia = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList @(
 Set-Content $arquivoVigia $vigia.Id
 Get-Process 'ollama', 'ollama app' -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = $config.prioridade }
 
-# Nome fixo "mixai-local" apontando para o modelo do modo (não baixa nem copia nada).
-$modelfile = Join-Path $env:TEMP 'mixai-local.Modelfile'
-@"
-FROM $($config.modelo)
-PARAMETER num_ctx $($config.contexto)
-PARAMETER num_thread $($config.nucleos)
-"@ | Set-Content $modelfile -Encoding ascii
-ollama create mixai-local -f $modelfile | Out-Null
-Remove-Item $modelfile
+# Nome fixo "mixai-local" apontando para o modelo do modo. Para com erro se o Ollama falhar.
+& (Join-Path $PSScriptRoot 'criar-apelido.ps1') -Modelo $config.modelo -Contexto $config.contexto -Nucleos $config.nucleos
 
 Write-Host "Modo $Modo ligado: $($config.modelo), $($config.nucleos) nucleos, contexto $($config.contexto), prioridade $($config.prioridade)."

@@ -42,7 +42,11 @@ As regras completas estão no `AGENTS.md`, que você já lê sozinho. As que mai
 O sistema roda só com as assinaturas. Nada de chave de API.
 
 1. **Login pela assinatura.** Rode `codex login status`. Tem que dizer que está logado com ChatGPT. Se disser API key, rode `codex logout` e depois `codex login`, escolhendo "Sign in with ChatGPT".
-2. **Nenhuma chave no ambiente.** Confira se existem as variáveis `OPENAI_API_KEY` ou `CODEX_API_KEY` (no PowerShell: `Get-ChildItem Env:*API_KEY*`). Se existirem, diga ao dono e passe o comando para remover:
+2. **Nenhuma chave no ambiente.** Confira só se as variáveis existem, sem mostrar o valor (nunca imprima o conteúdo de uma chave, nem em log nem na resposta). No PowerShell:
+   ```powershell
+   foreach ($n in 'OPENAI_API_KEY','CODEX_API_KEY') { if (Test-Path "Env:$n") { "$n existe" } else { "$n nao existe" } }
+   ```
+   Se alguma existir, diga ao dono quais e passe o comando para remover, uma linha por variável:
    `[Environment]::SetEnvironmentVariable('OPENAI_API_KEY', $null, 'User')`
 3. **Travar o login na assinatura.** No arquivo `~/.codex/config.toml` (no Windows, `%USERPROFILE%\.codex\config.toml`), garanta a linha:
    ```toml
