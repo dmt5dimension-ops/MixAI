@@ -24,6 +24,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Decisões
 
+- Dossiê de orquestração (2026-10-21, `docs/pesquisa/dossie-orquestracao-2026-10-21.md`): matriz provisória por tipo de tarefa, com fonte, verificação e confiança. Inclui o Qwen2.5-Coder 7B local e uma proposta de receitas verificáveis, escalada e treino posterior; não altera `orquestra/papeis.json`. Decisões de promoção dependem de pilotos locais e revisão cruzada.
 - Comparativo Claude x Codex (2026-10-21, `docs/memoria/comparativo-2026-10-21.md`): ordem dos papéis mantida; quem revisa o Codex procura mudança de comportamento que ninguém pediu.
 - Papéis trocáveis (2026-10-21): detectar falta de cota pelo texto da mensagem de limite; pausar por 5 horas; o modelo local nunca planeja nem revisa.
 - Claude planeja e revisa; Codex executa. Tamanho da tarefa define o esforço (`--effort low/medium/high`).
