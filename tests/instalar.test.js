@@ -44,3 +44,43 @@ test("primeiro-pedido.md proibe merge e apagar teste", () => {
   assert.match(texto, /Ninguém faz merge/);
   assert.match(texto, /Nunca apague nem pule teste/);
 });
+
+// Roda o instalador de verdade com winget/npm falsos que falham. Precisa de PowerShell (o ubuntu-latest
+// do CI tem) e de Linux/macOS, onde um script com shebang vira "comando" para o Get-Command.
+function rodarComFalsos(falsos, args) {
+  const { spawnSync } = require("node:child_process");
+  const os = require("node:os");
+  if (process.platform === "win32") return null;
+  const ps = ["pwsh"].find((c) => spawnSync(c, ["-NoProfile", "-Command", "exit 0"]).status === 0);
+  if (!ps) return null;
+  const quem = spawnSync("sh", ["-c", `command -v ${ps}`], { encoding: "utf8" }).stdout.trim();
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "falsos-"));
+  for (const [nome, codigo] of Object.entries(falsos)) {
+    const arq = path.join(bin, nome);
+    fs.writeFileSync(arq, `#!/bin/sh\nexit ${codigo}\n`);
+    fs.chmodSync(arq, 0o755);
+  }
+  const limpo = { PATH: bin, HOME: os.tmpdir() };
+  return spawnSync(quem, ["-NoProfile", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env: limpo });
+}
+
+test("se o winget falha, o instalador para e nao anuncia sucesso", () => {
+  const r = rodarComFalsos({ winget: 1 }, ["-PularOrchestrator", "-PularPlugins"]);
+  if (!r) return;
+  assert.notStrictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /winget nao conseguiu instalar/);
+  assert.doesNotMatch(r.stdout, /ok: git instalado|Falta voce fazer/);
+});
+
+test("se o npm falha ao instalar o Codex, o instalador para e nao anuncia sucesso", () => {
+  const r = rodarComFalsos({ winget: 0, git: 0, node: 0, gh: 0, claude: 0, npm: 1 }, ["-PularOrchestrator", "-PularPlugins"]);
+  if (!r) return;
+  assert.notStrictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /npm nao conseguiu instalar o Codex/);
+  assert.doesNotMatch(r.stdout, /ok: codex instalado|Falta voce fazer/);
+});
+
+test("o instalador confere o codigo de saida do winget e do npm", () => {
+  assert.match(instalar, /winget install[^\n]*\n\s*if \(\$LASTEXITCODE -ne 0\)/);
+  assert.match(instalar, /npm install -g @openai\/codex\s*\n\s*if \(\$LASTEXITCODE -ne 0\)/);
+});
