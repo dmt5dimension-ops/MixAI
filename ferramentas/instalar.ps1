@@ -36,6 +36,7 @@ function Install-ViaWinget($comando, $id) {
     }
     Write-Host "    instalando $id..."
     winget install -e --id $id --accept-source-agreements --accept-package-agreements --silent
+    if ($LASTEXITCODE -ne 0) { throw "winget nao conseguiu instalar $id (codigo $LASTEXITCODE). Veja a mensagem acima e rode de novo." }
     Update-Path
     if (Test-Comando $comando) { Write-Ok "$comando instalado" }
     else { Write-Aviso "$comando instalado, mas so aparece no PATH depois de abrir um novo terminal" }
@@ -77,6 +78,7 @@ if (Test-Comando 'codex') {
     Write-Ok 'codex ja instalado'
 } elseif (Test-Comando 'npm') {
     npm install -g @openai/codex
+    if ($LASTEXITCODE -ne 0) { throw "npm nao conseguiu instalar o Codex CLI (codigo $LASTEXITCODE). Veja a mensagem acima e rode de novo." }
     Update-Path
     Write-Ok 'codex instalado'
 } else {
