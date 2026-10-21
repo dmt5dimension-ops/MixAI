@@ -7,7 +7,7 @@
 1. **Claude Code** começa pedidos ambíguos, delimita escopo e divide trabalho. No único comparativo controlado do MixAI, ele respeitou melhor o pedido; isso é uma preferência local provisória, não uma vitória universal. [L1]
 2. **Codex** executa tarefas delimitadas e com prova objetiva, especialmente quando já existe uma skill especializada neste PC. Para interface, n8n e ESP32, a vantagem operacional atual é principalmente a disponibilidade dessas skills; ainda falta teste pareado que prove superioridade do modelo nessas áreas.
 3. **Revisão:** o agente diferente daquele que implementou revisa. Testes, verificações automáticas e, em firmware, execução no dispositivo continuam necessários. Nenhum placar geral substitui essa regra.
-4. **Modelo local atual:** `mixai-local` aponta para `qwen2.5-coder:7b`, com contexto de 4096 tokens de dia e 8192 à noite. Ele recebe somente trabalho mecânico e curto, e um agente principal confere a saída. O futuro LALA começa com o mesmo limite até passar por avaliação própria. [L2]
+4. **Modelo local atual:** o nome operacional `mixai-local` aponta para o **Qwen2.5-Coder 7B** (provavelmente o “QAIN 7B” mencionado pelo dono). O contexto configurado é 4096 tokens de dia e 8192 à noite. Ele recebe trabalho curto, delimitado e verificável; o futuro LALA começa pelo mesmo filtro até passar por avaliação própria. [L2][L3]
 
 Estas são regras de **encaminhamento no MixAI**, não afirmações de que um modelo seja intrinsecamente melhor em toda tarefa. O modelo, a versão da ferramenta, o acesso a ferramentas, a skill e o teste disponível mudam o resultado. Um estudo da Hugging Face encontrou 94% de sucesso para Claude Code/Sonnet 4.6 e 93% para Codex/GPT-5.5 nas mesmas tarefas quando ambos usaram a CLI `hf`; com a skill dessa CLI, os dois fizeram cerca de 30% menos chamadas de ferramenta, sem ganho claro de acerto. Isso ilustra por que ferramenta e skill precisam aparecer junto do nome do agente. [S3]
 
@@ -32,6 +32,35 @@ Estas são regras de **encaminhamento no MixAI**, não afirmações de que um mo
 - **Codex CLI 0.163.0:** a configuração local observada usa `gpt-6-sol` com esforço `high` por padrão. Estão instaladas skills como `frontend-design`, `code-review`, `react-native-best-practices`, as famílias `n8n-*` e `esp32-cyd-*`, `byd-cyd-can-copilot`, `esp32-cyd-firmware-copilot`, `fascilitando` e `parametric-3d-printing`. Disponibilidade **não** comprova vantagem; a skill deve ser carregada apenas quando seu assunto coincide com a tarefa. [L2]
 - **Sem skill** é uma opção deliberada para mudanças simples com testes claros. Skills são instruções e recursos para um fluxo específico; sobrecarregar o agente com muitas delas pode consumir contexto e até criar orientações conflitantes. [S2][S8]
 - Plugins e serviços externos dependem de conexão e permissões no momento de uso. Um nome instalado não garante que a ferramenta esteja acessível naquele turno.
+
+### O modelo local que existe hoje
+
+Em 21/10/2026, `ollama show mixai-local` identificou arquitetura Qwen2, **7,6 bilhões de parâmetros**, quantização **Q4_K_M**, arquivo de cerca de **4,7 GB** e `num_ctx` **4096**. `local/modos.json` na branch `ferramentas/modelo-local` prevê 8192 no modo noite. O modelo original anuncia janelas maiores, mas o limite **efetivo deste PC** é o configurado no Ollama; não se deve enviar um repositório inteiro a ele. Também estão instalados `harness-qwen25-coder:1.5b` (1,1 GB), `harness-openfugu:3b` (2,0 GB), `harness-nuextract:0.5b` e outros modelos. Estar instalado não significa estar qualificado para uma tarefa. [L2][L3][S11][S12]
+
+O teste anterior do MixAI teve **4 acertos em 5 tarefas reais** com o 7B; ele errou a classificação de tamanho, chamando tudo de “pequena”. Não há repetição suficiente para estimar uma taxa de sucesso. Por isso o agente principal decide o tamanho e o risco; o local apenas tenta a execução delimitada. [L2]
+
+Fiz um **piloto exploratório, uma execução por tarefa e modelo**, pela API local `/api/generate`, com temperatura 0, contexto 4096 e até 128 tokens de saída. Os identificadores observados foram `mixai-local:latest` (`b8b26704f98a`) e `harness-qwen25-coder:1.5b` (`7d0404c7ddfe`). O 7B e o 1,5B responderam corretamente às três perguntas após normalização simples; ambos cercaram o JSON com blocos Markdown, portanto **falharam no contrato de JSON puro**. A primeira chamada ao 7B recebeu HTTP 500 e funcionou na repetição. [L3]
+
+| Prompt exato do piloto | Critério | Observado nos dois modelos |
+| --- | --- | --- |
+| `Converta 03/04/2026 (dia/mês/ano) para ISO. Responda só AAAA-MM-DD.` | `2026-04-03` | Correto após a repetição da falha HTTP 500 do 7B. |
+| `Pedido: corrigir timeout na fila de e-mail. Encontrei também um botão com baixo contraste. O botão está dentro ou fora do escopo? Responda só dentro ou fora.` | `fora`, ignorando maiúsculas | Correto. |
+| `Leia: Ana abriu chamado em 21/10/2026. Erro: anexo vazio trava o envio. Retorne só JSON com chaves cliente, data_iso, erro.` | JSON puro com `Ana`, `2026-10-21` e erro citado | Conteúdo correto, **formato inválido** para parser estrito por causa de cercas Markdown. |
+
+São só três exemplos fáceis, sem teste de programação, sem repetições estatísticas e sem prova de que o 1,5B substitua o 7B. Para JSON, um piloto futuro deve usar o modo de [saída estruturada do Ollama](https://docs.ollama.com/capabilities/structured-outputs) e validar o esquema, em vez de confiar apenas na frase “responda só JSON”. [S12]
+
+| Bloco de trabalho | Lugar do 7B hoje | Porta para um modelo menor ou agente maior |
+| --- | --- | --- |
+| Extrair campos, classificar texto curto, reformatar uma saída sem ambiguidade | **Piloto local** com formato estruturado e verificador; para transformação determinística, preferir script sem modelo | Testar 1,5B no mesmo conjunto; subir se o formato ou conteúdo falhar. |
+| Resumir um arquivo curto ou listar fatos explícitos | **Piloto local**, exigindo trechos de origem e conferência de omissões | Subir se envolver interpretação, decisão ou contexto maior que a janela. |
+| Criar rascunho de texto, exemplo ou teste pequeno | **Piloto local** somente com critério de aceitação automático e revisão | Subir se o teste não provar comportamento ou houver mudança funcional. |
+| Entender pedido, definir escopo, planejar arquitetura ou estimar risco | **Não delegar agora**: falha local observada na classificação de tamanho | Claude ou Codex decide; futuro piloto separado pode reavaliar. |
+| Navegar repositório, código novo, API, banco, migração, RAG ou integração | **Inconclusivo**; dividir em subetapas curtas antes de qualquer tentativa local | Build, teste de contrato e revisão; se não houver prova objetiva, agente maior. |
+| Interface visual, CSS, acessibilidade, mobile e desktop | **Inconclusivo**; só rascunhos atômicos com captura e verificação visual disponíveis | Agente com ferramenta visual e revisão de uso real. |
+| Bug difícil, segurança, revisão de PR, CI, deploy e operação | **Não delegar decisão nem aprovação**; pode ajudar a extrair evidências | Codex/Claude executam ou revisam, conforme risco e regra de revisão cruzada. |
+| Firmware, protocolo, CAN e validação em hardware | **Não delegar conclusão**; pode formatar logs curtos | Simulador, serial e placa real; agente maior interpreta. |
+
+“Piloto” significa **elegível para experimento**, não liberação automática. O modelo menor instalado só entra na rota normal quando igualar o 7B no conjunto oculto da categoria, sem elevar violações de escopo nem retrabalho.
 
 ## Matriz de tarefas
 
@@ -115,6 +144,47 @@ Em “primeiro” aparece quem recebe a tarefa **neste projeto**; o agente alter
 5. **Troca por falta de cota:** seguir `orquestra/papeis.json`. O modelo local só produz rascunho mecânico curto, e o principal valida; ele nunca decide escopo, planeja ou revisa. Nenhum agente aprova o próprio PR. [L2]
 6. **Não automatizar vitória por categoria ainda:** esta matriz é um ponto de partida. Só alterar a ordem fixa dos papéis depois de pilotos locais com tarefas representativas, repetidas e avaliadas sem mostrar os testes de nota ao agente.
 
+## Como fazer o local aprender com cada tarefa
+
+O nome útil para o que o dono descreveu é **destilação de soluções em receitas verificáveis**. Uma receita reúne contrato, regra curta, exemplo e prova. Ela muda o comportamento **já na próxima execução** porque o orquestrador a recupera e inclui no pedido ao modelo; os pesos do Qwen permanecem iguais. **Treino de verdade** (por exemplo, LoRA) altera um adaptador do modelo e exige um lote limpo de casos, recursos de hardware e avaliação separada. São dois degraus diferentes. A memória de longo prazo e o estado por etapa do LangGraph podem organizar esse ciclo, mas a biblioteca não transforma sozinha uma solução em aprendizado correto. [S13][S14][S15]
+
+### Receita canônica por bloco
+
+Cada família de tarefa deve ter um arquivo de contrato versionado, legível por máquina e por gente. Exemplo de **formato proposto**, ainda não implementado:
+
+```json
+{
+  "id": "texto.extrair-chamado.v1",
+  "entrada": "relato curto, sem dados sensíveis",
+  "saida": { "cliente": "string", "data_iso": "AAAA-MM-DD", "erro": "string" },
+  "limites": { "arquivos_permitidos": [], "max_tokens": 128, "tempo_segundos": 30 },
+  "regra": "Extraia só fatos presentes; datas em dia/mês/ano viram ISO.",
+  "verificador": "JSON válido, campos exigidos e valores conferidos com a fonte",
+  "escalada": "seguir ordem configurada e cota atual",
+  "versao_do_modelo_e_prompt": "registrada em cada execução"
+}
+```
+
+O contrato real deve registrar também **proveniência**, arquivos de entrada permitidos, o que não fazer, exemplos positivos e negativos, versão da regra, versão do verificador, risco, resultado e revisão humana ou cruzada quando aplicável. A saída do modelo não pode escrever sua própria nota. Guardar entrada e resultado como dados separados do prompt facilita alterar a receita sem perder a rastreabilidade, como recomenda o desenho de estado do LangGraph. [S15]
+
+### Ciclo de promoção
+
+1. **Selecionar a etapa:** decompor o pedido em blocos pequenos. Se um script determinístico resolve com menos custo e erro, usar o script. O planejador decide se o bloco tem saída verificável e risco baixo o suficiente para o local; o 7B não classifica a própria tarefa. [L2]
+2. **Tentar o menor qualificado:** hoje, `mixai-local` somente nos blocos autorizados. O 1,5B pode disputar a vaga num piloto separado. Enviar só entrada, receita pertinente e contexto mínimo, nunca todo o histórico. Impor limite de tempo, saída e memória.
+3. **Conferir antes de aceitar:** rodar verificador independente, teste de regressão e, quando necessário, inspeção visual ou física. Falha, timeout, saída malformada ou resultado não verificável sobe para Codex/Claude. Distinguir “modelo errou” de “serviço local indisponível”.
+4. **Destilar a solução do agente maior:** guardar a resposta aprovada, a causa do erro local, uma regra curta e um exemplo que generalize. A regra entra primeiro como **candidata**. Testar no caso original **e em exemplos novos ocultos**, incluindo caso negativo e vizinhos que não devem mudar. Só então promover a “confirmada”; uma única repetição do mesmo caso mede memorização, não generalização.
+5. **Alimentar o corpus:** toda tarefa concluída pode gerar um **caso candidato**, mas só respostas verificadas, sem segredo nem dado sensível, entram no conjunto de treino. Deduplicar, registrar licença/origem, separar por projeto e reservar casos ocultos que nunca aparecem no prompt ou no treino. A regra e o exemplo ficam versionados; erro conhecido fica como contraexemplo, não como resposta certa.
+6. **Treinar apenas quando houver ganho demonstrável:** primeiro medir se regras e poucos exemplos bastam. Quando houver volume variado, usar ajuste supervisionado/LoRA em uma cópia do modelo e comparar **modelo base + regras** contra **modelo ajustado + mesmas regras** num conjunto oculto. Neste PC de 8 GB de VRAM, começar por um modelo menor pode ser mais realista; **não há teste de treino concluído aqui**. Nenhum adaptador substitui automaticamente o anterior. [S13][S14]
+7. **Promover ou recuar:** só mudar a rota se a nova versão mantiver acerto, escopo e segurança e reduzir chamadas pagas ou intervenção. Registrar versão de modelo, regra e teste para poder voltar à configuração anterior se piorar. A revisão cruzada de PR continua obrigatória.
+
+**Medir por categoria**, não por impressão: acerto em casos ocultos, violações de escopo, erros graves, chamadas a agentes pagos por tarefa aceita, tempo total, uso de RAM/VRAM, falhas do Ollama e trabalho manual para corrigir. O alvo é **menos cota por entrega correta**, não apenas mais respostas do modelo local. Regras podem ser aposentadas quando a versão do modelo ou do produto mudar.
+
+### Relação com a escada já em desenvolvimento
+
+A branch `sistema/escada-local` já implementa um protótipo: tentativa no `mixai-local`, verificador obrigatório, subida para Codex/Claude, geração de regra, repetição local, arquivo de regras e exportação de pares para treino futuro. Seus **13 testes passaram** em 21/10/2026; usam agentes simulados, portanto não demonstram sucesso do fluxo completo com as três CLIs reais. O próprio guia da branch diz que o treino LoRA e a ligação com a pausa por falta de cota ainda não foram feitos. [L3]
+
+Antes de deixar esse protótipo decidir rotas automaticamente, faltam ensaios reais com falha de serviço, conjunto oculto para promoção de regra, limpeza dos casos de treino, versão de receita/verificador e limite de quantas regras entram no contexto. A escolha atual por palavra contida no texto pode ativar regra errada; a verificação e os comandos externos precisam de execução controlada. Essas são **lacunas para tarefas futuras**, não mudanças feitas neste dossiê. O código dessa branch está sendo desenvolvido em paralelo e não foi alterado aqui.
+
 ## Experimentos que podem mudar a matriz
 
 Executar cada candidato na **mesma revisão inicial**, com **mesmo enunciado e acesso**, em cópias isoladas. Fazer pelo menos três rodadas por tarefa, incluir falhas e anotar versão do modelo, CLI, esforço, skills e ferramentas. Um teste oculto ou uma verificação externa deve avaliar a entrega; a frase “terminei” do agente não é prova. Esta separação é usada no estudo da Hugging Face e em um benchmark aberto de contexto entre Claude Code e Codex. [S3][S10]
@@ -135,6 +205,7 @@ Executar cada candidato na **mesma revisão inicial**, com **mesmo enunciado e a
 
 - [L1] [Comparativo MixAI, commit de 21/10/2026](https://github.com/dmt5dimension-ops/MixAI/blob/4ad493c/docs/memoria/comparativo-2026-10-21.md): uma rodada por agente, com testes ocultos; relato local, não publicação externa.
 - [L2] [Estado e regras da branch `sistema/papeis-trocaveis`](https://github.com/dmt5dimension-ops/MixAI/blob/4ad493c/docs/memoria/estado.md), `AGENTS.md`, `orquestra/papeis.json`, `local/modos.json` e inventário local de skills/CLIs consultado em 21/10/2026. O estado pode mudar antes do merge deste dossiê.
+- [L3] Inventário local `ollama list`/`ollama show mixai-local` e piloto exploratório descrito acima, executados em 21/10/2026; código e [guia da branch `sistema/escada-local`](https://github.com/dmt5dimension-ops/MixAI/blob/f7ddd69/orquestra/ESCADA.md), commit `f7ddd69`. Os testes usam substitutos dos agentes, não as CLIs reais.
 
 **Documentação oficial e estudos**
 
@@ -148,6 +219,11 @@ Executar cada candidato na **mesma revisão inicial**, com **mesmo enunciado e a
 - [S8] [OpenAI, skills e prompts para GPT-6 Astra](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra): limites de excesso de instruções e uso de skills específicas.
 - [S9] [Anthropic, Claude Opus 5.5](https://www.anthropic.com/claude-opus-5-5): resultados e casos publicados pelo próprio fornecedor; tratar como evidência de menor independência.
 - [S10] [Benchmark aberto de ciclo de contexto Claude/Codex](https://github.com/iannuttall/agent-context-benchmark): protocolo com avaliadores externos e três rodadas recomendado; não fornece vencedor universal.
+- [S11] [Qwen, ficha do Qwen2.5-Coder-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct): família, parâmetros, finalidade e limite do modelo original; não determina o contexto que cabe neste PC.
+- [S12] [Ollama, biblioteca Qwen2.5-Coder](https://ollama.com/library/qwen2.5-coder) e [referência do Modelfile](https://docs.ollama.com/modelfile): tamanhos publicados e parâmetro `num_ctx`. [Saída estruturada](https://docs.ollama.com/capabilities/structured-outputs) permite impor esquema JSON no serviço local.
+- [S13] [Hugging Face, PEFT e LoRA](https://huggingface.co/docs/peft/main/methods/overview): adaptar poucos parâmetros consome menos memória que ajuste completo, sem garantir a mesma qualidade. Exige treino separado do uso normal.
+- [S14] [Hugging Face, SFT Trainer](https://huggingface.co/docs/trl/sft_trainer): formato conversacional, integração com adaptadores e conjunto de avaliação para ajuste supervisionado.
+- [S15] [LangGraph, estado e transições](https://docs.langchain.com/oss/javascript/langgraph/thinking-in-langgraph) e [memória curta/longa](https://docs.langchain.com/oss/javascript/langgraph/add-memory): referências de desenho de fluxo; não provam que este projeto precise da biblioteca agora.
 
 **Comunidade: hipóteses, não placar**
 
