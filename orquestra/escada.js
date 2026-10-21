@@ -229,7 +229,7 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
       if (/^\s*OK\s*[.!]?\s*$/i.test(parecer)) return { ok: true, antagonista: outro.nome };
       return { ok: false, motivo: parecer };
     }
-    return { ok: true, antagonista: null }; // nenhum outro grande respondeu: vale só o verificador
+    return { ok: false, motivo: 'nenhum outro agente grande disponível para conferir (sem cota?); sem checagem antagônica a resposta não vale' };
   };
 
   const concluir = (saida, resolvidoPor, tentativas, antagonista) => {

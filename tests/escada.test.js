@@ -354,3 +354,13 @@ test("lote: pedir tentativas usa o loop e registra a falha resolvida", async () 
   assert.strictEqual(res.resolvidoPor, "codex");
   assert.strictEqual(escada.lerCasos(f.falhas).length, 1);
 });
+
+test("loop: com --antagonico, sem nenhum outro grande para conferir a resposta não vale", async () => {
+  const f = pastaTemp();
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 1, antagonico: true,
+    agentes: { local: () => "alfa", superiores: [{ nome: "codex", chamar: () => "alfa" }] },
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(escada.lerCasos(f.pendentes).length, 1);
+});
