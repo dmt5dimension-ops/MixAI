@@ -60,10 +60,30 @@ Tudo roda pelas CLIs logadas nas assinaturas (Claude Pro/Max e ChatGPT). Nunca c
 | Achar arquivos e entender o código antes de planejar | subagente `explorador` (modelo menor, só leitura) | Antes do plano |
 | Revisão adversária | O agente que **não** implementou: Claude com `/codex:adversarial-review` ou o subagente `revisor`, Codex revisando o diff | Todo PR |
 
+### Quando a cota de um acabar (papéis trocáveis)
+
+- A ordem de cada papel está em `orquestra/papeis.json`. `node orquestra/chamar.js quem` mostra quem faz o quê agora.
+- Detecção automática: quem chama outro agente (por `/codex:rescue`, `claude -p` ou `orquestra/chamar.js`) e recebe mensagem de limite ("usage limit", "rate limit reached", "session limit", "weekly limit") roda `node orquestra/chamar.js sem-cota <agente>` e segue com o próximo da ordem, sem perguntar ao dono.
+- Claude sem cota: o dono abre o Codex na pasta; o Codex planeja e revisa seguindo as mesmas regras e manda executar com `node orquestra/chamar.js executor <arquivo>`.
+- Codex sem cota: o Claude executa com o subagente `executor-leve` (tarefa pequena ou média) ou o modelo local (só tarefa mecânica de texto).
+- Revisão cruzada continua obrigatória: se só quem implementou tem cota, o PR espera; ninguém aprova o próprio trabalho.
+- Troca manual em um comando: `powershell -ExecutionPolicy Bypass -File orquestra\trocar.ps1 claude` (ou codex, local, normal).
+- O modelo local nunca planeja nem revisa.
+
 Regras de economia:
 - Cada executor recebe só o necessário: a tarefa, o escopo, o critério de pronto e o teste. Nada de despejar o projeto inteiro no contexto.
 - Quem planeja não implementa e quem implementa não planeja de novo.
 - Se uma tarefa falhar duas vezes, pare e devolva para o planejador quebrar em pedaços menores, em vez de insistir.
+
+### Quando mandar para o modelo local
+
+O modelo local (`mixai-local`, no Ollama do PC) não gasta cota de assinatura, mas é fraco. Quem decide mandar para ele é sempre o planejador.
+
+- **Pode mandar** só tarefa mecânica e bem empacotada: rascunho de teste, extrair dados de um texto, resumir, reformatar (lista, tabela, JSON).
+- **Nunca mande** para ele planejar, revisar, classificar o tamanho de uma tarefa ou decidir qualquer coisa. No teste com 5 tarefas reais ele chamou tudo de "pequena".
+- **Tem que caber no contexto:** a tarefa e o que ela precisa ler cabem em 4096 tokens no modo dia e 8192 no modo noite (`local/modos.json`, trocado por `local/modo.ps1`). Não cabe? Divida ou mande para outro executor.
+- **Sempre confira antes de usar:** quem mandou lê o resultado e, se virou código ou teste, roda `npm test`. Resultado do modelo local nunca entra em commit sem essa conferência.
+- **Se errar uma vez**, não insista: a tarefa vai para o subagente `executor-leve` ou para o Codex com `--effort low`.
 
 ## Revisão cruzada (obrigatória)
 
