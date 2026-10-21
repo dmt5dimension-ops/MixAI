@@ -45,23 +45,32 @@ test("primeiro-pedido.md proibe merge e apagar teste", () => {
   assert.match(texto, /Nunca apague nem pule teste/);
 });
 
-// Roda o instalador de verdade com winget/npm falsos que falham. Precisa de PowerShell (o ubuntu-latest
-// do CI tem) e de Linux/macOS, onde um script com shebang vira "comando" para o Get-Command.
+// Roda o instalador de verdade com winget/npm falsos que falham, em Linux, macOS e Windows
+// (no Windows os falsos sao .cmd). Precisa de PowerShell: o ubuntu-latest do CI e o Windows tem.
+// Sem PowerShell na maquina (ex.: sessao na nuvem sem pwsh) devolve null e valem so os testes estaticos.
+function achar(comando) {
+  const { spawnSync } = require("node:child_process");
+  const r = spawnSync(process.platform === "win32" ? "where" : "sh", process.platform === "win32" ? [comando] : ["-c", `command -v ${comando}`], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
+}
+
 function rodarComFalsos(falsos, args) {
   const { spawnSync } = require("node:child_process");
   const os = require("node:os");
-  if (process.platform === "win32") return null;
-  const ps = ["pwsh"].find((c) => spawnSync(c, ["-NoProfile", "-Command", "exit 0"]).status === 0);
+  const ps = (process.platform === "win32" ? ["pwsh", "powershell"] : ["pwsh"]).map(achar).find(Boolean);
   if (!ps) return null;
-  const quem = spawnSync("sh", ["-c", `command -v ${ps}`], { encoding: "utf8" }).stdout.trim();
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), "falsos-"));
   for (const [nome, codigo] of Object.entries(falsos)) {
-    const arq = path.join(bin, nome);
-    fs.writeFileSync(arq, `#!/bin/sh\nexit ${codigo}\n`);
-    fs.chmodSync(arq, 0o755);
+    if (process.platform === "win32") {
+      fs.writeFileSync(path.join(bin, `${nome}.cmd`), `@echo off\r\nexit /b ${codigo}\r\n`);
+    } else {
+      const arq = path.join(bin, nome);
+      fs.writeFileSync(arq, `#!/bin/sh\nexit ${codigo}\n`);
+      fs.chmodSync(arq, 0o755);
+    }
   }
-  const limpo = { PATH: bin, HOME: os.tmpdir() };
-  return spawnSync(quem, ["-NoProfile", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env: limpo });
+  const env = { ...process.env, PATH: bin, Path: bin };
+  return spawnSync(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env });
 }
 
 test("se o winget falha, o instalador para e nao anuncia sucesso", () => {
