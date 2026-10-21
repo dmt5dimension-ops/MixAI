@@ -93,3 +93,85 @@ test("label permitir-fora-do-escopo libera", () => {
   const r = rodar(["src/a.js", "src/b.js"], escopo("src/a.js"), ["permitir-fora-do-escopo"]);
   assert.strictEqual(r.codigo, 0, r.saida);
 });
+
+test("* nao entra em subpasta (src/*.css nao libera src/privado/segredo.css)", () => {
+  const r = rodar(["src/a.css", "src/privado/segredo.css"], escopo("src/*.css"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+  assert.match(r.saida, /src\/privado\/segredo\.css/);
+});
+
+test("** entra em subpastas", () => {
+  const r = rodar(["src/a.css", "src/privado/segredo.css"], escopo("src/**/*.css"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("testes *Tests.cs, *Tests.java e *Test.kt sempre podem mudar", () => {
+  const r = rodar(["src/a.js", "App/CalculoTests.cs", "src/CalculoTests.java", "src/CalculoTest.kt"], escopo("src/a.js"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("a trava e o guarda de testes reconhecem os mesmos arquivos de teste", () => {
+  const scripts = path.resolve(__dirname, "..", ".github", "scripts");
+  const padroes = (arquivo, nome) => {
+    const texto = fs.readFileSync(path.join(scripts, arquivo), "utf8");
+    const bloco = texto.slice(texto.indexOf(nome), texto.indexOf("\n)", texto.indexOf(nome)));
+    return [...bloco.matchAll(/^\s*r"\|?(.*?)"$/gm)].map((m) => m[1]).filter((p) => p !== "^docs/memoria/").sort();
+  };
+  const guarda = padroes("guarda_testes.py", "ARQUIVO_DE_TESTE");
+  const trava = padroes("trava_de_escopo.py", "SEMPRE_PERMITIDO");
+  assert.ok(guarda.length >= 5, "nao achei os padroes do guarda de testes");
+  assert.deepStrictEqual(trava, guarda);
+});
+
+test("lockfile em subpasta acompanha o package.json da mesma subpasta", () => {
+  const r = rodar(["app/package.json", "app/package-lock.json"], escopo("app/package.json"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("lockfile de outra pasta NAO acompanha o package.json listado", () => {
+  const r = rodar(["app/package.json", "outro/package-lock.json"], escopo("app/package.json"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+  assert.match(r.saida, /outro\/package-lock\.json/);
+});
+
+test("lockfile na raiz nao entra por causa de package.json em subpasta", () => {
+  const r = rodar(["app/package.json", "package-lock.json"], escopo("app/package.json"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+});
+
+test("arquivo com acento no nome é comparado pelo nome real, não por \\303\\247 entre aspas", () => {
+  const r = rodar(["src/ação.js"], escopo("src/ação.js"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+  const fora = rodar(["src/ação.js"], escopo("src/outro.js"));
+  assert.strictEqual(fora.codigo, 1, fora.saida);
+  assert.match(fora.saida, /src\/ação\.js/);
+});
+
+test("mover arquivo de fora do escopo para dentro do escopo é barrado (confere a origem)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escopo-mv-"));
+  const git = (...args) => execFileSync("git", args, { cwd: dir });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  fs.mkdirSync(path.join(dir, "privado"));
+  fs.writeFileSync(path.join(dir, "privado", "segredo.txt"), "conteudo bem longo para o git reconhecer a renomeacao\n".repeat(5));
+  git("add", ".");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD").toString().trim();
+  fs.mkdirSync(path.join(dir, "src"));
+  git("mv", "privado/segredo.txt", "src/segredo.txt");
+  git("commit", "-qm", "mover");
+  const head = git("rev-parse", "HEAD").toString().trim();
+  const evento = path.join(dir, "..", path.basename(dir) + "-evento.json");
+  fs.writeFileSync(evento, JSON.stringify({ pull_request: { body: escopo("src/"), labels: [] } }));
+  const r = spawnSync(PYTHON, [SCRIPT, base, head], { cwd: dir, env: { ...process.env, GITHUB_EVENT_PATH: evento }, encoding: "utf8" });
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /privado\/segredo\.txt/);
+});
+
+test("CODEX.md confere as chaves de API sem mostrar o valor", () => {
+  const texto = fs.readFileSync(path.resolve(__dirname, "..", "CODEX.md"), "utf8");
+  assert.doesNotMatch(texto, /Get-ChildItem\s+Env:/i);
+  assert.doesNotMatch(texto, /\b(printenv|Get-Item\s+Env:|\$env:\w*KEY)/i);
+  assert.match(texto, /Test-Path "Env:\$n"/);
+});

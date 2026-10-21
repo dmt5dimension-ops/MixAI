@@ -2,10 +2,50 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const PASTA = path.resolve(__dirname, "..", "local");
 const modos = JSON.parse(fs.readFileSync(path.join(PASTA, "modos.json"), "utf8"));
+const POWERSHELL = process.platform === "win32" ? "powershell" : "pwsh";
+
+// Roda o criar-apelido.ps1 com um "ollama" falso que termina com o código pedido.
+function criarApelidoComOllamaFalso(codigoDeSaida) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-falso-"));
+  const falso = path.join(dir, "ollama-falso.ps1");
+  const registro = path.join(dir, "chamadas.txt");
+  fs.writeFileSync(falso, `Add-Content '${registro}' ($args -join ' ')\nexit ${codigoDeSaida}\n`);
+  const r = spawnSync(POWERSHELL, [
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(PASTA, "criar-apelido.ps1"),
+    "-Modelo", "qwen2.5-coder:7b", "-Contexto", "4096", "-Nucleos", "4", "-Ollama", falso,
+  ], { encoding: "utf8" });
+  const chamadas = fs.existsSync(registro) ? fs.readFileSync(registro, "utf8") : "";
+  return { status: r.status, saida: `${r.stdout}${r.stderr}`, chamadas };
+}
+
+test("se o Ollama falhar ao criar o mixai-local, o script para com erro", () => {
+  // Bug achado na revisão do Codex: o modo era anunciado como ligado mesmo com a falha.
+  const r = criarApelidoComOllamaFalso(1);
+  assert.match(r.chamadas, /create mixai-local -f/);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.saida, /NAO foi ligado/);
+});
+
+test("se o Ollama criar o mixai-local, o script termina sem erro", () => {
+  const r = criarApelidoComOllamaFalso(0);
+  assert.match(r.chamadas, /create mixai-local -f/);
+  assert.strictEqual(r.status, 0, r.saida);
+});
+
+test("o modo.ps1 só anuncia o modo depois de criar o mixai-local", () => {
+  const script = fs.readFileSync(path.join(PASTA, "modo.ps1"), "utf8");
+  assert.doesNotMatch(script, /ollama create/, "a criação fica só no criar-apelido.ps1, que confere a falha");
+  const criar = script.indexOf("criar-apelido.ps1");
+  const anuncio = script.indexOf("ligado:");
+  assert.ok(criar > 0 && anuncio > criar);
+  assert.match(script, /\$ErrorActionPreference = 'Stop'/);
+});
 
 test("existem os modos dia e noite, com todos os campos", () => {
   for (const nome of ["dia", "noite"]) {

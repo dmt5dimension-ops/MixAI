@@ -7,7 +7,7 @@ const path = require("node:path");
 
 const PASTA = path.resolve(__dirname, "..", "orquestra");
 const papeis = JSON.parse(fs.readFileSync(path.join(PASTA, "papeis.json"), "utf8"));
-const { detectarLimite, limiteNaSaida, escolher, marcarSemCota } = require(path.join(PASTA, "chamar.js"));
+const { detectarLimite, limiteNaSaida, falhouSemCota, escolher, marcarSemCota } = require(path.join(PASTA, "chamar.js"));
 
 const AGORA = new Date("2026-10-21T12:00:00Z");
 
@@ -62,6 +62,17 @@ test("marca sem cota quando o limite vem do próprio agente", () => {
   assert.ok(limiteNaSaida("codex", `user\n${tarefa}\nERROR: You've hit your usage limit. Try again in 3 hours.\n`, tarefa));
   const erroClaude = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "API Error: Rate limit reached" });
   assert.ok(limiteNaSaida("claude", erroClaude, tarefa));
+});
+
+test("erro do Claude que não é cota conta como falha, não como sucesso", () => {
+  // Bug visto no comparativo de 2026-10-21: "Not logged in" vinha com código 0 e passava como tarefa feita.
+  const naoLogado = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login" });
+  assert.ok(!limiteNaSaida("claude", naoLogado, "x"));
+  assert.ok(falhouSemCota("claude", naoLogado, 0));
+  const ok = JSON.stringify({ type: "result", is_error: false, result: "Feito." });
+  assert.ok(!falhouSemCota("claude", ok, 0));
+  assert.ok(falhouSemCota("codex", "erro qualquer", 1));
+  assert.ok(!falhouSemCota("codex", "Pronto.", 0));
 });
 
 test("sem ninguém pausado, escolhe o primeiro da ordem", () => {
