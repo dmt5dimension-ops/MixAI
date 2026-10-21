@@ -26,6 +26,7 @@ SEMPRE_PERMITIDO = re.compile(
     r"|(^|/)test_[^/]+\.py$"
     r"|_test\.(py|go|rb)$"
     r"|\.(test|spec)\.[jt]sx?$"
+    r"|Tests?\.(cs|java|kt)$"
     r"|^docs/memoria/"
 )
 

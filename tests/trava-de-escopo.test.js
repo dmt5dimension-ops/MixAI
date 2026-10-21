@@ -104,3 +104,21 @@ test("** entra em subpastas", () => {
   const r = rodar(["src/a.css", "src/privado/segredo.css"], escopo("src/**/*.css"));
   assert.strictEqual(r.codigo, 0, r.saida);
 });
+
+test("testes *Tests.cs, *Tests.java e *Test.kt sempre podem mudar", () => {
+  const r = rodar(["src/a.js", "App/CalculoTests.cs", "src/CalculoTests.java", "src/CalculoTest.kt"], escopo("src/a.js"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("a trava e o guarda de testes reconhecem os mesmos arquivos de teste", () => {
+  const scripts = path.resolve(__dirname, "..", ".github", "scripts");
+  const padroes = (arquivo, nome) => {
+    const texto = fs.readFileSync(path.join(scripts, arquivo), "utf8");
+    const bloco = texto.slice(texto.indexOf(nome), texto.indexOf("\n)", texto.indexOf(nome)));
+    return [...bloco.matchAll(/^\s*r"\|?(.*?)"$/gm)].map((m) => m[1]).filter((p) => p !== "^docs/memoria/").sort();
+  };
+  const guarda = padroes("guarda_testes.py", "ARQUIVO_DE_TESTE");
+  const trava = padroes("trava_de_escopo.py", "SEMPRE_PERMITIDO");
+  assert.ok(guarda.length >= 5, "nao achei os padroes do guarda de testes");
+  assert.deepStrictEqual(trava, guarda);
+});
