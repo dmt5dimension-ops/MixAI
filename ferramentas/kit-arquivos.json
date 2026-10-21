@@ -1,0 +1,17 @@
+{
+  "copiar": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CODEX.md",
+    ".claude/",
+    ".github/workflows/regressao.yml",
+    ".github/workflows/portoes-do-pr.yml",
+    ".github/scripts/",
+    ".github/pull_request_template.md"
+  ],
+  "memoriaVazia": {
+    "de": "ferramentas/estado-vazio.md",
+    "para": "docs/memoria/estado.md"
+  },
+  "ancoraComandoTeste": "(## Comando da suíte de regressão\\s*```\\r?\\n)(.*?)(\\r?\\n```)"
+}
