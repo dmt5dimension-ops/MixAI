@@ -11,6 +11,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Trava de escopo do PR | `tests/trava-de-escopo.test.js` |
 | Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows) | `tests/trava-de-escopo.test.js` |
 | Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) | `tests/modelo-local.test.js` |
+| O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho | `tests/modelo-local.test.js` |
 | Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) | tests/papeis.test.js |
 | Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
 | Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor | `tests/protecao-local.test.js` |
