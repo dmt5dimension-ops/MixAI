@@ -110,3 +110,27 @@ test("rodando o script de verdade num repositório temporário, o comando chega 
   }
   assert.ok(fs.existsSync(path.join(destino, "docs", "memoria", "estado.md")));
 });
+
+test("um AGENTS.md que já existe fica intacto; a versão do kit vai ao lado, com o comando", () => {
+  // Achado da revisão: com -ComandoTeste o script alterava o AGENTS.md do dono mesmo sem -Sobrescrever.
+  assert.match(script, /\$agentsDoKit/);
+  assert.doesNotMatch(script, /\$agents\s*=\s*Join-Path \$Repo/);
+  const { spawnSync, execFileSync } = require("node:child_process");
+  const os = require("node:os");
+  const ps = ["pwsh", "powershell"].find((c) => spawnSync(c, ["-NoProfile", "-Command", "exit 0"]).status === 0);
+  if (!ps) return;
+  const destino = fs.mkdtempSync(path.join(os.tmpdir(), "prep-agents-"));
+  execFileSync("git", ["init", "-q"], { cwd: destino });
+  const original = "# AGENTS do dono\n\n## Comando da suíte de regressão\n\n```\nnpm test\n```\n";
+  fs.writeFileSync(path.join(destino, "AGENTS.md"), original);
+  const r = spawnSync(
+    ps,
+    ["-NoProfile", "-File", path.join(RAIZ, "ferramentas", "preparar-repo.ps1"), "-Repo", destino, "-ComandoTeste", "pytest -q"],
+    { encoding: "utf8", env: { ...process.env, GH_TOKEN: "", GITHUB_TOKEN: "" } },
+  );
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.strictEqual(fs.readFileSync(path.join(destino, "AGENTS.md"), "utf8"), original);
+  const ao_lado = fs.readFileSync(path.join(destino, "AGENTS.orquestrador.md"), "utf8");
+  assert.match(ao_lado, /```\npytest -q\n```/);
+  assert.ok(!ao_lado.includes("npm test"));
+});

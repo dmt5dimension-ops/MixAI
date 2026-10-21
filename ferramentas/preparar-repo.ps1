@@ -32,6 +32,9 @@ function Aplicar-ComandoTeste($arquivo) {
     if ($novo -ne $texto) { [IO.File]::WriteAllText($arquivo, $novo, (New-Object Text.UTF8Encoding $false)) }
 }
 
+# Caminho do AGENTS.md que ESTE script gravou (o do kit); um AGENTS.md que ja existia fica intacto.
+$agentsDoKit = $null
+
 function Copiar-Arquivo($de, $relativo) {
     $destino = Join-Path $Repo $relativo
     New-Item -ItemType Directory -Force -Path (Split-Path $destino) | Out-Null
@@ -39,10 +42,12 @@ function Copiar-Arquivo($de, $relativo) {
         $alternativo = [IO.Path]::Combine((Split-Path $destino), [IO.Path]::GetFileNameWithoutExtension($destino) + '.orquestrador' + [IO.Path]::GetExtension($destino))
         Copy-Item $de $alternativo -Force
         Aplicar-ComandoTeste $alternativo
+        if ($relativo -eq 'AGENTS.md') { $script:agentsDoKit = $alternativo }
         Write-Aviso "$relativo ja existia; a versao do kit foi salva ao lado como $(Split-Path $alternativo -Leaf). Junte os dois a mao."
     } else {
         Copy-Item $de $destino -Force
         Aplicar-ComandoTeste $destino
+        if ($relativo -eq 'AGENTS.md') { $script:agentsDoKit = $destino }
         Write-Ok $relativo
     }
 }
@@ -67,14 +72,14 @@ foreach ($item in $kit.copiar) {
 Copiar-Arquivo (Join-Path $origem $kit.memoriaVazia.de) $kit.memoriaVazia.para
 
 if ($ComandoTeste) {
-    $agents = Join-Path $Repo 'AGENTS.md'
-    if (Test-Path $agents) {
+    $agents = $agentsDoKit
+    if ($agents -and (Test-Path $agents)) {
         $texto = [IO.File]::ReadAllText($agents)
         $ancora = [regex]$kit.ancoraComandoTeste
         if ($ancora.IsMatch($texto)) {
             $texto = $ancora.Replace($texto, '${1}' + $ComandoTeste.Replace('$', '$$') + '${3}', 1)
             [IO.File]::WriteAllText($agents, $texto, (New-Object Text.UTF8Encoding $false))
-            Write-Ok "comando de teste gravado no AGENTS.md: $ComandoTeste"
+            Write-Ok "comando de teste gravado no AGENTS.md do kit ($(Split-Path $agents -Leaf)): $ComandoTeste"
         } else {
             Write-Aviso 'nao achei a secao do comando de teste no AGENTS.md; grave o comando a mao.'
         }
