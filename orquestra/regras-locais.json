@@ -1,0 +1,4 @@
+{
+  "aviso": "Regras que o modelo local (mixai-local) recebe junto com a tarefa. Só entra regra com status confirmada. Quem escreve é o node orquestra/escada.js, depois que o local acertou usando a regra.",
+  "regras": []
+}
