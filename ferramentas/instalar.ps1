@@ -141,4 +141,6 @@ Write-Host '       codex login       (escolha "Sign in with ChatGPT", NAO "API k
 Write-Host '       gh auth login'
 Write-Host '  2. Superpowers no Codex: abra o Codex, digite /plugins, busque "superpowers" e escolha Install Plugin.'
 Write-Host '  3. No Claude Code, rode /codex:setup para conferir a ponte com o Codex.'
+Write-Host '  4. Prepare o repositorio com:'
+Write-Host '       powershell -ExecutionPolicy Bypass -File .\ferramentas\preparar-repo.ps1 -Repo C:\caminho\do\seu\repo -ComandoTeste "npm test"'
 Write-Host ''
