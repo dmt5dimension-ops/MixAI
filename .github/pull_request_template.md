@@ -2,6 +2,12 @@
 
 <!-- Uma ou duas frases. Qual tarefa este PR fecha? -->
 
+## Escopo
+
+<!-- Liste os arquivos ou pastas que este PR pode alterar, um por linha. O CI bloqueia qualquer outro.
+     Pasta termina em /. Pode usar * (ex.: src/*.css). Testes e docs/memoria/ sempre podem mudar. -->
+- <arquivo ou pasta>
+
 ## Como foi testado
 
 - [ ] Teste novo cobrindo a mudança
