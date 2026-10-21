@@ -20,5 +20,8 @@ try {
   Remove-Item $modelfile -ErrorAction SilentlyContinue
 }
 if ($codigo -ne 0) {
-  throw "O Ollama nao conseguiu criar o mixai-local (codigo $codigo). O modo NAO foi ligado."
+  $mensagem = "O Ollama nao conseguiu criar o mixai-local (codigo $codigo). O modo NAO foi ligado."
+  # Linha simples primeiro: a caixa de erro do PowerShell quebra o texto conforme a largura da tela.
+  [Console]::Error.WriteLine($mensagem)
+  throw $mensagem
 }
