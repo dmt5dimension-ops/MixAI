@@ -1,0 +1,270 @@
+{
+  "modelo": "mixai-local",
+  "data": "2026-10-21T21:22:47.421Z",
+  "casos": 10,
+  "receita_chars": 999,
+  "placar": {
+    "sem": {
+      "estrito": 0,
+      "conteudo": 5
+    },
+    "formato": {
+      "estrito": 5,
+      "conteudo": 6
+    },
+    "com": {
+      "estrito": 9,
+      "conteudo": 9
+    }
+  },
+  "linhas": [
+    {
+      "id": 1,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Ana Souza\",\n  \"data_iso\": \"2026-10-21\",\n  \"erro\": \"o anexo vazio trava o envio do e-mail\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": \"Ana Souza\",\n  \"data_iso\": \"2026-10-21\",\n  \"erro\": \"o anexo vazio trava o envio do e-mail\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Ana Souza\",\"data_iso\":\"2026-10-21\",\"erro\":\"o anexo vazio trava o envio do e-mail\"}"
+      }
+    },
+    {
+      "id": 2,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "data_iso=\"2026-04-03T00:00:00Z\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Carlos Lima\",\n  \"data_iso\": \"2026-04-03T00:00:00Z\",\n  \"erro\": \"Login expira após 1 minuto\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "data_iso=\"2026-04-03T00:00:00Z\""
+        ],
+        "resposta": "{\n  \"cliente\": \"Carlos Lima\",\n  \"data_iso\": \"2026-04-03T00:00:00Z\",\n  \"erro\": \"login expira após 1 minuto\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Carlos Lima\",\"data_iso\":\"2026-04-03\",\"erro\":\"o login expira após 1 minuto\"}"
+      }
+    },
+    {
+      "id": 3,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Padaria Pão Quente\",\n  \"data_iso\": \"2025-11-07\",\n  \"erro\": \"impressora fiscal não emite cupom\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "data_iso=null"
+        ],
+        "resposta": "{\n  \"cliente\": \"Padaria Pão Quente\",\n  \"data_iso\": null,\n  \"erro\": \"impressora fiscal não emite cupom\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Padaria Pão Quente\",\"data_iso\":\"2025-11-07\",\"erro\":\"impressora fiscal não emite cupom\"}"
+      }
+    },
+    {
+      "id": 4,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "cliente=\"anônimo\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"anônimo\",\n  \"data_iso\": \"2026-01-15\",\n  \"erro\": \"app fecha ao abrir a câmera\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": null,\n  \"data_iso\": \"2026-01-15\",\n  \"erro\": \"app fecha ao abrir a câmera\"\n}"
+      },
+      "com": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cliente=\"Relato anônimo\""
+        ],
+        "resposta": "{\"cliente\":\"Relato anônimo\",\"data_iso\":\"2026-01-15\",\"erro\":\"o app fecha ao abrir a câmera\"}"
+      }
+    },
+    {
+      "id": 5,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "data_iso=\"2023-04-10T00:00:00Z\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Marina Alves\",\n  \"data_iso\": \"2023-04-10T00:00:00Z\",\n  \"erro\": \"falha no PIX\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": \"Marina Alves\",\n  \"data_iso\": null,\n  \"erro\": \"falha no PIX\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Marina Alves\",\"data_iso\":null,\"erro\":\"falha no PIX\"}"
+      }
+    },
+    {
+      "id": 6,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Roberto Faria\",\n  \"data_iso\": \"2026-02-02\",\n  \"erro\": \"502\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": \"Roberto Faria\",\n  \"data_iso\": \"2026-02-02\",\n  \"erro\": \"502\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Roberto Faria\",\"data_iso\":\"2026-02-02\",\"erro\":\"o erro 502 continua\"}"
+      }
+    },
+    {
+      "id": 7,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "erro=\"valor negativo\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Clínica Sorriso\",\n  \"data_iso\": \"2025-12-09\",\n  \"erro\": \"valor negativo\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cliente=null",
+          "erro=\"valor negativo\""
+        ],
+        "resposta": "{\n  \"cliente\": null,\n  \"data_iso\": \"2025-12-09\",\n  \"erro\": \"valor negativo\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Clínica Sorriso\",\"data_iso\":\"2025-12-09\",\"erro\":\"Erro ao gerar boleto: valor negativo\"}"
+      }
+    },
+    {
+      "id": 8,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "erro=\"dúvida sobre como exportar relatório\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Fernanda Reis\",\n  \"data_iso\": \"2026-03-12\",\n  \"erro\": \"dúvida sobre como exportar relatório\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": \"Fernanda Reis\",\n  \"data_iso\": \"2026-03-12\",\n  \"erro\": null\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Fernanda Reis\",\"data_iso\":\"2026-03-12\",\"erro\":null}"
+      }
+    },
+    {
+      "id": 9,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Lucas Pinto\",\n  \"data_iso\": \"2026-06-30\",\n  \"erro\": \"Tela de pagamento mostra R$ 0,00 em todo pedido\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Lucas Pinto\",\n  \"data_iso\": \"2026-06-30\",\n  \"erro\": \"tela de pagamento mostra R$ 0,00 em todo pedido\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Lucas Pinto\",\"data_iso\":\"2026-06-30\",\"erro\":\"a tela de pagamento mostra R$ 0,00 em todo pedido\"}"
+      }
+    },
+    {
+      "id": 10,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Paula Dias\",\n  \"data_iso\": \"2026-08-01\",\n  \"erro\": \"lentidão no painel\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "erro=null"
+        ],
+        "resposta": "{\n  \"cliente\": \"Paula Dias\",\n  \"data_iso\": \"2026-08-01\",\n  \"erro\": null\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Paula Dias, da Tecnomed\",\"data_iso\":\"2026-08-01\",\"erro\":\"lentidão no painel\"}"
+      }
+    }
+  ]
+}

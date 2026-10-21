@@ -1,0 +1,12 @@
+[
+ {"id":1,"texto":"Chamado de Ana Souza em 21/10/2026: o anexo vazio trava o envio do e-mail.","cliente":["Ana Souza"],"data_iso":"2026-10-21","erro":["anexo","vazio"]},
+ {"id":2,"texto":"Em 3 de abril de 2026 o Carlos Lima relatou que o login expira após 1 minuto.","cliente":["Carlos Lima"],"data_iso":"2026-04-03","erro":["login","expira"]},
+ {"id":3,"texto":"Cliente: Padaria Pão Quente. Data: 07/11/25. Problema: impressora fiscal não emite cupom.","cliente":["Padaria Pão Quente"],"data_iso":"2025-11-07","erro":["cupom"]},
+ {"id":4,"texto":"Relato anônimo de 15/01/2026: o app fecha ao abrir a câmera.","cliente":null,"data_iso":"2026-01-15","erro":["câmera"]},
+ {"id":5,"texto":"Marina Alves abriu chamado ontem sobre falha no PIX.","cliente":["Marina Alves"],"data_iso":null,"erro":["pix"]},
+ {"id":6,"texto":"Roberto Faria (cliente) informou em 02/02/2026 que a Joana, da nossa equipe, já tentou reiniciar o servidor, mas o erro 502 continua.","cliente":["Roberto Faria"],"data_iso":"2026-02-02","erro":["502"]},
+ {"id":7,"texto":"Data 9 de dezembro de 2025. Clínica Sorriso. Erro ao gerar boleto: valor negativo.","cliente":["Clínica Sorriso"],"data_iso":"2025-12-09","erro":["boleto"]},
+ {"id":8,"texto":"Fernanda Reis, 12/03/2026. Sem erro, apenas dúvida sobre como exportar relatório.","cliente":["Fernanda Reis"],"data_iso":"2026-03-12","erro":null},
+ {"id":9,"texto":"Chamado 4412 aberto por Lucas Pinto em 30/06/2026: a tela de pagamento mostra R$ 0,00 em todo pedido.","cliente":["Lucas Pinto"],"data_iso":"2026-06-30","erro":["0,00"]},
+ {"id":10,"texto":"Paula Dias, da Tecnomed, reportou em 01/08/2026 lentidão no painel.","cliente":["Paula Dias","Tecnomed"],"data_iso":"2026-08-01","erro":["lentidão"]}
+]
