@@ -175,3 +175,11 @@ test("CODEX.md confere as chaves de API sem mostrar o valor", () => {
   assert.doesNotMatch(texto, /\b(printenv|Get-Item\s+Env:|\$env:\w*KEY)/i);
   assert.match(texto, /Test-Path "Env:\$n"/);
 });
+
+test("trava e guarda forçam a saída em UTF-8 (no Windows o padrão é cp1252 e estraga nomes com acento)", () => {
+  for (const arquivo of ["trava_de_escopo.py", "guarda_testes.py"]) {
+    const texto = fs.readFileSync(path.resolve(__dirname, "..", ".github", "scripts", arquivo), "utf8");
+    assert.match(texto, /sys\.stdout\.reconfigure\(encoding="utf-8"\)/, arquivo);
+    assert.match(texto, /sys\.stderr\.reconfigure\(encoding="utf-8"\)/, arquivo);
+  }
+});

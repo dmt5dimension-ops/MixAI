@@ -80,4 +80,7 @@ def main(base, head):
 
 
 if __name__ == "__main__":
+    # No Windows a saida padrao usa a pagina de codigo local (cp1252) e estraga nomes com acento.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main(sys.argv[1], sys.argv[2]))
