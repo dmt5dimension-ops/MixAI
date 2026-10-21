@@ -40,7 +40,12 @@ function Copiar-Arquivo($de, $relativo) {
     New-Item -ItemType Directory -Force -Path (Split-Path $destino) | Out-Null
     if ((Test-Path $destino) -and -not $Sobrescrever) {
         $alternativo = [IO.Path]::Combine((Split-Path $destino), [IO.Path]::GetFileNameWithoutExtension($destino) + '.orquestrador' + [IO.Path]::GetExtension($destino))
-        Copy-Item $de $alternativo -Force
+        if (Test-Path $alternativo) {
+            # Rodar de novo nao pode apagar o que o dono ja juntou ou editou na copia ao lado.
+            Write-Aviso "$relativo ja existia e $(Split-Path $alternativo -Leaf) tambem; deixei os dois como estao. Apague a copia ao lado para receber a versao nova do kit."
+            return
+        }
+        Copy-Item $de $alternativo
         Aplicar-ComandoTeste $alternativo
         if ($relativo -eq 'AGENTS.md') { $script:agentsDoKit = $alternativo }
         Write-Aviso "$relativo ja existia; a versao do kit foi salva ao lado como $(Split-Path $alternativo -Leaf). Junte os dois a mao."

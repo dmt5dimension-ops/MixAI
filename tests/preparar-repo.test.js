@@ -134,3 +134,29 @@ test("um AGENTS.md que já existe fica intacto; a versão do kit vai ao lado, co
   assert.match(ao_lado, /```\npytest -q\n```/);
   assert.ok(!ao_lado.includes("npm test"));
 });
+
+test("rodar de novo não sobrescreve a cópia ao lado (.orquestrador) que já existe", () => {
+  // Achado da revisão: Copy-Item -Force apagava o que o dono já tinha juntado em AGENTS.orquestrador.md.
+  assert.match(script, /Test-Path \$alternativo/);
+  const { spawnSync, execFileSync } = require("node:child_process");
+  const os = require("node:os");
+  const ps = (process.platform === "win32" ? ["pwsh", "powershell"] : ["pwsh"]).find(
+    (c) => spawnSync(c, ["-NoProfile", "-Command", "exit 0"]).status === 0,
+  );
+  if (!ps) return;
+  const destino = fs.mkdtempSync(path.join(os.tmpdir(), "prep-reexec-"));
+  execFileSync("git", ["init", "-q"], { cwd: destino });
+  fs.writeFileSync(path.join(destino, "AGENTS.md"), "# do dono\n");
+  const rodar = () =>
+    spawnSync(ps, ["-NoProfile", "-File", path.join(RAIZ, "ferramentas", "preparar-repo.ps1"), "-Repo", destino, "-ComandoTeste", "pytest -q"], {
+      encoding: "utf8",
+      env: { ...process.env, GH_TOKEN: "", GITHUB_TOKEN: "" },
+    });
+  assert.strictEqual(rodar().status, 0);
+  const aoLado = path.join(destino, "AGENTS.orquestrador.md");
+  fs.writeFileSync(aoLado, "# juntado pelo dono\n");
+  const segunda = rodar();
+  assert.strictEqual(segunda.status, 0, segunda.stdout + segunda.stderr);
+  assert.strictEqual(fs.readFileSync(aoLado, "utf8"), "# juntado pelo dono\n");
+  assert.strictEqual(fs.readFileSync(path.join(destino, "AGENTS.md"), "utf8"), "# do dono\n");
+});
