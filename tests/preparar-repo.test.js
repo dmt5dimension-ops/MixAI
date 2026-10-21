@@ -65,3 +65,48 @@ test("o script cria todas as labels que o AGENTS.md usa", () => {
     assert.match(script, new RegExp(`'${label}'`), `o script não cria a label ${label}`);
   }
 });
+
+test("o script troca o comando de teste em todo texto copiado, não só no AGENTS.md", () => {
+  // Achado da revisão: executor-leve.md e CODEX.md continuavam mandando rodar `npm test`.
+  assert.match(script, /function Aplicar-ComandoTeste/);
+  const chamadas = script.match(/Aplicar-ComandoTeste \$/g) || [];
+  assert.ok(chamadas.length >= 2, "o comando precisa ser aplicado na cópia normal e na cópia ao lado (.orquestrador)");
+  // Se um texto copiado deixar de citar `npm test` literalmente, a troca não pega: este teste avisa.
+  for (const rel of ["CODEX.md", ".claude/agents/executor-leve.md"]) {
+    assert.ok(ler(rel).includes("npm test"), `${rel} não cita npm test; a troca do comando não o alcança`);
+  }
+});
+
+test("o CI instala as dependências antes de rodar o REGRESSION_CMD", () => {
+  // Achado da revisão: com REGRESSION_CMD definido o comando rodava sem npm ci/pip install antes.
+  const yml = ler(".github/workflows/regressao.yml");
+  const instalar = yml.indexOf("Instalar dependencias");
+  const rodar = yml.indexOf('bash -c "$REGRESSION_CMD"');
+  assert.ok(instalar > 0 && rodar > 0, "faltam os passos no workflow");
+  assert.ok(instalar < rodar, "as dependências precisam ser instaladas antes do REGRESSION_CMD");
+  assert.match(yml.slice(instalar, rodar), /npm ci/);
+  assert.match(yml.slice(instalar, rodar), /pip install/);
+});
+
+test("rodando o script de verdade num repositório temporário, o comando chega em todos os textos", () => {
+  // O PowerShell vem instalado no ubuntu-latest do CI. Sem ele (ex.: máquina sem pwsh), os testes
+  // estáticos acima continuam valendo e este caminho é conferido pelo CI.
+  const { spawnSync, execFileSync } = require("node:child_process");
+  const os = require("node:os");
+  const ps = ["pwsh", "powershell"].find((c) => spawnSync(c, ["-NoProfile", "-Command", "exit 0"]).status === 0);
+  if (!ps) return;
+  const destino = fs.mkdtempSync(path.join(os.tmpdir(), "prep-"));
+  execFileSync("git", ["init", "-q"], { cwd: destino });
+  const r = spawnSync(
+    ps,
+    ["-NoProfile", "-File", path.join(RAIZ, "ferramentas", "preparar-repo.ps1"), "-Repo", destino, "-ComandoTeste", "pytest -q"],
+    { encoding: "utf8", env: { ...process.env, GH_TOKEN: "", GITHUB_TOKEN: "" } },
+  );
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  for (const rel of ["AGENTS.md", "CODEX.md", ".claude/agents/executor-leve.md"]) {
+    const texto = fs.readFileSync(path.join(destino, rel), "utf8");
+    assert.ok(texto.includes("pytest -q"), `${rel} não recebeu o comando`);
+    assert.ok(!texto.includes("npm test"), `${rel} ainda manda rodar npm test`);
+  }
+  assert.ok(fs.existsSync(path.join(destino, "docs", "memoria", "estado.md")));
+});

@@ -23,15 +23,26 @@ function Write-Passo($texto) { Write-Host "`n==> $texto" -ForegroundColor Cyan }
 function Write-Ok($texto)    { Write-Host "    ok: $texto" -ForegroundColor Green }
 function Write-Aviso($texto) { Write-Host "    atencao: $texto" -ForegroundColor Yellow }
 
+# Os textos copiados citam `npm test` (AGENTS.md, CODEX.md, comandos dos agentes). Num projeto com outro
+# comando, trocar so o AGENTS.md deixaria os agentes com instrucoes conflitantes.
+function Aplicar-ComandoTeste($arquivo) {
+    if (-not $ComandoTeste -or $arquivo -notmatch '\.md$') { return }
+    $texto = [IO.File]::ReadAllText($arquivo)
+    $novo = $texto.Replace('npm test', $ComandoTeste)
+    if ($novo -ne $texto) { [IO.File]::WriteAllText($arquivo, $novo, (New-Object Text.UTF8Encoding $false)) }
+}
+
 function Copiar-Arquivo($de, $relativo) {
     $destino = Join-Path $Repo $relativo
     New-Item -ItemType Directory -Force -Path (Split-Path $destino) | Out-Null
     if ((Test-Path $destino) -and -not $Sobrescrever) {
         $alternativo = [IO.Path]::Combine((Split-Path $destino), [IO.Path]::GetFileNameWithoutExtension($destino) + '.orquestrador' + [IO.Path]::GetExtension($destino))
         Copy-Item $de $alternativo -Force
+        Aplicar-ComandoTeste $alternativo
         Write-Aviso "$relativo ja existia; a versao do kit foi salva ao lado como $(Split-Path $alternativo -Leaf). Junte os dois a mao."
     } else {
         Copy-Item $de $destino -Force
+        Aplicar-ComandoTeste $destino
         Write-Ok $relativo
     }
 }
