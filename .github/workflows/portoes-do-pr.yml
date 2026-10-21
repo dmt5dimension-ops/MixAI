@@ -1,11 +1,12 @@
 # Portoes que dependem das labels do PR: roda de novo sempre que labels ou commits mudam.
-# - guarda-de-testes: bloqueia PR que apaga teste ou adiciona skip/only/xfail.
+# - guarda-de-testes: bloqueia PR que apaga teste ou adiciona skip/only/xfail,
+#   e PR que mexe em arquivo fora da secao '## Escopo' da descricao.
 # - revisao-cruzada: exige feito-por:X e revisado-por:Y com X diferente de Y.
 name: portoes-do-pr
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled, ready_for_review]
 
 permissions:
   contents: read
@@ -25,6 +26,9 @@ jobs:
           fetch-depth: 0
       - name: Conferir testes apagados ou pulados
         run: python .github/scripts/guarda_testes.py "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+      - name: Conferir que so mudou o que foi pedido (escopo)
+        if: always()
+        run: python .github/scripts/trava_de_escopo.py "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
 
   revisao-cruzada:
     name: revisao-cruzada
