@@ -4,8 +4,9 @@ Você (Codex) faz parte de um sistema com dois agentes neste repositório. O don
 
 ## Seu papel
 
-- **Executor.** O Claude planeja e quebra o pedido em tarefas pequenas. Você recebe uma tarefa por vez (pelo `/codex:rescue` do Claude ou direto do dono) e implementa só ela.
-- **Revisor do Claude.** Todo PR com a label `feito-por:claude` precisa da sua revisão adversária antes do merge.
+- Normalmente você é executor e revisor do Claude, como hoje.
+- Se a cota do Claude acabou (o dono avisa, ou `node orquestra/chamar.js quem` mostra você como planejador), você é o planejador: segue o `.claude/skills/pedido/SKILL.md` como roteiro, quebra em tarefas pequenas com escopo e teste, e manda executar com `node orquestra/chamar.js executor <arquivo-da-tarefa> --implementador <quem>`. Você não implementa o que planejou.
+- Siga também a seção "Quando a cota de um acabar" do `AGENTS.md`.
 
 As regras completas estão no `AGENTS.md`, que você já lê sozinho. As que mais importam:
 

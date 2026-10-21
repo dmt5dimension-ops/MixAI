@@ -60,6 +60,16 @@ Tudo roda pelas CLIs logadas nas assinaturas (Claude Pro/Max e ChatGPT). Nunca c
 | Achar arquivos e entender o código antes de planejar | subagente `explorador` (modelo menor, só leitura) | Antes do plano |
 | Revisão adversária | O agente que **não** implementou: Claude com `/codex:adversarial-review` ou o subagente `revisor`, Codex revisando o diff | Todo PR |
 
+### Quando a cota de um acabar (papéis trocáveis)
+
+- A ordem de cada papel está em `orquestra/papeis.json`. `node orquestra/chamar.js quem` mostra quem faz o quê agora.
+- Detecção automática: quem chama outro agente (por `/codex:rescue`, `claude -p` ou `orquestra/chamar.js`) e recebe mensagem de limite ("usage limit", "rate limit reached", "session limit", "weekly limit") roda `node orquestra/chamar.js sem-cota <agente>` e segue com o próximo da ordem, sem perguntar ao dono.
+- Claude sem cota: o dono abre o Codex na pasta; o Codex planeja e revisa seguindo as mesmas regras e manda executar com `node orquestra/chamar.js executor <arquivo>`.
+- Codex sem cota: o Claude executa com o subagente `executor-leve` (tarefa pequena ou média) ou o modelo local (só tarefa mecânica de texto).
+- Revisão cruzada continua obrigatória: se só quem implementou tem cota, o PR espera; ninguém aprova o próprio trabalho.
+- Troca manual em um comando: `powershell -ExecutionPolicy Bypass -File orquestra\trocar.ps1 claude` (ou codex, local, normal).
+- O modelo local nunca planeja nem revisa.
+
 Regras de economia:
 - Cada executor recebe só o necessário: a tarefa, o escopo, o critério de pronto e o teste. Nada de despejar o projeto inteiro no contexto.
 - Quem planeja não implementa e quem implementa não planeja de novo.

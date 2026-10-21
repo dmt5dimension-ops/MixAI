@@ -10,6 +10,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Portões do CI: regressão, guarda de testes, revisão cruzada | `tests/smoke.test.js` e o próprio CI |
 | Trava de escopo do PR | `tests/trava-de-escopo.test.js` |
 | Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) | `tests/modelo-local.test.js` |
+| Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) | tests/papeis.test.js |
 
 ## Em andamento
 
@@ -23,6 +24,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Decisões
 
+- Papéis trocáveis (2026-10-21): detectar falta de cota pelo texto da mensagem de limite; pausar por 5 horas; o modelo local nunca planeja nem revisa.
 - Claude planeja e revisa; Codex executa. Tamanho da tarefa define o esforço (`--effort low/medium/high`).
 - Só assinaturas (Claude Pro/Max e ChatGPT) pelas CLIs. Nenhuma chave de API.
 - Todo PR declara o escopo; o CI bloqueia arquivo fora dele.
