@@ -1,0 +1,95 @@
+// Testa a trava de escopo (.github/scripts/trava_de_escopo.py) num repositório git temporário.
+const { test } = require("node:test");
+const assert = require("node:assert");
+const { execFileSync, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const SCRIPT = path.resolve(__dirname, "..", ".github", "scripts", "trava_de_escopo.py");
+const PYTHON = process.platform === "win32" ? "python" : "python3";
+
+function repoCom(arquivosAlterados) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escopo-"));
+  const git = (...args) => execFileSync("git", args, { cwd: dir });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  fs.writeFileSync(path.join(dir, "base.txt"), "x");
+  git("add", ".");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD").toString().trim();
+  for (const arquivo of arquivosAlterados) {
+    fs.mkdirSync(path.join(dir, path.dirname(arquivo)), { recursive: true });
+    fs.writeFileSync(path.join(dir, arquivo), "y");
+  }
+  git("add", ".");
+  git("commit", "-qm", "mudanca");
+  const head = git("rev-parse", "HEAD").toString().trim();
+  return { dir, base, head };
+}
+
+function rodar(arquivosAlterados, corpo, labels = []) {
+  const { dir, base, head } = repoCom(arquivosAlterados);
+  const evento = path.join(dir, "..", path.basename(dir) + "-evento.json");
+  fs.writeFileSync(evento, JSON.stringify({ pull_request: { body: corpo, labels: labels.map((name) => ({ name })) } }));
+  const r = spawnSync(PYTHON, [SCRIPT, base, head], {
+    cwd: dir,
+    env: { ...process.env, GITHUB_EVENT_PATH: evento },
+    encoding: "utf8",
+  });
+  return { codigo: r.status, saida: r.stdout + r.stderr };
+}
+
+const escopo = (...itens) => "## O que mudou\nx\n\n## Escopo\n" + itens.map((i) => `- ${i}`).join("\n") + "\n\n## Como foi testado\n- ok";
+
+test("passa quando todos os arquivos estao no escopo", () => {
+  const r = rodar(["src/tela/menu.css"], escopo("src/tela/menu.css"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("bloqueia arquivo fora do escopo e diz qual e", () => {
+  const r = rodar(["src/tela/menu.css", "src/tela/botao.js"], escopo("src/tela/menu.css"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+  assert.match(r.saida, /src\/tela\/botao\.js/);
+});
+
+test("pasta terminada em / libera tudo dentro dela", () => {
+  const r = rodar(["src/email/envio.js", "src/email/fila/retry.js"], escopo("src/email/"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("padrao com * funciona", () => {
+  const r = rodar(["src/a.css", "src/b.css"], escopo("src/*.css"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("item com ponto no inicio (.github/) nao perde o ponto", () => {
+  const r = rodar([".github/workflows/x.yml"], escopo(".github/"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("testes e docs/memoria sempre podem mudar", () => {
+  const r = rodar(["src/a.js", "tests/a.test.js", "docs/memoria/estado.md"], escopo("src/a.js"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("lockfile acompanha o package.json listado", () => {
+  const r = rodar(["package.json", "package-lock.json"], escopo("package.json"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("sem secao Escopo o PR e bloqueado", () => {
+  const r = rodar(["src/a.js"], "## O que mudou\nqualquer coisa");
+  assert.strictEqual(r.codigo, 1, r.saida);
+});
+
+test("item de exemplo do modelo (<...>) nao conta como escopo", () => {
+  const r = rodar(["src/a.js"], escopo("<arquivo ou pasta>"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+});
+
+test("label permitir-fora-do-escopo libera", () => {
+  const r = rodar(["src/a.js", "src/b.js"], escopo("src/a.js"), ["permitir-fora-do-escopo"]);
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
