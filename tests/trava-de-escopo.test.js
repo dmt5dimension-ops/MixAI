@@ -122,3 +122,27 @@ test("a trava e o guarda de testes reconhecem os mesmos arquivos de teste", () =
   assert.ok(guarda.length >= 5, "nao achei os padroes do guarda de testes");
   assert.deepStrictEqual(trava, guarda);
 });
+
+test("lockfile em subpasta acompanha o package.json da mesma subpasta", () => {
+  const r = rodar(["app/package.json", "app/package-lock.json"], escopo("app/package.json"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
+
+test("lockfile de outra pasta NAO acompanha o package.json listado", () => {
+  const r = rodar(["app/package.json", "outro/package-lock.json"], escopo("app/package.json"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+  assert.match(r.saida, /outro\/package-lock\.json/);
+});
+
+test("lockfile na raiz nao entra por causa de package.json em subpasta", () => {
+  const r = rodar(["app/package.json", "package-lock.json"], escopo("app/package.json"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+});
+
+test("arquivo com acento no nome é comparado pelo nome real, não por \\303\\247 entre aspas", () => {
+  const r = rodar(["src/ação.js"], escopo("src/ação.js"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+  const fora = rodar(["src/ação.js"], escopo("src/outro.js"));
+  assert.strictEqual(fora.codigo, 1, fora.saida);
+  assert.match(fora.saida, /src\/ação\.js/);
+});

@@ -39,7 +39,7 @@ PARES = {
 
 
 def git(*args):
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(["git", "-c", "core.quotepath=false", *args], check=True, capture_output=True, text=True, encoding="utf-8").stdout
 
 
 def ler_evento():
@@ -94,7 +94,7 @@ def permitido(arquivo, escopo):
             return True
         if casa_padrao(arquivo, item):
             return True
-        if arquivo in PARES.get(os.path.basename(item), []) and os.path.dirname(arquivo) == os.path.dirname(item):
+        if os.path.basename(arquivo) in PARES.get(os.path.basename(item), []) and os.path.dirname(arquivo) == os.path.dirname(item):
             return True
     return False
 

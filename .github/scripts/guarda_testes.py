@@ -31,7 +31,7 @@ PULO_DE_TESTE = [
 
 
 def git(*args):
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(["git", "-c", "core.quotepath=false", *args], check=True, capture_output=True, text=True, encoding="utf-8").stdout
 
 
 def labels_do_pr():
