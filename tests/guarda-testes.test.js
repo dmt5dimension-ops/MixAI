@@ -49,7 +49,9 @@ test("bloqueia teste apagado com acento no nome (git não pode esconder o nome e
 
 test("bloqueia skip adicionado e a label libera", () => {
   const base = { "tests/a.test.js": "test('a', () => {});\n" };
-  const mudar = (d) => fs.writeFileSync(path.join(d, "tests/a.test.js"), "test.skip('a', () => {});\n");
+  // O texto do skip é montado em pedaços para o guarda não barrar o próprio arquivo de teste.
+  const pulado = ["test", ".skip", "('a', () => {});\n"].join("");
+  const mudar = (d) => fs.writeFileSync(path.join(d, "tests/a.test.js"), pulado);
   assert.strictEqual(rodar(base, mudar).codigo, 1);
   assert.strictEqual(rodar(base, mudar, ["permitir-remocao-de-teste"]).codigo, 0);
 });
