@@ -234,3 +234,18 @@ test("uma microtarefa que falha não derruba as outras", async () => {
   });
   assert.deepStrictEqual(r.map((x) => [x.id, x.ok]), [["a", false], ["b", true]]);
 });
+
+test("lote: caminhos diferentes do mesmo arquivo contam como o mesmo escopo", async () => {
+  let agora = 0; let pico = 0;
+  await escada.lote({
+    microtarefas: [micro("a", { escopo: ["src/x.js"] }), micro("b", { escopo: ["./src/X.js"] })], verificadorDe, paralelismo: 2, arquivos: pastaTemp(),
+    agentes: { local: async (p) => { agora += 1; pico = Math.max(pico, agora); await esperar(15); agora -= 1; return p.includes("contexto de a") ? "a" : "b"; }, superiores: [] },
+  });
+  assert.strictEqual(pico, 1);
+});
+
+test("lote recusa paralelismo inválido em vez de travar", async () => {
+  for (const p of [NaN, 0, -1, 1.5]) {
+    await assert.rejects(() => escada.lote({ microtarefas: [micro("a")], verificadorDe, paralelismo: p, agentes: { local: () => "a", superiores: [] }, arquivos: pastaTemp() }), /paralelismo/);
+  }
+});

@@ -201,7 +201,7 @@ function validarPlano(microtarefas) {
   }
 }
 
-const normaliza = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '');
+const normaliza = (p) => path.resolve(String(p)).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const sobrepoe = (a, b) => a.some((x) => b.some((y) => {
   const [p, q] = [normaliza(x), normaliza(y)];
   return p === q || p.startsWith(q + '/') || q.startsWith(p + '/');
@@ -217,7 +217,8 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
 async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
-  const limite = Math.max(1, Math.floor(paralelismo));
+  if (!Number.isInteger(paralelismo) || paralelismo < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
+  const limite = paralelismo;
   const resultados = new Map();
   const pendentes = [...microtarefas];
   const rodando = new Map();
