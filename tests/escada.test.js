@@ -380,3 +380,39 @@ test("loop: quando o grande resolve depois do local errar, a regra também é ap
   assert.strictEqual(r.regraSalva, "alfa-regra");
   assert.strictEqual(JSON.parse(fs.readFileSync(f.regras, "utf8")).regras[0].status, "confirmada");
 });
+
+test("antagonico: resposta rejeitada só pelo revisor não entra nas 'saidas erradas' da regressão", async () => {
+  const f = pastaTemp();
+  await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 1, antagonico: true, verificarComando: "node confere-alfa",
+    agentes: {
+      local: () => "alfa", // passa no verificador, mas o codex (revisor) reprova
+      superiores: [
+        { nome: "codex", chamar: (p) => (p.includes("ANTAGONISTA") ? "PROBLEMA: x" : "alfa") },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK" : "alfa") },
+      ],
+    },
+  });
+  const [falha] = escada.lerCasos(f.falhas);
+  assert.deepStrictEqual(falha.saidasErradas, []); // o verificador aceitava "alfa"
+  assert.deepStrictEqual(falha.rejeitadasPeloRevisor, ["alfa"]);
+});
+
+test("antagonico: a regra só é salva se a resposta do local com ela também passar pelo antagonista", async () => {
+  const f = pastaTemp();
+  const regraJson = JSON.stringify({ id: "r-alfa", palavras: ["alfa"], regra: "REGRA-X devolva alfa.", exemplo: { entrada: "a", saida: "a" } });
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 1, antagonico: true,
+    agentes: {
+      local: (p) => (p.includes("REGRA-X") ? "alfa" : "x"),
+      superiores: [
+        // revisor: reprova a resposta do local com a regra (a resposta final do claude ele aprova)
+        { nome: "codex", chamar: (p) => (p.includes("ANTAGONISTA") ? (p.includes("Resposta: alfa") ? "PROBLEMA: x" : "OK") : p.includes("REGRA") ? regraJson : "alfa") },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK" : p.includes("REGRA") ? regraJson : "alfa") },
+      ],
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.regraSalva, null);
+  assert.ok(!fs.existsSync(f.regras) || JSON.parse(fs.readFileSync(f.regras, "utf8")).regras.length === 0);
+});

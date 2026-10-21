@@ -224,21 +224,22 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
 
   const julgar = async (saida, produtor) => {
     const v = await verificar(saida);
-    if (v.ok !== true) return { ok: false, motivo: v.motivo || 'o verificador reprovou' };
+    if (v.ok !== true) return { ok: false, porVerificador: true, motivo: v.motivo || 'o verificador reprovou' };
     if (!antagonico) return { ok: true, antagonista: null };
     for (const outro of supers.filter((x) => x.nome !== produtor)) {
       const parecer = await tentar(outro.chamar, promptAntagonista(entrada, saida));
       if (parecer === null) continue; // este não respondeu (sem cota): tenta o próximo
       if (/^\s*OK\s*[.!]?\s*$/i.test(parecer)) return { ok: true, antagonista: outro.nome };
-      return { ok: false, motivo: parecer };
+      return { ok: false, porVerificador: false, motivo: parecer };
     }
-    return { ok: false, motivo: 'nenhum outro agente grande disponível para conferir (sem cota?); sem checagem antagônica a resposta não vale' };
+    return { ok: false, porVerificador: false, motivo: 'nenhum outro agente grande disponível para conferir (sem cota?); sem checagem antagônica a resposta não vale' };
   };
 
-  const ok = async (saida) => (await verificar(saida)).ok === true;
+  // a regra aprendida passa pela MESMA checagem (verificador + antagonista) da resposta final
+  const ok = async (saida) => (await julgar(saida, 'local')).ok === true;
   const concluir = (saida, resolvidoPor, tentativas, antagonista, regra = null, regraSalva = null) => {
     if (erradas.length && verificarComando) {
-      registrarCaso(arquivos.falhas, { ...base, saidasErradas: erradas.map((e) => e.saida), motivos: erradas.map((e) => e.motivo), saidaCerta: saida, verificar: verificarComando, resolvidoPor });
+      registrarCaso(arquivos.falhas, { ...base, saidasErradas: erradas.filter((e) => e.porVerificador).map((e) => e.saida), rejeitadasPeloRevisor: erradas.filter((e) => !e.porVerificador && e.saida).map((e) => e.saida), motivos: erradas.map((e) => e.motivo), saidaCerta: saida, verificar: verificarComando, resolvidoPor });
     }
     registrarCaso(arquivos.casos, { ...base, regra: regra || usadas[0] || null, regrasUsadas: usadas.map((r) => r.id), saida, resolvidoPor });
     return { ok: true, resolvidoPor, saida, tentativas, antagonista, regraSalva };
@@ -248,11 +249,11 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
   for (let t = 1; t <= maxTentativas; t += 1) {
     const saida = await tentar(agentes.local, montarPrompt(instrucao, usadas));
     if (saida === null) {
-      erradas.push({ saida: '', motivo: 'o modelo local não respondeu' });
+      erradas.push({ saida: '', porVerificador: false, motivo: 'o modelo local não respondeu' });
     } else {
       const j = await julgar(saida, 'local');
       if (j.ok) return concluir(saida, 'local', t, j.antagonista);
-      erradas.push({ saida, motivo: j.motivo });
+      erradas.push({ saida, porVerificador: j.porVerificador, motivo: j.motivo });
     }
     if (t === maxTentativas || supers.length === 0) continue;
     for (let k = 0; k < supers.length; k += 1) {
@@ -274,7 +275,7 @@ Instrução do revisor: ${dica}`; break; }
         : { regra: null, regraSalva: null };
       return concluir(saida, s.nome, maxTentativas, j.antagonista, aprendida.regra, aprendida.regraSalva);
     }
-    erradas.push({ saida, motivo: j.motivo });
+    erradas.push({ saida, porVerificador: j.porVerificador, motivo: j.motivo });
   }
   registrarCaso(arquivos.pendentes, { ...base, saidasErradas: erradas.map((e) => e.saida), motivos: erradas.map((e) => e.motivo), verificar: verificarComando });
   return { ok: false, resolvidoPor: null, saida: null, tentativas: maxTentativas, antagonista: null };
