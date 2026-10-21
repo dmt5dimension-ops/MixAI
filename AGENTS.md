@@ -75,6 +75,16 @@ Regras de economia:
 - Quem planeja não implementa e quem implementa não planeja de novo.
 - Se uma tarefa falhar duas vezes, pare e devolva para o planejador quebrar em pedaços menores, em vez de insistir.
 
+### Quando mandar para o modelo local
+
+O modelo local (`mixai-local`, no Ollama do PC) não gasta cota de assinatura, mas é fraco. Quem decide mandar para ele é sempre o planejador.
+
+- **Pode mandar** só tarefa mecânica e bem empacotada: rascunho de teste, extrair dados de um texto, resumir, reformatar (lista, tabela, JSON).
+- **Nunca mande** para ele planejar, revisar, classificar o tamanho de uma tarefa ou decidir qualquer coisa. No teste com 5 tarefas reais ele chamou tudo de "pequena".
+- **Tem que caber no contexto:** a tarefa e o que ela precisa ler cabem em 4096 tokens no modo dia e 8192 no modo noite (`local/modos.json`, trocado por `local/modo.ps1`). Não cabe? Divida ou mande para outro executor.
+- **Sempre confira antes de usar:** quem mandou lê o resultado e, se virou código ou teste, roda `npm test`. Resultado do modelo local nunca entra em commit sem essa conferência.
+- **Se errar uma vez**, não insista: a tarefa vai para o subagente `executor-leve` ou para o Codex com `--effort low`.
+
 ## Revisão cruzada (obrigatória)
 
 Quem implementa nunca aprova o próprio trabalho.

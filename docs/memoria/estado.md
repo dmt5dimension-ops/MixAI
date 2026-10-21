@@ -11,6 +11,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Trava de escopo do PR | `tests/trava-de-escopo.test.js` |
 | Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) | `tests/modelo-local.test.js` |
 | Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) | tests/papeis.test.js |
+| Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
 
 ## Em andamento
 
@@ -40,4 +41,3 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
-- Ainda não existe regra no `AGENTS.md` dizendo quando o planejador manda tarefa para o modelo local.
