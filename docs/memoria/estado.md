@@ -9,6 +9,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | --- | --- |
 | Portões do CI: regressão, guarda de testes, revisão cruzada | `tests/smoke.test.js` e o próprio CI |
 | Trava de escopo do PR | `tests/trava-de-escopo.test.js` |
+| Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows) | `tests/trava-de-escopo.test.js` |
 | Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) | `tests/modelo-local.test.js` |
 | Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) | tests/papeis.test.js |
 | Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
@@ -40,6 +41,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
+- O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
 - `tests/instalar.test.js` falha às vezes no PC do dono quando a memória está quase cheia (falhou 2 de 9 também na main). Não é falha do instalador; investigar numa tarefa própria.
