@@ -1,6 +1,7 @@
 # Roda a suite de regressao inteira em todo PR e em todo push na branch principal.
 # O comando vem da variavel do repositorio REGRESSION_CMD (Settings > Secrets and variables > Actions > Variables).
 # Sem a variavel, tenta adivinhar: npm test (package.json) ou pytest (pyproject.toml / requirements.txt).
+# As dependencias sao instaladas antes, com ou sem a variavel.
 name: regressao
 
 on:
@@ -34,6 +35,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Instalar dependencias
+        run: |
+          set -euo pipefail
+          if [ -f package.json ]; then
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          fi
+          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            if [ -f pyproject.toml ]; then pip install -e ".[test]" || pip install -e .; fi
+            pip install pytest
+          fi
+
       - name: Suite de regressao
         env:
           REGRESSION_CMD: ${{ vars.REGRESSION_CMD }}
@@ -43,13 +57,8 @@ jobs:
             echo "Rodando: $REGRESSION_CMD"
             bash -c "$REGRESSION_CMD"
           elif [ -f package.json ]; then
-            if [ -f package-lock.json ]; then npm ci; else npm install; fi
             npm test
           elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-            python -m pip install --upgrade pip
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-            if [ -f pyproject.toml ]; then pip install -e ".[test]" || pip install -e .; fi
-            pip install pytest
             pytest
           else
             echo "Nao sei rodar os testes deste repo. Defina a variavel REGRESSION_CMD."
