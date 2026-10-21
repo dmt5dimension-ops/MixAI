@@ -31,6 +31,21 @@ function limiteNaSaida(agente, saida, tarefa) {
   return detectarLimite(texto);
 }
 
+function ultimoJson(saida) {
+  for (const linha of String(saida).split(/\r?\n/).reverse()) {
+    try {
+      return JSON.parse(linha);
+    } catch (erro) {
+      if (!(erro instanceof SyntaxError)) throw erro;
+    }
+  }
+  return null;
+}
+
+function falhouSemCota(agente, saida, codigo) {
+  return codigo !== 0 || (agente === 'claude' && ultimoJson(saida)?.is_error === true);
+}
+
 function marcarSemCota(estado, agente, horas, agora) {
   return {
     ...estado,
@@ -125,11 +140,17 @@ function principal(argumentos) {
     });
     if (resultado.stdout) process.stdout.write(resultado.stdout);
     if (resultado.stderr) process.stderr.write(resultado.stderr);
-    if (limiteNaSaida(agente, (resultado.stdout || '') + '\n' + (resultado.stderr || ''), tarefa)) {
+    const saida = (resultado.stdout || '') + '\n' + (resultado.stderr || '');
+    if (limiteNaSaida(agente, saida, tarefa)) {
       estado = marcarSemCota(estado, agente, papeis.pausaHoras, new Date());
       salvarEstado(estado);
       console.error(`${agente} ficou sem cota até ${estado[agente]}. Tentando o próximo agente.`);
       continue;
+    }
+    if (falhouSemCota(agente, saida, resultado.status)) {
+      const mensagem = agente === 'claude' ? ultimoJson(saida)?.result : null;
+      console.error(`${agente} falhou: ${mensagem || 'veja a saída acima'}`);
+      return 1;
     }
     if (resultado.error) {
       console.error(`Não foi possível chamar ${agente}: ${resultado.error.message}`);
@@ -139,7 +160,7 @@ function principal(argumentos) {
   }
 }
 
-module.exports = { detectarLimite, limiteNaSaida, marcarSemCota, escolher };
+module.exports = { detectarLimite, limiteNaSaida, falhouSemCota, marcarSemCota, escolher };
 
 if (require.main === module) {
   try {

@@ -24,6 +24,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Decisões
 
+- Comparativo Claude x Codex (2026-10-21, `docs/memoria/comparativo-2026-10-21.md`): ordem dos papéis mantida; quem revisa o Codex procura mudança de comportamento que ninguém pediu.
 - Papéis trocáveis (2026-10-21): detectar falta de cota pelo texto da mensagem de limite; pausar por 5 horas; o modelo local nunca planeja nem revisa.
 - Claude planeja e revisa; Codex executa. Tamanho da tarefa define o esforço (`--effort low/medium/high`).
 - Só assinaturas (Claude Pro/Max e ChatGPT) pelas CLIs. Nenhuma chave de API.
@@ -33,6 +34,8 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - PC: RX 6600M 8 GB e 16 GB de RAM quase cheios. Acima de contexto 8192 o 7B não cabe.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
+
+- O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
