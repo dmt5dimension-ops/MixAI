@@ -103,7 +103,13 @@ def main(base, head):
     pr = ler_evento()
     escopo = escopo_declarado(pr.get("body"))
     labels = {l["name"] for l in pr.get("labels", [])}
-    mudados = [l for l in git("diff", "--name-only", f"{base}...{head}").splitlines() if l]
+    # --no-renames: uma renomeacao aparece como apagar a origem + criar o destino, e as duas pontas
+    # precisam estar no escopo (senao da para tirar um arquivo de fora do escopo movendo-o).
+    mudados = []
+    for linha in git("diff", "--name-status", "--no-renames", f"{base}...{head}").splitlines():
+        partes = linha.split("\t", 1)
+        if len(partes) == 2 and partes[1] not in mudados:
+            mudados.append(partes[1])
 
     if not escopo:
         print("A descricao do PR nao tem a secao '## Escopo' com a lista do que pode mudar.")

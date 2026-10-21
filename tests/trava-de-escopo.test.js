@@ -146,3 +146,32 @@ test("arquivo com acento no nome é comparado pelo nome real, não por \\303\\24
   assert.strictEqual(fora.codigo, 1, fora.saida);
   assert.match(fora.saida, /src\/ação\.js/);
 });
+
+test("mover arquivo de fora do escopo para dentro do escopo é barrado (confere a origem)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escopo-mv-"));
+  const git = (...args) => execFileSync("git", args, { cwd: dir });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  fs.mkdirSync(path.join(dir, "privado"));
+  fs.writeFileSync(path.join(dir, "privado", "segredo.txt"), "conteudo bem longo para o git reconhecer a renomeacao\n".repeat(5));
+  git("add", ".");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD").toString().trim();
+  fs.mkdirSync(path.join(dir, "src"));
+  git("mv", "privado/segredo.txt", "src/segredo.txt");
+  git("commit", "-qm", "mover");
+  const head = git("rev-parse", "HEAD").toString().trim();
+  const evento = path.join(dir, "..", path.basename(dir) + "-evento.json");
+  fs.writeFileSync(evento, JSON.stringify({ pull_request: { body: escopo("src/"), labels: [] } }));
+  const r = spawnSync(PYTHON, [SCRIPT, base, head], { cwd: dir, env: { ...process.env, GITHUB_EVENT_PATH: evento }, encoding: "utf8" });
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /privado\/segredo\.txt/);
+});
+
+test("CODEX.md confere as chaves de API sem mostrar o valor", () => {
+  const texto = fs.readFileSync(path.resolve(__dirname, "..", "CODEX.md"), "utf8");
+  assert.doesNotMatch(texto, /Get-ChildItem\s+Env:/i);
+  assert.doesNotMatch(texto, /\b(printenv|Get-Item\s+Env:|\$env:\w*KEY)/i);
+  assert.match(texto, /Test-Path "Env:\$n"/);
+});
