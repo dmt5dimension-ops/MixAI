@@ -24,7 +24,11 @@ foreach ($v in $variaveis.GetEnumerator()) {
 Stop-Process -Name 'ollama app', 'ollama', 'llama-server' -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 # Sobe só o servidor, escondido. O "ollama app" abriria uma janela na tela do dono.
-Start-Process "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" -ArgumentList 'serve' -WindowStyle Hidden
+# O log vai para mixai-servidor.log (o Ollama escreve o log na saída de erro), para dar para ver se o modelo foi para a placa.
+# O desvio do log é feito pelo cmd: com -RedirectStandardError o servidor herda a saída deste script
+# e quem roda o modo.ps1 esperando a saída fica preso para sempre.
+$log = "$env:LOCALAPPDATA\Ollama\mixai-servidor.log"
+Start-Process cmd -ArgumentList '/c', "`"`"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe`"", 'serve', "2> `"$log`"`"" -WindowStyle Hidden
 for ($i = 0; $i -lt 30 -and -not (Get-Process ollama -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
 Start-Sleep -Seconds 3
 

@@ -16,6 +16,13 @@ node orquestra/escada.js regras      # lista as regras salvas
 node orquestra/escada.js exportar    # gera orquestra/casos/treino.jsonl
 ```
 
+## Proteção do PC
+
+- O modelo local é chamado sempre por `node local/rodar-local.js` (a escada e o `chamar.js` já fazem isso). Ele confere a memória livre do Windows antes de carregar o modelo. Abaixo do mínimo de `local/protecao.json` (2 GB), ele não chama o Ollama e sai com erro, e a tarefa sobe para o Codex.
+- O `mixai-local` é criado com `num_gpu 99`: o modelo vai inteiro para a placa de vídeo. Se não couber, ele falha em vez de cair para o processador. No processador ele ocupou 8,2 GB de RAM e travou o PC.
+- **Proibido** mandar `num_gpu: 0` (ou qualquer opção que tire o modelo da placa) pela API do Ollama ou no Modelfile. Um teste (`tests/protecao-local.test.js`) recusa isso em `orquestra/` e `local/`.
+- O log do servidor fica em `%LOCALAPPDATA%\Ollama\mixai-servidor.log` (recriado a cada `local\modo.ps1`). Procure `offloaded` para ver se o modelo foi para a placa.
+
 ## O que fica guardado
 
 - `orquestra/regras-locais.json`: regras confirmadas. Só entra aqui a regra com a qual o local **realmente acertou**; regra que não funcionou é descartada. Cada regra tem palavras-chave, texto, exemplo, quem escreveu e quando.
