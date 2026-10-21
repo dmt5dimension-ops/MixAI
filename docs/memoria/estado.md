@@ -15,6 +15,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
 | Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor | `tests/protecao-local.test.js` |
 | Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) | `tests/preparar-repo.test.js` |
+| Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso | `tests/preparar-repo.test.js` |
 
 ## Em andamento
 
