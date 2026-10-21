@@ -1,0 +1,73 @@
+[
+  {
+    "id": 1,
+    "texto": "Em 21 de outubro de 2026, a Clínica Aurora relatou que o painel fica em branco após o login. A fatura de R$ 2.021,00 vence em 30 de outubro de 2026; esse vencimento não é a data do relato.",
+    "cliente": ["Clínica Aurora", "Clinica Aurora"],
+    "data_iso": "2026-10-21",
+    "erro": ["painel", "branco"]
+  },
+  {
+    "id": 2,
+    "texto": "Chamado 70826: Marina Lopes escreveu em 7 de nov. de 2026 que o botão de exportar CSV gera arquivo vazio. Paulo, do suporte interno, apenas encaminhou a mensagem.",
+    "cliente": ["Marina Lopes"],
+    "data_iso": "2026-11-07",
+    "erro": ["csv", "vazio"]
+  },
+  {
+    "id": 3,
+    "texto": "Hoje, a empresa Vértice Logística avisou que recebe erro 403 ao tentar abrir os anexos. O protocolo é 482176, apenas o identificador do chamado.",
+    "cliente": ["Vértice Logística", "Vertice Logistica"],
+    "data_iso": null,
+    "erro": ["403", "anexos"]
+  },
+  {
+    "id": 4,
+    "texto": "Semana passada, João Mendes comunicou que os avisos por e-mail chegaram duplicados. Ana, funcionária da equipe, registrou a ocorrência; a empresa Nuvem Clara só fornece o serviço de envio.",
+    "cliente": ["João Mendes", "Joao Mendes"],
+    "data_iso": null,
+    "erro": ["avisos", "duplicados"]
+  },
+  {
+    "id": 5,
+    "texto": "Em 3 de set. de 2025, a Padaria Sol Nascente reportou que a cobrança de R$ 93,50 aparece duas vezes no extrato. O boleto vence em 15/09/2025.",
+    "cliente": ["Padaria Sol Nascente"],
+    "data_iso": "2025-09-03",
+    "erro": ["cobrança", "duas vezes"]
+  },
+  {
+    "id": 6,
+    "texto": "Registro automático de 14 de fevereiro de 2024, sem identificação de cliente ou remetente: a página de pagamentos retorna erro 500 ao confirmar uma compra de R$ 14,02.",
+    "cliente": null,
+    "data_iso": "2024-02-14",
+    "erro": ["pagamentos", "500"]
+  },
+  {
+    "id": 7,
+    "texto": "Em 9 de março de 2023, Beatriz Costa escreveu apenas para confirmar o encerramento do chamado 90323: tudo funciona normalmente e não há problema a relatar.",
+    "cliente": ["Beatriz Costa"],
+    "data_iso": "2023-03-09",
+    "erro": null
+  },
+  {
+    "id": 8,
+    "texto": "Relato feito em 12 de abr. de 2025 por Renata Almeida: o aplicativo fecha sozinho ao tocar em 'Histórico'. Carlos, analista interno, falou com Tiago, técnico da operadora, depois do relato.",
+    "cliente": ["Renata Almeida"],
+    "data_iso": "2025-04-12",
+    "erro": ["aplicativo", "fecha sozinho"]
+  },
+  {
+    "id": 9,
+    "texto": "Em 31 de dezembro de 2024, a Oficina Três Irmãos informou que o desconto de 10% não é aplicado no pedido nº 311224, de R$ 2.400,00. O pedido foi criado em 28 de dezembro de 2024.",
+    "cliente": ["Oficina Três Irmãos", "Oficina Tres Irmaos"],
+    "data_iso": "2024-12-31",
+    "erro": ["desconto", "não é aplicado"]
+  },
+  {
+    "id": 10,
+    "texto": "A mensagem de Fábio Reis foi recebida em 5 de jan. de 2026: o sistema impede a troca de senha com a mensagem 'token expirado'. A assinatura vence em 17 de fevereiro de 2026; Lúcia, da equipe interna, ainda não respondeu.",
+    "cliente": ["Fábio Reis", "Fabio Reis"],
+    "data_iso": "2026-01-05",
+    "erro": ["troca de senha", "token expirado"]
+  }
+]
+

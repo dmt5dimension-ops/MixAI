@@ -2,7 +2,8 @@
 // Uso: node run.js   (Ollama em 127.0.0.1:11434). Nenhuma API paga.
 const fs = require('node:fs');
 const path = require('node:path');
-const casos = JSON.parse(fs.readFileSync(path.join(__dirname, 'casos.json'), 'utf8'));
+const arq = process.argv[2] || 'casos.json';
+const casos = JSON.parse(fs.readFileSync(path.join(__dirname, arq), 'utf8'));
 const receita = fs.readFileSync(path.join(__dirname, 'receita.md'), 'utf8').trim();
 const MODELO = 'mixai-local';
 const base = 'Retorne só JSON com as chaves cliente, data_iso, erro.';
@@ -59,6 +60,6 @@ function avaliar(resp, caso) {
     console.log(`#${caso.id} formato:${res.formato.estritoOk ? 'OK' : res.formato.conteudoOk ? 'ok-cerca' : 'X'} sem:${res.sem.estritoOk ? 'OK' : res.sem.conteudoOk ? 'ok-cerca' : 'X'} com:${res.com.estritoOk ? 'OK' : res.com.conteudoOk ? 'ok-cerca' : 'X'}`);
   }
   const out = { modelo: MODELO, data: new Date().toISOString(), casos: casos.length, receita_chars: receita.length, placar, linhas };
-  fs.writeFileSync(path.join(__dirname, 'resultado.json'), JSON.stringify(out, null, 2) + '\n');
+  fs.writeFileSync(path.join(__dirname, arq === 'casos.json' ? 'resultado.json' : 'resultado-' + arq), JSON.stringify(out, null, 2) + '\n');
   console.log(JSON.stringify({ placar, receita_chars: receita.length }));
 })();

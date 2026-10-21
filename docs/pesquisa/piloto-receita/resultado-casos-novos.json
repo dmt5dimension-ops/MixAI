@@ -1,0 +1,278 @@
+{
+  "modelo": "mixai-local",
+  "data": "2026-10-21T21:35:39.086Z",
+  "casos": 10,
+  "receita_chars": 999,
+  "placar": {
+    "sem": {
+      "estrito": 0,
+      "conteudo": 6
+    },
+    "formato": {
+      "estrito": 2,
+      "conteudo": 5
+    },
+    "com": {
+      "estrito": 10,
+      "conteudo": 10
+    }
+  },
+  "linhas": [
+    {
+      "id": 1,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Clínica Aurora\",\n  \"data_iso\": \"2026-10-21\",\n  \"erro\": \"Painel fica em branco após o login\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": \"Clínica Aurora\",\n  \"data_iso\": \"2026-10-21\",\n  \"erro\": \"painel fica em branco após o login\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Clínica Aurora\",\"data_iso\":\"2026-10-21\",\"erro\":\"o painel fica em branco após o login\"}"
+      }
+    },
+    {
+      "id": 2,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Marina Lopes\",\n  \"data_iso\": \"2026-11-07\",\n  \"erro\": \"O botão de exportar CSV gera arquivo vazio\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Marina Lopes\",\n  \"data_iso\": \"2026-11-07\",\n  \"erro\": \"Arquivo CSV vazio\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Marina Lopes\",\"data_iso\":\"2026-11-07\",\"erro\":\"o botão de exportar CSV gera arquivo vazio\"}"
+      }
+    },
+    {
+      "id": 3,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "data_iso=\"2023-04-14T10:00:00Z\"",
+          "erro=\"403\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Vértice Logística\",\n  \"data_iso\": \"2023-04-14T10:00:00Z\",\n  \"erro\": \"403\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "erro=\"403\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Vértice Logística\",\n  \"data_iso\": null,\n  \"erro\": \"403\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Vértice Logística\",\"data_iso\":null,\"erro\":\"recebe erro 403 ao tentar abrir os anexos\"}"
+      }
+    },
+    {
+      "id": 4,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "data_iso=\"2023-04-10T00:00:00Z\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"João Mendes\",\n  \"data_iso\": \"2023-04-10T00:00:00Z\",\n  \"erro\": \"Avisos por e-mail chegaram duplicados\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"João Mendes\",\n  \"data_iso\": null,\n  \"erro\": \"Avisos por e-mail chegaram duplicados\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"João Mendes\",\"data_iso\":null,\"erro\":\"os avisos por e-mail chegaram duplicados\"}"
+      }
+    },
+    {
+      "id": 5,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Padaria Sol Nascente\",\n  \"data_iso\": \"2025-09-03\",\n  \"erro\": \"Cobrança de R$ 93,50 aparece duas vezes no extrato\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "erro=\"Cobrança duplicada no extrato\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Padaria Sol Nascente\",\n  \"data_iso\": \"2025-09-03\",\n  \"erro\": \"Cobrança duplicada no extrato\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"a Padaria Sol Nascente\",\"data_iso\":\"2025-09-03\",\"erro\":\"a cobrança de R$ 93,50 aparece duas vezes no extrato\"}"
+      }
+    },
+    {
+      "id": 6,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "erro=\"500\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": null,\n  \"data_iso\": \"2024-02-14\",\n  \"erro\": \"500\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "erro=\"500\""
+        ],
+        "resposta": "{\n  \"cliente\": null,\n  \"data_iso\": \"2024-02-14\",\n  \"erro\": \"500\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":null,\"data_iso\":\"2024-02-14\",\"erro\":\"a página de pagamentos retorna erro 500 ao confirmar uma compra de R$ 14,02\"}"
+      }
+    },
+    {
+      "id": 7,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Beatriz Costa\",\n  \"data_iso\": \"2023-03-09\",\n  \"erro\": null\n}\n```"
+      },
+      "formato": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\n  \"cliente\": \"Beatriz Costa\",\n  \"data_iso\": \"2023-03-09\",\n  \"erro\": null\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Beatriz Costa\",\"data_iso\":\"2023-03-09\",\"erro\":null}"
+      }
+    },
+    {
+      "id": 8,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Renata Almeida\",\n  \"data_iso\": \"2025-04-12\",\n  \"erro\": \"Aplicativo fecha sozinho ao tocar em 'Histórico'\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Renata Almeida\",\n  \"data_iso\": \"2025-04-12\",\n  \"erro\": \"Aplicativo fecha sozinho ao tocar em 'Histórico'\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Renata Almeida\",\"data_iso\":\"2025-04-12\",\"erro\":\"o aplicativo fecha sozinho ao tocar em 'Histórico'\"}"
+      }
+    },
+    {
+      "id": 9,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": true,
+        "detalhe": [
+          "cercado em markdown"
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Oficina Três Irmãos\",\n  \"data_iso\": \"2024-12-31\",\n  \"erro\": \"O desconto de 10% não é aplicado no pedido nº 311224, de R$ 2.400,00.\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cliente=null",
+          "erro=\"Desconto de 10% não aplicado no pedido\""
+        ],
+        "resposta": "{\n  \"cliente\": null,\n  \"data_iso\": \"2024-12-31\",\n  \"erro\": \"Desconto de 10% não aplicado no pedido\"\n}"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Oficina Três Irmãos\",\"data_iso\":\"2024-12-31\",\"erro\":\"o desconto de 10% não é aplicado no pedido\"}"
+      }
+    },
+    {
+      "id": 10,
+      "sem": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "erro=\"token expirado\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": \"Fábio Reis\",\n  \"data_iso\": \"2026-01-05\",\n  \"erro\": \"token expirado\"\n}\n```"
+      },
+      "formato": {
+        "estritoOk": false,
+        "conteudoOk": false,
+        "detalhe": [
+          "cercado em markdown",
+          "cliente=null",
+          "erro=\"token expirado\""
+        ],
+        "resposta": "```json\n{\n  \"cliente\": null,\n  \"data_iso\": \"2026-01-05\",\n  \"erro\": \"token expirado\"\n}\n```"
+      },
+      "com": {
+        "estritoOk": true,
+        "conteudoOk": true,
+        "detalhe": [],
+        "resposta": "{\"cliente\":\"Fábio Reis\",\"data_iso\":\"2026-01-05\",\"erro\":\"o sistema impede a troca de senha com a mensagem 'token expirado'\"}"
+      }
+    }
+  ]
+}
