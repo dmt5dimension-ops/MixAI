@@ -6,8 +6,7 @@ Scripts para montar o ambiente do orquestrador no Windows 11.
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\ferramentas\instalar.ps1
    ```
-2. `preparar-repo.ps1`: aplica as regras e o CI em outro repositório. Este repositório já está preparado.
-3. `primeiro-pedido.md`: texto para colar no coordenador do Agent Orchestrator.
+2. `primeiro-pedido.md`: texto para colar no coordenador do Agent Orchestrator.
 
 ## Só assinatura, sem API
 
