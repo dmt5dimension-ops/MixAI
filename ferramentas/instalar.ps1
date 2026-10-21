@@ -41,6 +41,22 @@ function Install-ViaWinget($comando, $id) {
     else { Write-Aviso "$comando instalado, mas so aparece no PATH depois de abrir um novo terminal" }
 }
 
+Write-Passo 'Conferindo que nada vai cobrar por API (so assinatura)'
+$chavesApi = @('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY')
+$achadas = @()
+foreach ($nome in $chavesApi) {
+    foreach ($escopo in @('User', 'Machine', 'Process')) {
+        if ([Environment]::GetEnvironmentVariable($nome, $escopo)) { $achadas += "$nome ($escopo)" }
+    }
+}
+if ($achadas.Count -gt 0) {
+    Write-Aviso "estas variaveis fazem o Claude Code ou o Codex cobrarem por API em vez da assinatura: $($achadas -join ', ')"
+    Write-Host  '    Para remover (variaveis de usuario), rode:'
+    foreach ($nome in $chavesApi) { Write-Host "      [Environment]::SetEnvironmentVariable('$nome', `$null, 'User')" }
+} else {
+    Write-Ok 'nenhuma chave de API configurada'
+}
+
 Write-Passo 'Pre-requisitos (Git, Node.js LTS, GitHub CLI)'
 Install-ViaWinget 'git' 'Git.Git'
 Install-ViaWinget 'node' 'OpenJS.NodeJS.LTS'
@@ -118,8 +134,8 @@ if (-not $PularOrchestrator) {
 
 Write-Passo 'Falta voce fazer (uma vez so)'
 Write-Host '  1. Login nas ferramentas, num terminal novo:'
-Write-Host '       claude            (siga o login no navegador)'
-Write-Host '       codex login'
+Write-Host '       claude            (entre com a conta da assinatura Claude Pro/Max, NAO com chave de API)'
+Write-Host '       codex login       (escolha "Sign in with ChatGPT", NAO "API key")'
 Write-Host '       gh auth login'
 Write-Host '  2. Superpowers no Codex: abra o Codex, digite /plugins, busque "superpowers" e escolha Install Plugin.'
 Write-Host '  3. No Claude Code, rode /codex:setup para conferir a ponte com o Codex.'
