@@ -7,12 +7,12 @@ O PR precisa ter na descrição uma seção:
     - src/tela/
 
 Cada item é um arquivo, uma pasta (terminada em /) ou um padrão com * (ex.: src/*.css).
+* não entra em subpastas; use ** para isso (ex.: src/**/*.css).
 Arquivos de teste e a memória do projeto (docs/memoria/) sempre podem mudar.
 A label permitir-fora-do-escopo, colocada pelo humano, libera.
 
 Uso: python trava_de_escopo.py <sha-base> <sha-head>
 """
-import fnmatch
 import json
 import os
 import re
@@ -66,13 +66,32 @@ def escopo_declarado(corpo):
     return itens
 
 
+def casa_padrao(arquivo, padrao):
+    """Glob em que * e ? nao atravessam pasta; ** atravessa."""
+    regex = ""
+    i = 0
+    while i < len(padrao):
+        c = padrao[i]
+        if padrao[i:i + 3] == "**/":
+            regex += "(?:.*/)?"
+            i += 3
+            continue
+        if padrao[i:i + 2] == "**":
+            regex += ".*"
+            i += 2
+            continue
+        regex += "[^/]*" if c == "*" else "[^/]" if c == "?" else re.escape(c)
+        i += 1
+    return re.fullmatch(regex, arquivo) is not None
+
+
 def permitido(arquivo, escopo):
     if SEMPRE_PERMITIDO.search(arquivo):
         return True
     for item in escopo:
         if item.endswith("/") and arquivo.startswith(item):
             return True
-        if fnmatch.fnmatch(arquivo, item):
+        if casa_padrao(arquivo, item):
             return True
         if arquivo in PARES.get(os.path.basename(item), []) and os.path.dirname(arquivo) == os.path.dirname(item):
             return True

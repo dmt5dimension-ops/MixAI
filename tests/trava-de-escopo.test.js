@@ -93,3 +93,14 @@ test("label permitir-fora-do-escopo libera", () => {
   const r = rodar(["src/a.js", "src/b.js"], escopo("src/a.js"), ["permitir-fora-do-escopo"]);
   assert.strictEqual(r.codigo, 0, r.saida);
 });
+
+test("* nao entra em subpasta (src/*.css nao libera src/privado/segredo.css)", () => {
+  const r = rodar(["src/a.css", "src/privado/segredo.css"], escopo("src/*.css"));
+  assert.strictEqual(r.codigo, 1, r.saida);
+  assert.match(r.saida, /src\/privado\/segredo\.css/);
+});
+
+test("** entra em subpastas", () => {
+  const r = rodar(["src/a.css", "src/privado/segredo.css"], escopo("src/**/*.css"));
+  assert.strictEqual(r.codigo, 0, r.saida);
+});
