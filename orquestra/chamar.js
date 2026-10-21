@@ -122,7 +122,8 @@ function principal(argumentos) {
   const comandos = {
     claude: 'claude -p --output-format json --permission-mode acceptEdits --allowedTools "Bash(npm test:*)" "Bash(git status:*)" "Bash(git diff:*)"',
     codex: 'codex exec -s workspace-write -',
-    local: 'ollama run mixai-local',
+    // Passa pelo rodar-local.js, que confere a memória livre antes de carregar o modelo.
+    local: `node "${path.join(__dirname, '..', 'local', 'rodar-local.js')}"`,
   };
 
   while (true) {
