@@ -176,7 +176,8 @@ function chamarComando(comando) {
 const TEMPO_MAXIMO_MS = 10 * 60 * 1000;
 
 const COMANDOS = {
-  local: 'ollama run mixai-local',
+  // Passa pelo rodar-local.js, que confere a memória livre antes de carregar o modelo.
+  local: `node "${path.join(__dirname, '..', 'local', 'rodar-local.js')}"`,
   codex: 'codex exec -s read-only -',
   claude: 'claude -p',
 };
