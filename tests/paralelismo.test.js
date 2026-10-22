@@ -1467,7 +1467,7 @@ test("sem conseguir a trava da reserva nenhuma vaga NOVA é concedida (só mant�
   c.liberar();
 }));
 
-test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fica até os processos morrerem ou expirar, e some depois", async () => {
+test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fica até os processos morrerem ou expirar, e some depois", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "retida-"));
   const arquivoEstado = path.join(dir, "e.json");
   const pasta = `${arquivoEstado}.lotes`;
@@ -1477,12 +1477,14 @@ test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fic
     const controle = mk();
     const teto = modos.noite.agentesMax;
     // o lote concede vagas e termina com morte não confirmada de um agente (processo "vivo": este mesmo processo)
-    const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: process.pid }); };
+    const vivo = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)"], { stdio: "ignore" });
+    t.after?.(() => { try { vivo.kill("SIGKILL"); } catch { /* já foi */ } });
+    const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: vivo.pid }); };
     await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), /o lote parou/);
     const guardadas = fs.readdirSync(pasta).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(fs.readFileSync(path.join(pasta, n), "utf8")));
     assert.strictEqual(guardadas.length, 1, "a reserva ficou");
     assert.strictEqual(guardadas[0].reservado, 1);
-    assert.deepStrictEqual(guardadas[0].retidos, [process.pid]);
+    assert.deepStrictEqual(guardadas[0].retidos, [vivo.pid]);
     // outro lote só recebe o que sobra: 1 vaga continua retida
     const outro = mk();
     assert.strictEqual(outro({ agentesLocais: 0 }), teto - 1, "uma vaga está retida pelo agente que pode estar vivo");
@@ -1490,8 +1492,9 @@ test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fic
     // expira (10 min): a vaga volta
     agora += 11 * 60 * 1000;
     const depois = mk();
-    assert.strictEqual(depois({ agentesLocais: 0 }), teto, "retenção expirada");
+    assert.strictEqual(depois({ agentesLocais: 0 }), teto, "retenção expirada MESMO com o processo retido ainda vivo");
     depois.liberar();
+    try { vivo.kill("SIGKILL"); } catch { /* já foi */ }
   });
   // quando o processo retido já morreu, a vaga volta na hora
   const morto = path.join(pasta, "retido-morto.json");
@@ -1534,3 +1537,94 @@ test("ESCADA.md não diz mais que dois lotes passam do teto", () => {
   assert.doesNotMatch(doc, /o total pode passar do teto/);
   assert.doesNotMatch(doc, /o arquivo de estado não reserva vagas/);
 });
+
+// --- Rodada do Codex no #27: validade, retenção pelo Job, gravação dentro da trava -----------------------------------
+
+const controleCom = (arquivoEstado, agora, extra = {}) => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora.v, cacheMs: 0, modos, config, ...extra });
+
+test("reserva de lote com PID vivo mas sem batimento (velha) e com data no futuro NÃO vale: PID vivo sozinho não prende a vaga", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "validade-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.mkdirSync(pasta, { recursive: true });
+  fs.writeFileSync(path.join(pasta, "velho.json"), JSON.stringify({ reservado: 3, pid: process.pid, em: agora.v - 61000 }));
+  fs.writeFileSync(path.join(pasta, "futuro.json"), JSON.stringify({ reservado: 3, pid: process.pid, em: agora.v + 10 * 3600 * 1000 }));
+  const c = controleCom(arquivoEstado, agora);
+  assert.strictEqual(c({ agentesLocais: 0 }), modos.noite.agentesMax, "nenhuma das duas segura vaga");
+  c.liberar();
+}));
+
+test("retenção pelo Job: vale enquanto o Job não estiver vazio, some quando ele esvazia, e nunca passa do limite de tempo mesmo com o Job vivo", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "job-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  const estado = { "Local\\MixAI-a": true };
+  const consultas = [];
+  const jobVivo = (nome) => { consultas.push(nome); return estado[nome]; };
+  const retida = (extra = {}) => fs.writeFileSync(path.join(pasta, "retida.json"), JSON.stringify({ reservado: 1, retidos: [2147483000], jobs: ["Local\\MixAI-a"], ate: agora.v + 600000, em: agora.v, ...extra }));
+  fs.mkdirSync(pasta, { recursive: true });
+  retida(); // o PID do wrapper está morto, mas o Job tem processo: continua retida
+  let c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto - 1, "Job com processo vivo segura a vaga");
+  assert.deepStrictEqual(consultas, ["Local\\MixAI-a"]);
+  c.liberar();
+  estado["Local\\MixAI-a"] = null; // não deu para saber: segue retida até o limite
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto - 1, "inconclusivo: mantém");
+  c.liberar();
+  agora.v += 11 * 60 * 1000; estado["Local\\MixAI-a"] = true; // Job vivo, mas passou do limite
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "passou dos 10 minutos: some mesmo com o Job vivo");
+  c.liberar();
+  retida({ ate: agora.v + 600000, em: agora.v }); estado["Local\\MixAI-a"] = false;
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "Job vazio: a vaga volta na hora");
+  c.liberar();
+  retida({ ate: agora.v + 24 * 3600 * 1000 }); estado["Local\\MixAI-a"] = true; // `ate` adulterado para o futuro distante
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "retenção com prazo acima do limite é inválida");
+  c.liberar();
+}));
+
+test("o erro naoConfirmado do comando leva o NOME DO JOB e o lote passa os Jobs para a reserva", async () => {
+  const { spawn } = require("node:child_process");
+  const ctl = new AbortController();
+  let filho;
+  const p = escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] })), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 50);
+  const e = await p.catch((x) => x);
+  try { filho.kill("SIGKILL"); } catch { /* já foi */ }
+  assert.match(e.jobNome, /^Local\\MixAI-[0-9a-f]+$/);
+  let recebido;
+  const paralelismo = Object.assign(() => 1, { liberar: (r) => { recebido = r; } });
+  const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: 4242, jobNome: "Local\\MixAI-zz" }); };
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), /o lote parou/);
+  assert.deepStrictEqual(recebido, { naoConfirmados: 1, pids: [4242], jobs: ["Local\\MixAI-zz"] });
+});
+
+test("retenção é gravada ANTES de apagar a reserva; se a gravação falha a reserva NÃO é apagada; limpeza de outro lote não apaga retenção válida", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grava-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  const a = controleCom(arquivoEstado, agora);
+  assert.strictEqual(a({ agentesLocais: 0 }), teto);
+  const arq = () => fs.readdirSync(pasta).filter((n) => n.endsWith(".json"));
+  const [meu] = arq();
+  // gravação impossível (o temporário é uma pasta): a reserva original continua lá
+  fs.mkdirSync(path.join(pasta, `${meu}.tmp`));
+  a.liberar({ naoConfirmados: 1, pids: [], jobs: ["Local\\MixAI-a"] });
+  assert.deepStrictEqual(arq(), [meu], "a reserva não foi apagada");
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(pasta, meu), "utf8")).reservado, teto);
+  fs.rmdirSync(path.join(pasta, `${meu}.tmp`));
+  // outro lote limpando: uma retenção válida (Job vivo) fica
+  const b = controleCom(arquivoEstado, agora, { jobVivo: () => true });
+  fs.writeFileSync(path.join(pasta, "retida.json"), JSON.stringify({ reservado: 1, retidos: [], jobs: ["Local\\MixAI-a"], ate: agora.v + 600000, em: agora.v }));
+  b({ agentesLocais: 0 });
+  assert.ok(arq().includes("retida.json"), "a limpeza não apaga retenção válida");
+  b.liberar();
+}));

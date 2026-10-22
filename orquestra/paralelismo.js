@@ -246,32 +246,55 @@ function criarTrava(base, { esperaMs = 2000 } = {}) {
     }
   };
 }
-function criarReserva({ pasta, relogio }) {
+// Windows: pergunta ao Job Object (por nome) se ainda há processo dentro. true = vivo, false = vazio/fechado, null = não deu para saber.
+function jobVivoPadrao(nome) {
+  if (process.platform !== 'win32') return null;
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'job-confirmar-windows.ps1'), '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true });
+    if (r.error || r.status !== 0) return null;
+    const resposta = String(r.stdout).trim().split(/\r?\n/).pop();
+    if (resposta === 'FECHADO' || resposta === 'VAZIO') return false;
+    return /^VIVOS \d+$/.test(resposta) ? true : null;
+  } catch { return null; }
+}
+
+function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao }) {
   const id = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
   const comTrava = criarTrava(`${pasta}.trava`);
   const meu = path.join(pasta, `${id}.json`);
   let retido = false;
   const valida = (r) => {
     if (!r || !Number.isInteger(r.reservado) || r.reservado < 0 || !numeroValido(r.em, 0)) return false;
+    if (r.em - relogio() > VALIDADE_LOTE_MS) return false; // data no futuro não prolonga nada
     if (Array.isArray(r.retidos) && r.ate !== undefined) {
-      // Reserva retida por morte não confirmada: vale até os processos morrerem (se não souber quais, até `ate`).
+      // Reserva retida por morte não confirmada: NUNCA passa do limite de tempo (`ate`, no máximo RETENCAO_MS depois de `em`);
+      // dentro dele vale enquanto o Job (ou, sem Job, o PID) retido não estiver morto. Sem saber quais, vale até `ate`.
+      if (!numeroValido(r.ate, 0) || r.ate - r.em > RETENCAO_MS || relogio() > r.ate) return false;
+      const jobs = Array.isArray(r.jobs) ? r.jobs.filter((j) => typeof j === 'string' && j) : [];
+      if (jobs.length) return jobs.some((j) => { try { return jobVivo(j) !== false; } catch { return true; } });
       const pids = r.retidos.filter(Number.isInteger);
-      return relogio() <= r.ate && (pids.length === 0 || pids.some(pidVivo));
+      return pids.length === 0 || pids.some(pidVivo);
     }
     return Number.isInteger(r.pid) && relogio() - r.em <= VALIDADE_LOTE_MS && pidVivo(r.pid);
   };
-  // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade) e `pids`, mantém essa quantidade de vagas retida.
-  const liberar = ({ naoConfirmados = 0, pids = [] } = {}) => {
+  // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade), `pids` e `jobs`, mantém essa quantidade de vagas retida:
+  // a retenção é gravada (por rename atômico sobre a própria reserva, dentro da trava) ANTES de qualquer remoção, e se a gravação
+  // falhar a reserva NÃO é apagada (continua valendo até expirar).
+  const liberar = ({ naoConfirmados = 0, pids = [], jobs = [] } = {}) => {
     if (retido) return;
     if (naoConfirmados > 0) {
-      try {
+      const gravar = () => {
         fs.mkdirSync(pasta, { recursive: true });
         const temporario = `${meu}.tmp`;
-        fs.writeFileSync(temporario, JSON.stringify({ reservado: naoConfirmados, retidos: pids.filter(Number.isInteger), ate: relogio() + RETENCAO_MS, em: relogio() }), { mode: 0o600 });
+        fs.writeFileSync(temporario, JSON.stringify({ reservado: naoConfirmados, retidos: pids.filter(Number.isInteger), jobs: jobs.filter((j) => typeof j === 'string' && j), ate: relogio() + RETENCAO_MS, em: relogio() }), { mode: 0o600 });
         fs.renameSync(temporario, meu);
-        retido = true;
-        return;
-      } catch { /* sem como reter: devolve abaixo (limite conhecido) */ }
+        return true;
+      };
+      let gravou = false;
+      try { gravou = comTrava(gravar) === true; } catch { gravou = false; }
+      if (!gravou) { try { gravou = gravar(); } catch { gravou = false; } } // sem trava: o rename continua atômico
+      retido = true; // gravada ou não, a reserva existente NUNCA é apagada aqui; a retenção/validade decide quando ela some
+      return;
     }
     try { fs.unlinkSync(meu); } catch { /* não havia */ }
   };
@@ -298,9 +321,9 @@ function criarReserva({ pasta, relogio }) {
 }
 
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
-function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, pastaLotes = `${arquivoEstado}.lotes`, modos, config, aoDecidir } = {}) {
+function criarControle({ jobVivo, leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, pastaLotes = `${arquivoEstado}.lotes`, modos, config, aoDecidir } = {}) {
   let ultimo = null;
-  const reserva = criarReserva({ pasta: pastaLotes, relogio });
+  const reserva = criarReserva({ pasta: pastaLotes, relogio, jobVivo });
   // Leitor assíncrono: a leitura roda em segundo plano e a decisão usa a última pronta. Sem leitura recente (a primeira
   // vez, ou uma que demorou demais) vale "indisponível" = usando o PC = 1 agente.
   let pronta = null;
