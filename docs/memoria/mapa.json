@@ -466,12 +466,6 @@
       "exporta": []
     },
     {
-      "arquivo": "tests/gitattributes.test.js",
-      "descricao": "Evita conflito de mesclagem em listas que todo PR acrescenta (estado.md, ESCADA.md): merge=union mantém as duas metades.",
-      "funcoes": [],
-      "exporta": []
-    },
-    {
       "arquivo": "tests/guarda-testes.test.js",
       "descricao": "Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.",
       "funcoes": [

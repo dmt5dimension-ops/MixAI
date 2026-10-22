@@ -107,7 +107,6 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `local` (linha 407)
 - `tests/falhas-escada.test.js` — Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta
   - `rodar` (linha 16)
-- `tests/gitattributes.test.js` — Evita conflito de mesclagem em listas que todo PR acrescenta (estado.md, ESCADA.md): merge=union mantém as duas metades.
 - `tests/guarda-testes.test.js` — Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.
   - `rodar` (linha 12)
   - `git` (linha 14)
