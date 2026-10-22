@@ -23,6 +23,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) | `tests/escada.test.js` |
 | Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) | `tests/escada.test.js` |
 | Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) | `tests/escada.test.js` e `tests/falhas-escada.test.js` |
+| Paralelismo pelo uso do PC (etapa 5): 1 agente usando o PC, sobe um por vez parado até o teto (modo, placa 8 GB, memória), `--paralelo auto`, vaga só reaproveitada com o processo abortado morto, limite 0 aceito, `OLLAMA_NUM_PARALLEL` pelo modo (`orquestra/paralelismo.js`, `local/uso-windows.ps1`) | `tests/paralelismo.test.js` (leituras simuladas) |
 | Grafo persistente de tarefas (etapa 6): dependências, estados, tarefas prontas, travadas, validação de ciclo e escopo, gravação atômica (`orquestra/grafo.js`, `orquestra/grafo.json`) | `tests/grafo.test.js` |
 | Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (inclui conferir que o mapa real está em dia) |
 | Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar | `tests/aplicar.test.js` |
@@ -55,12 +56,15 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
+- `local/uso-windows.ps1` e o `OLLAMA_NUM_PARALLEL` pelo modo foram conferidos no PC do dono em 2026-10-22 (JSON com os campos, vídeo detectado, suíte verde). Falta conferir de novo a versão que veio depois da revisão: contadores que falham viram `null`, CPU do Ollama por processo, e o `taskkill` do `lote` ao reduzir agentes (rodar `node orquestra/paralelismo.js` e um lote com `--paralelo auto`, voltando a mexer no PC no meio).
 - Na nuvem (sem PowerShell) 3 testes ficam vermelhos por falta de `pwsh`: `modelo-local.test.js` (2 do `modo.ps1`) e `protecao-local.test.js` (num_gpu 99). Passam no PC do dono; na nuvem, comparar só com a `main`.
 - O texto de `orquestra/ESCADA.md` ainda diz que `tests/mapa.test.js` confere se o arquivo salvo está em dia; atualizar essa frase numa tarefa que inclua o arquivo no escopo.
 - O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
 - `tests/instalar.test.js` falha às vezes no PC do dono quando a memória está quase cheia (falhou 2 de 9 também na main). Não é falha do instalador; investigar numa tarefa própria.
+- Acompanhamento do paralelismo (etapa 5), apontado pelo Codex e deixado de fora de propósito: (1) fotos antigas da árvore de processos quando a leitura atual falha (`escada.js`, `matarArvore`/`orfaosVivos`); (2) apagar o arquivo temporário do prompt no Windows quando ainda está em uso; (3) `local/uso-windows.ps1` e o diagnóstico em `paralelismo.js`. Tarefa própria, sem mexer na etapa agora.
+- Últimos pontos do Codex no #19, deixados como tarefa de acompanhamento (o #19 está verde no PC e a decisão de parar as rodadas foi da coordenação): (a) [resolvido na rodada seguinte: a raiz é lida logo depois do spawn e o pid de hoje nunca é adotado como raiz]; (b) linhas malformadas da consulta CIM são descartadas em silêncio; (c) foto atual que falha é ignorada quando já existe foto antiga; (d) saída vazia de `processoVivoComCriacao` é tratada como "morto" (processo sumiu), e o Codex quer separar de "consulta falhou"; (e) os 60 s de espera no erro fatal não são o prazo total (cada chamada ainda pode demorar mais depois). Antes de tratar, medir no PC se algum deles acontece de verdade.
 - Ligar o vigia e a `escada.js` ao grafo (`orquestra/grafo.js`): hoje só o planejador e o Codex o usam pela linha de comando. Tarefa própria, mexe em arquivos de outras etapas.
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.

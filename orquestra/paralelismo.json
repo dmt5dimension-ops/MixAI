@@ -1,0 +1,18 @@
+{
+  "ocupado": {
+    "ociosoAbaixoDeSegundos": 90,
+    "gpuOutrosAcimaDePct": 30,
+    "cpuOutrosAcimaDePct": 60,
+    "videoDecodeAcimaDePct": 1
+  },
+  "validadeEstadoSegundos": 300,
+  "subidaMinSegundos": 60,
+  "maximoAbsoluto": 4,
+  "placa": {
+    "vramGB": 8,
+    "pesosGB": 4.7,
+    "reservaGB": 1.5,
+    "kvMBPorMilTokens": 57
+  },
+  "ramPorAgenteGB": 0.5
+}

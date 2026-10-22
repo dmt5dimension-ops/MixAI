@@ -3,8 +3,10 @@
 // Se acertar, a regra fica salva para as próximas vezes. Todo caso resolvido é registrado para treino futuro (LoRA).
 // Quem decide se a tarefa "cabe no local" é o Claude (o 7B erra ao julgar tamanho de tarefa).
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn, spawnSync, execFile } = require('node:child_process');
+const crypto = require('node:crypto');
 
 const pasta = __dirname;
 const ARQUIVOS = {
@@ -163,17 +165,171 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   return { ok: true, resolvidoPor: nome, saida, regrasUsadas: ids, regraSalva };
 }
 
-function chamarComando(comando) {
-  return (prompt) => new Promise((resolve, reject) => {
-    const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS });
-    let saida = '';
-    let erro = '';
-    filho.stdout.on('data', (d) => { saida += d; });
-    filho.stderr.on('data', (d) => { erro += d; });
-    filho.on('error', reject);
-    filho.on('close', (codigo) => (codigo === 0 ? resolve(saida) : reject(new Error(erro || `saiu com ${codigo}`))));
-    filho.stdin.on('error', () => {});
-    filho.stdin.end(prompt);
+// --- Matar o comando e tudo que ele criou -----------------------------------------------------------------------
+// Windows: o comando roda dentro de um Job Object (`orquestra/job-windows.ps1`). O wrapper entra no job ANTES de
+// iniciar o comando, então nenhum descendente nasce fora dele; o job tem KILL_ON_JOB_CLOSE e não permite escapar
+// (sem BREAKAWAY): quando o wrapper morre, o Windows mata o grupo inteiro. Matar é só matar o wrapper pela alça que o
+// próprio Node guarda, sem ler PID de ninguém (não existe PID reaproveitado, nem corrida entre ler e matar).
+// O orquestrador com paralelismo só roda no Windows: fora dele `chamarComando` recusa e não executa nada.
+const WRAPPER_JOB = path.join(__dirname, 'job-windows.ps1');
+const CONFIRMAR_JOB = path.join(__dirname, 'job-confirmar-windows.ps1');
+const argsDoWrapper = () => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', WRAPPER_JOB];
+
+// Pede a morte de toda a árvore. Devolve true se o pedido foi aceito; quem confirma a morte é a conferência depois do
+// 'close' (`orfaosVivos`).
+function matarArvore(filho) {
+  try { return filho.kill('SIGKILL') || filho.exitCode != null || filho.signalCode != null; } catch { return false; }
+}
+
+// Windows: pergunta ao próprio Job Object (por nome) se ainda há processo dentro, encerra o job e só dá por limpo quando
+// ele não existe mais ou está vazio. Devolve [] (limpo), uma lista de tamanho = processos que sobraram, ou null
+// (inconclusivo: o PowerShell falhou ou deu uma resposta que não é nenhuma das três). `executar` existe para os testes.
+function confirmarJob(nome, executar = execFile) {
+  return new Promise((resolve) => {
+    try {
+      executar('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', CONFIRMAR_JOB, '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true }, (erro, stdout) => {
+        if (erro) return resolve(null);
+        const resposta = String(stdout).trim().split(/\r?\n/).pop();
+        if (resposta === 'FECHADO' || resposta === 'VAZIO') return resolve([]);
+        const m = /^VIVOS (\d+)$/.exec(resposta);
+        resolve(m ? Array.from({ length: Number(m[1]) }, (_, i) => -(i + 1)) : null);
+      });
+    } catch { resolve(null); }
+  });
+}
+
+// Depois que o shell fechou: sobrou algum descendente vivo (sem pipe, que o 'close' não enxerga)? Mata e confere.
+// Devolve (uma promessa de) a lista dos que continuam vivos (vazia = limpo) ou null se não deu para conferir.
+// Consulta o Job Object (por nome). Sem nome de job a conferência é inconclusiva (null).
+async function orfaosVivos(filho, { executar = execFile } = {}) {
+  return filho.jobNome ? confirmarJob(filho.jobNome, executar) : null;
+}
+const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024 } = {}) {
+  // `signal` (opcional): ao ser abortado, mata o comando e tudo que ele criou. Usado pelo lote para reduzir agentes
+  // locais quando o dono volta a usar o PC. A parada repete o pedido a cada `reintentoMs` até a chamada terminar:
+  // pedido recusado `tentativasDeMatar` vezes, ou aceito mas sem o fim da chamada em `prazoDeFechamentoMs`, termina com
+  // erro `naoConfirmado` (o processo pode continuar vivo e quem chamou, o lote, deve parar). Depois do 'close' a árvore
+  // é conferida (`orfaos`); descendente vivo que não morre ou conferência impossível também é `naoConfirmado`.
+  return (prompt, signal) => new Promise((resolve, reject) => {
+    if (!lancar && plataforma !== 'win32') return reject(new Error('plataforma sem contenção garantida: o orquestrador com paralelismo só roda no Windows (Job Object); nada foi executado'));
+    // Já abortado: nem arquivo nem processo são criados (nada pode rodar nem escrever).
+    if (signal?.aborted) return reject(Object.assign(new Error('chamada abortada'), { abortada: true }));
+    // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
+    // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
+    const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
+    // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
+    const apagarEntrada = (tentativa = 0) => {
+      try { fs.rmSync(entrada, { force: true }); } catch {
+        if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
+        else console.error(`não consegui apagar o arquivo temporário do prompt (apague à mão): ${entrada}`);
+      }
+    };
+    const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
+    let filho;
+    try {
+      fs.writeFileSync(entrada, String(prompt), { mode: 0o600, flag: 'wx' }); // só o dono lê; nunca segue um arquivo que já exista
+      const fdEntrada = fs.openSync(entrada, 'r');
+      try {
+        if (lancar) filho = lancar(comando, fdEntrada);
+        else filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
+      } finally { fs.closeSync(fdEntrada); }
+    } catch (e) { apagarEntrada(); throw e; }
+    filho.jobNome = jobNome;
+    let terminou = false;
+    let relogio = null;
+    let estourou = false;
+    let saidaGrande = false;
+    let abortado = false;
+    let erroDoProcesso = null;
+    let tirarOuvinteDeAborto = null;
+    const fim = (f, valor) => {
+      if (terminou) return;
+      terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
+      if (tirarOuvinteDeAborto) tirarOuvinteDeAborto(); // só sai depois da conferência: um aborto durante ela ainda conta
+      apagarEntrada();
+      f(valor);
+    };
+    // Morte não confirmada: larga o processo (pipes fechados e sem segurar o Node), senão o comando nunca termina.
+    const largar = () => {
+      for (const f of [filho.stdout, filho.stderr]) {
+        if (!f) continue;
+        try { f.removeAllListeners('data'); f.on('error', () => {}); f.destroy(); } catch { /* já fechado */ }
+        try { f.unref?.(); } catch { /* sem efeito */ }
+      }
+      try { filho.removeAllListeners('close'); filho.removeAllListeners('error'); filho.on('error', () => {}); } catch { /* sem efeito */ }
+      try { filho.unref(); } catch { /* sem efeito */ }
+    };
+    const naoConfirmado = (texto) => { fim(reject, Object.assign(new Error(texto), { naoConfirmado: true })); largar(); };
+    // Uma única rotina de parada (aborto, tempo máximo, saída grande e erro do processo podem pedir juntos): repete o pedido
+    // até a chamada terminar, com prazo final explícito.
+    let parando = false;
+    let aceitoEm = 0;
+    let feitas = 0;
+    const tentarParar = () => {
+      if (terminou) return;
+      feitas += 1;
+      let aceito = false;
+      try { aceito = matar(filho); } catch { aceito = false; }
+      if (aceito && !aceitoEm) aceitoEm = Date.now();
+      if (aceitoEm) {
+        if (Date.now() - aceitoEm >= prazoDeFechamentoMs) naoConfirmado(`o processo ${filho.pid} recebeu o pedido de parada mas a chamada não terminou em ${prazoDeFechamentoMs / 1000} s; pode continuar vivo`);
+      } else if (feitas >= tentativasDeMatar) naoConfirmado(`o processo ${filho.pid} não morreu (a parada falhou ${feitas} vezes); pode continuar vivo`);
+    };
+    const parar = () => {
+      if (parando) return;
+      parando = true;
+      tentarParar();
+      if (!terminou) relogio = setInterval(tentarParar, reintentoMs);
+    };
+    // O tempo máximo também mata a árvore pelo mesmo caminho (o `timeout` do spawn mataria só o shell).
+    const limiteDeTempo = setTimeout(() => { estourou = true; parar(); }, tempoMaximoMs);
+    if (signal) {
+      const abortar = () => { abortado = true; parar(); };
+      if (signal.aborted) abortar();
+      else signal.addEventListener('abort', abortar, { once: true });
+      tirarOuvinteDeAborto = () => signal.removeEventListener('abort', abortar);
+    }
+    // Um só orçamento de BYTES para stdout e stderr juntos; passou, a árvore é parada em vez de esgotar a memória.
+    const saidas = [];
+    const erros = [];
+    let bytes = 0;
+    const guardar = (lista) => (d) => {
+      if (saidaGrande) return;
+      const b = Buffer.isBuffer(d) ? d : Buffer.from(String(d));
+      bytes += b.length;
+      if (bytes > maxSaidaBytes) { saidaGrande = true; parar(); return; }
+      lista.push(b);
+    };
+    filho.stdout.on('data', guardar(saidas));
+    filho.stderr.on('data', guardar(erros));
+    filho.on('error', (e) => {
+      // Sem PID o processo nunca nasceu. Com PID, o erro não prova que a árvore acabou: para, espera o 'close' e confere.
+      if (filho.pid === undefined) return fim(reject, e);
+      erroDoProcesso = e;
+      parar();
+    });
+    filho.on('close', (codigo) => {
+      if (terminou) return;
+      clearInterval(relogio);
+      clearTimeout(limiteDeTempo); // o comando já acabou: a conferência do job não pode transformar um sucesso em "tempo máximo"
+      // O shell fechou: se ficou descendente vivo (sem pipe), o 'close' não prova que acabou. Mata e confere, com prazo próprio.
+      let prazo;
+      const semResposta = new Promise((ok) => { prazo = setTimeout(() => ok(null), prazoDeFechamentoMs); });
+      Promise.race([Promise.resolve().then(() => orfaos(filho)), semResposta]).catch(() => null).then((sobrou) => {
+        clearTimeout(prazo);
+        if (terminou) return;
+        if (sobrou === null || sobrou === undefined) return naoConfirmado(`o processo ${filho.pid} fechou e não consegui conferir se sobrou descendente vivo (a conferência falhou)`);
+        if (sobrou.length) return naoConfirmado(`o processo ${filho.pid} fechou, mas ${sobrou.length} descendente(s) continuam vivos e não morreram`);
+        if (erroDoProcesso) return fim(reject, erroDoProcesso);
+        if (abortado) return fim(reject, Object.assign(new Error('chamada abortada'), { abortada: true })); // abortada: nunca vira sucesso, mesmo que o processo já tivesse saído com 0
+        const saida = Buffer.concat(saidas).toString('utf8');
+        const erro = Buffer.concat(erros).toString('utf8');
+        if (codigo === 0 && !estourou && !saidaGrande) fim(resolve, saida);
+        else fim(reject, new Error(estourou ? `passou do tempo máximo (${tempoMaximoMs / 1000} s)` : saidaGrande ? `a saída passou de ${maxSaidaBytes} bytes; o comando foi parado` : erro || `saiu com ${codigo}`));
+      });
+    });
   });
 }
 
@@ -186,10 +342,16 @@ const COMANDOS = {
   claude: 'claude -p',
 };
 
-function verificadorPorComando(comando) {
-  return (saida) => {
-    const r = spawnSync(comando, { shell: true, input: saida, encoding: 'utf8', timeout: TEMPO_MAXIMO_MS });
-    return { ok: r.status === 0, motivo: String(r.stderr || r.stdout || '').trim().slice(0, 500) };
+// O comando de verificação roda como qualquer outro comando: assíncrono, dentro do Job Object no Windows, com tempo
+// máximo e abortável pelo `signal` (o lote cancela a verificação em andamento no erro fatal). Verificação que não
+// confirma a morte (`naoConfirmado`) NÃO vira "resposta errada": o erro sobe até o lote, que para.
+function verificadorPorComando(comando, opcoes = {}) {
+  const chamar = chamarComando(comando, opcoes);
+  return async (saida, signal) => {
+    try { await chamar(saida, signal); return { ok: true, motivo: '' }; } catch (erro) {
+      if (erro?.naoConfirmado || erro?.abortada) throw erro;
+      return { ok: false, motivo: String(erro?.message || erro).trim().slice(0, 500) };
+    }
   };
 }
 
@@ -314,30 +476,185 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 
 // O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
-async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
-  if (!Number.isInteger(paralelismo) || paralelismo < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
-  const limite = paralelismo;
+  // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
+  const dinamico = typeof paralelismo === 'function';
+  let iniciado = false;
+  const limiteBruto = () => {
+    const n = dinamico ? paralelismo({ agentesLocais: locais().length + encerrando.length }) : paralelismo;
+    // Zero só vale no limite dinâmico (memória ou placa sem espaço agora): o lote espera abrir vaga.
+    if (!Number.isInteger(n) || n < (dinamico ? 0 : 1)) throw new Error(dinamico ? 'paralelismo dinâmico precisa devolver um número inteiro maior que zero ou zero.' : 'paralelismo precisa ser um número inteiro maior que zero.');
+    return n;
+  };
   const resultados = new Map();
   const pendentes = [...microtarefas];
   const rodando = new Map();
+  const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
+  const naoConfirmados = []; // ids de microtarefas cujo processo não teve a morte confirmada
+  let fatal = null; // processo abortado que não deu para confirmar que morreu: o lote inteiro para com erro claro
+  const encerrando = []; // { m, fim }: abortadas cujo processo ainda não confirmou que morreu; a vaga e o escopo seguem ocupados
+  // A vaga é de agente LOCAL: quem já subiu para o Codex/Claude (`ocupa` falso: subiu, ou está só conferindo a resposta) não usa o modelo local nem a placa e não conta.
+  const locais = () => [...rodando.keys()].filter((m) => estados.get(m).ocupa);
+  const limiteAgora = () => {
+    try { return limiteBruto(); } catch (er) {
+      if (!iniciado) throw er; // limite inválido logo de início: recusa
+      fatal = fatal || er; // erro de leitura/configuração com agentes já rodando: o lote para pelo caminho fatal (aborta e espera a morte)
+      return 0;
+    }
+  };
+  limiteAgora(); // recusa cedo um limite inválido
+  iniciado = true;
+  let acordaLoop;
+  let mudanca = new Promise((ok) => { acordaLoop = ok; });
+  const avisarMudanca = () => { acordaLoop(); mudanca = new Promise((ok) => { acordaLoop = ok; }); };
 
-  while (pendentes.length || rodando.size) {
-    while (rodando.size < limite) {
-      const i = pendentes.findIndex((m) => ![...rodando.keys()].some((r) => sobrepoe(r.escopo, m.escopo)));
+  while (pendentes.length || rodando.size || encerrando.length) {
+    if (fatal) {
+      // Interrompe os outros agentes locais e ESPERA a confirmação da morte de cada um antes de lançar o erro.
+      const esperas = encerrando.map((x) => ({ id: x.m.id, fim: x.fim, acabou: false }));
+      for (const [m, e] of estados) {
+        if (e.abandonada || !rodando.has(m)) continue;
+        e.abandonada = true;
+        e.ctl.abort(); // chega às chamadas ao local e aos superiores (Codex/Claude), que também recebem o sinal
+        if (e.emLocal) esperas.push({ id: m.id, fim: e.fim, acabou: false });
+        if (e.supFim) esperas.push({ id: m.id, fim: e.supFim, acabou: false });
+        if (e.verFim) esperas.push({ id: m.id, fim: e.verFim, acabou: false });
+      }
+      for (const w of esperas) w.fim.then((confirmada) => { w.acabou = confirmada !== false; }); // `fim` = a chamada terminou; só `true` prova a morte
+      let corte;
+      await Promise.race([Promise.all(esperas.map((w) => w.fim)), new Promise((ok) => { corte = setTimeout(ok, tempoParaConfirmarMs); })]);
+      clearTimeout(corte);
+      // Quem ainda não terminou depois do prazo não teve a morte confirmada.
+      for (const w of esperas) if (!w.acabou && !naoConfirmados.includes(w.id)) naoConfirmados.push(w.id);
+      const semCitar = [...new Set(naoConfirmados)].filter((id) => !fatal.message.includes(`"${id}"`)); // mesmo com 1 só id, se a mensagem ainda não o cita
+      if (semCitar.length) fatal = new Error(`${fatal.message} Também não foi confirmada a morte de: ${semCitar.join(', ')}.`);
+      throw fatal;
+    }
+    // O dono voltou ao PC: tira agentes locais em andamento (os mais novos primeiro) e devolve a microtarefa à fila.
+    // Só tira quem está esperando o modelo local; quem já passou para o Codex/Claude ou para a conferência termina.
+    // A vaga só é reaproveitada quando o processo abortado de fato terminou (o `fim` da chamada ao local).
+    const limite = limiteAgora();
+    while (locais().length > limite) {
+      const alvo = locais().reverse().find((m) => estados.get(m).emLocal);
+      if (!alvo) break;
+      const e = estados.get(alvo);
+      e.abandonada = true; // a execução antiga nunca mais responde: não sobe para o Codex nem registra resultado
+      const morte = {
+        m: alvo,
+        fim: e.fim.then((confirmada) => {
+          encerrando.splice(encerrando.indexOf(morte), 1);
+          if (confirmada === false) { naoConfirmados.includes(alvo.id) || naoConfirmados.push(alvo.id); } // vaga e escopo só se liberam com a morte confirmada: o lote para
+          // Não dá para saber se o processo (e os filhos dele) morreu: reaproveitar a vaga ou o escopo seria arriscado, e o
+          // estado só existe na memória deste lote. Para o lote inteiro com erro claro.
+          avisarMudanca();
+          return confirmada; // `fim` = a chamada terminou; o booleano é a prova da morte (nunca undefined)
+        }),
+      };
+      encerrando.push(morte);
+      e.ctl.abort();
+      rodando.delete(alvo);
+      pendentes.unshift(alvo);
+    }
+    while (locais().length + encerrando.length < limiteAgora()) {
+      const ocupados = () => [...rodando.keys(), ...encerrando.map((x) => x.m)];
+      const i = pendentes.findIndex((m) => !ocupados().some((r) => sobrepoe(r.escopo, m.escopo)));
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
+      const e = { ctl: new AbortController(), abandonada: false, emLocal: false, ocupa: true, fim: null };
+      estados.set(m, e);
+      // A verificação também é um processo: roda com o sinal da microtarefa, e a morte não confirmada dela para o lote (nunca
+      // vira "resposta errada"); o erro fatal espera a verificação em andamento terminar.
+      const verificadorM = verificadorDe(m);
+      const verificar = async (saida) => {
+        if (e.abandonada || fatal) throw Object.assign(new Error('verificação cancelada: o lote parou ou a microtarefa foi tirada'), { cancelada: true });
+        const p = Promise.resolve().then(() => verificadorM(saida, e.ctl.signal));
+        e.verFim = p.then(() => true, (erro) => erro?.naoConfirmado !== true);
+        try { return await p; } catch (erro) {
+          if (erro?.naoConfirmado) {
+            naoConfirmados.push(m.id);
+            fatal = fatal || new Error(`o lote parou: não consegui confirmar que o comando de verificação da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
+            avisarMudanca();
+          }
+          throw erro;
+        }
+      };
+      const agentesDaMicro = {
+        ...agentes,
+        superiores: (agentes.superiores || []).map((sup) => ({
+          ...sup,
+          chamar: (...a) => {
+            if (e.abandonada || fatal) return Promise.reject(Object.assign(new Error('chamada cancelada: o lote parou ou a microtarefa foi tirada'), { cancelada: true }));
+            if (e.ocupa) { e.ocupa = false; avisarMudanca(); }
+            // O sinal da microtarefa chega também aos superiores: erro fatal ou redução cancelam a chamada em andamento.
+            const p = Promise.resolve().then(() => sup.chamar(...a, ...(a.length < 2 ? [e.ctl.signal] : [])));
+            e.supFim = p.then(() => true, (erro) => erro?.naoConfirmado !== true); // a chamada terminou; só `true` prova que não ficou processo vivo
+            // Morte não confirmada de um superior (Codex/Claude) também é fatal: nunca vira falha comum que segue o lote.
+            return p.catch((erro) => {
+              if (erro?.naoConfirmado) {
+                naoConfirmados.push(m.id);
+                fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do superior "${sup.nome}" da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
+                avisarMudanca();
+              }
+              throw erro;
+            });
+          },
+        })),
+        local: async (prompt) => {
+          // Voltando do Codex/Claude (ou começando), só entra no local quando houver vaga dentro do limite.
+          const outros = () => locais().filter((m) => estados.get(m) !== e).length;
+          while (!e.abandonada && !fatal && outros() + encerrando.length >= limiteAgora()) {
+            let t;
+            await Promise.race([mudanca, new Promise((ok) => { t = setTimeout(ok, Math.min(reavaliarMs, 200)); })]);
+            clearTimeout(t);
+          }
+          return new Promise((ok, no) => {
+          if (e.abandonada || fatal) return no(Object.assign(new Error('chamada cancelada: o lote parou ou a microtarefa foi tirada'), { cancelada: true })); // nunca fica pendente
+          e.emLocal = true;
+          e.ocupa = true; // (re)entrou no local: ocupa vaga
+          // Cada chamada ao local (1ª tentativa, 2ª, correção...) tem o seu próprio fim: abortar a segunda não pode
+          // olhar o fim da primeira, que já passou.
+          let liberar;
+          e.fim = new Promise((fimOk) => { liberar = fimOk; });
+          Promise.resolve().then(() => agentes.local(prompt, e.ctl.signal)).then(
+            (r) => { e.emLocal = false; e.ocupa = false; avisarMudanca(); liberar(true); if (!e.abandonada) ok(r); },
+            (erro) => {
+              e.emLocal = false; e.ocupa = false;
+              if (erro?.naoConfirmado) {
+                // Morte não confirmada (ao abortar, no tempo máximo ou com descendente sobrando): nunca vira erro comum
+                // que sobe para o Codex. O lote inteiro para, e esta chamada não responde mais.
+                naoConfirmados.push(m.id);
+                fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do agente local "${m.id}" morreu (${erro.message}). Veja os processos do modelo local no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
+                avisarMudanca(); liberar(false); // terminou, mas a morte NÃO foi confirmada
+                return;
+              }
+              avisarMudanca(); liberar(true); if (!e.abandonada) no(erro);
+            },
+          );
+          });
+        },
+      };
       const execucao = maxTentativas !== undefined || antagonico
-        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
-        : resolver({ entrada, cabeNoLocal: true, verificar: verificadorDe(m), agentes, arquivos });
+        ? resolverComLoop({ entrada, verificar, agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
+        : resolver({ entrada, cabeNoLocal: true, verificar, agentes: agentesDaMicro, arquivos });
       const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
-        .then((r) => { resultados.set(m.id, { id: m.id, ...r }); rodando.delete(m); });
+        .then((r) => {
+          if (e.abandonada) return;
+          resultados.set(m.id, { id: m.id, ...r });
+          rodando.delete(m);
+        });
       rodando.set(m, feito);
     }
-    await Promise.race(rodando.values());
+    // Com limite dinâmico, acorda de tempos em tempos: para abrir vaga quando o PC ficar parado
+    // e para tirar agentes quando o dono voltar.
+    let relogio;
+    const acordar = dinamico && (pendentes.length || locais().length || encerrando.length) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
+    await Promise.race([...rodando.values(), ...encerrando.map((x) => x.fim), mudanca, ...acordar]);
+    clearTimeout(relogio);
   }
+  if (fatal) throw fatal; // o erro fatal surgiu quando já não havia mais nada rodando
   return microtarefas.map((m) => resultados.get(m.id));
 }
 
@@ -361,7 +678,9 @@ async function principal(argumentos) {
     const resultados = await lote({
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
-      paralelismo: ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
+      paralelismo: ip >= 0 && resto[ip + 1] === 'auto'
+        ? require('./paralelismo.js').criarControle({ refrescarMs: 5000, aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
+        : ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
       maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : undefined,
       antagonico: resto.includes('--antagonico'),
       agentes: {
@@ -404,7 +723,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
