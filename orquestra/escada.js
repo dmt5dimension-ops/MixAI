@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn, spawnSync, execFile } = require('node:child_process');
+const { spawn, spawnSync, execFile, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 
 const pasta = __dirname;
@@ -206,7 +206,55 @@ async function orfaosVivos(filho, { executar = execFile } = {}) {
 }
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024 } = {}) {
+const PASTA_DE_PROMPTS = path.join(os.tmpdir(), 'mixai-prompts');
+// Windows: pasta NOVA com nome aleatório, sem herdar permissões (icacls /inheritance:r) e só com o usuário atual
+// ((OI)(CI)F), e a ACL é lida de volta: se aparecer qualquer outro grupo ou usuário, ou se o icacls falhar, recusa.
+// `executar`, `usuario` e `dominio` existem para os testes.
+function criarPastaPrivadaWindows(base = os.tmpdir(), { executar = execFileSync, usuario = process.env.USERNAME, dominio = process.env.USERDOMAIN } = {}) {
+  if (!usuario) throw new Error('não sei o nome do usuário do Windows (USERNAME): não dá para criar a pasta privada dos prompts');
+  const pasta = fs.mkdtempSync(path.join(base, 'mixai-prompts-'));
+  try {
+    executar('icacls', [pasta, '/inheritance:r', '/grant:r', `${usuario}:(OI)(CI)F`], { encoding: 'utf8', windowsHide: true });
+    const saida = String(executar('icacls', [pasta], { encoding: 'utf8', windowsHide: true })).split(pasta).join(''); // tira o caminho (pode ter espaços)
+    // Cada entrada é "<principal>:(permissões)"; só o usuário atual pode aparecer (com ou sem o domínio na frente).
+    const permitidos = new Set([usuario.toLowerCase(), `${dominio ?? ''}\\${usuario}`.toLowerCase()]);
+    const entradas = [...saida.matchAll(/^\s*(\S.*?):\(/gm)].map((m) => m[1].trim().toLowerCase());
+    const alheias = entradas.filter((e) => !permitidos.has(e));
+    if (!entradas.length || alheias.length) throw new Error(`a ACL da pasta dos prompts não é só do usuário (${alheias.join(', ') || 'não consegui ler a ACL'})`);
+  } catch (e) {
+    try { fs.rmSync(pasta, { recursive: true, force: true }); } catch { /* sem o que apagar */ }
+    throw new Error(`não consegui tornar privada a pasta dos prompts temporários: ${e.message}`);
+  }
+  return pasta;
+}
+let pastaPromptsDoProcesso = null;
+// Uma pasta por processo no Windows (criada uma vez, apagada na saída); nos outros sistemas a pasta fixa precisa ser do dono.
+function pastaDePromptsPadrao() {
+  if (process.platform !== 'win32') return PASTA_DE_PROMPTS;
+  if (!pastaPromptsDoProcesso) {
+    pastaPromptsDoProcesso = criarPastaPrivadaWindows();
+    process.once('exit', () => { try { fs.rmSync(pastaPromptsDoProcesso, { recursive: true, force: true }); } catch { /* fica para o sistema limpar */ } });
+  }
+  return pastaPromptsDoProcesso;
+}
+// Confere que a pasta é privada: no Windows ela já nasce com ACL só do usuário (acima); nos outros sistemas confere o dono e
+// que grupo/outros não têm acesso.
+function garantirPastaPrivada(pasta) {
+  fs.mkdirSync(pasta, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return;
+  const st = fs.lstatSync(pasta);
+  const eu = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (!st.isDirectory() || st.isSymbolicLink() || (eu !== null && st.uid !== eu) || (st.mode & 0o077) !== 0) {
+    throw new Error(`a pasta dos prompts temporários (${pasta}) não é privada (precisa ser uma pasta do dono, sem acesso para outros): apague-a e rode de novo`);
+  }
+}
+
+// Processos de comando ainda sem a morte confirmada, por sinal de aborto (o sinal é da microtarefa): quando o lote desiste de
+// esperar uma chamada pendente, ele sabe quais Jobs/PIDs reter. Saem daqui quando a chamada termina com a morte confirmada.
+const ativosPorSinal = new WeakMap();
+const ativosDoSinal = (signal) => (signal && ativosPorSinal.get(signal) ? [...ativosPorSinal.get(signal)].map((a) => ({ ...a })) : []);
+
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = null } = {}) {
   // `signal` (opcional): ao ser abortado, mata o comando e tudo que ele criou. Usado pelo lote para reduzir agentes
   // locais quando o dono volta a usar o PC. A parada repete o pedido a cada `reintentoMs` até a chamada terminar:
   // pedido recusado `tentativasDeMatar` vezes, ou aceito mas sem o fim da chamada em `prazoDeFechamentoMs`, termina com
@@ -218,7 +266,10 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     if (signal?.aborted) return reject(Object.assign(new Error('chamada abortada'), { abortada: true }));
     // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
     // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
-    const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
+    // Pasta própria e privada (só o dono): no Windows o %TEMP% já é do usuário; nos outros sistemas a pasta precisa ser do dono e
+    // sem acesso para grupo/outros, senão a chamada é recusada antes de escrever o prompt.
+    const pastaDosPrompts = pastaPrompts ?? pastaDePromptsPadrao();
+    const entrada = path.join(pastaDosPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
       try { fs.rmSync(entrada, { force: true }); } catch {
@@ -229,6 +280,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
     let filho;
     try {
+      garantirPastaPrivada(pastaDosPrompts);
       fs.writeFileSync(entrada, String(prompt), { mode: 0o600, flag: 'wx' }); // só o dono lê; nunca segue um arquivo que já exista
       const fdEntrada = fs.openSync(entrada, 'r');
       try {
@@ -237,6 +289,8 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { apagarEntrada(); throw e; }
     filho.jobNome = jobNome;
+    const ativo = { pid: filho.pid, jobNome };
+    if (signal) { if (!ativosPorSinal.has(signal)) ativosPorSinal.set(signal, new Set()); ativosPorSinal.get(signal).add(ativo); }
     let terminou = false;
     let relogio = null;
     let estourou = false;
@@ -247,6 +301,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const fim = (f, valor) => {
       if (terminou) return;
       terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
+      if (signal && !valor?.naoConfirmado) ativosPorSinal.get(signal)?.delete(ativo); // morte confirmada: nada a reter
       if (tirarOuvinteDeAborto) tirarOuvinteDeAborto(); // só sai depois da conferência: um aborto durante ela ainda conta
       apagarEntrada();
       f(valor);
@@ -261,7 +316,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       try { filho.removeAllListeners('close'); filho.removeAllListeners('error'); filho.on('error', () => {}); } catch { /* sem efeito */ }
       try { filho.unref(); } catch { /* sem efeito */ }
     };
-    const naoConfirmado = (texto) => { fim(reject, Object.assign(new Error(texto), { naoConfirmado: true })); largar(); };
+    const naoConfirmado = (texto) => { fim(reject, Object.assign(new Error(texto), { naoConfirmado: true, pid: filho.pid, jobNome: filho.jobNome })); largar(); };
     // Uma única rotina de parada (aborto, tempo máximo, saída grande e erro do processo podem pedir juntos): repete o pedido
     // até a chamada terminar, com prazo final explícito.
     let parando = false;
@@ -476,7 +531,24 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 
 // O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
-async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+// O controle de paralelismo (se for um) devolve a reserva de vagas ao fim do lote, com sucesso ou erro.
+// Se a morte de algum agente NÃO foi confirmada, a reserva dessas vagas fica retida (até os processos morrerem ou expirar):
+// nunca é devolvida como se a vaga estivesse livre.
+async function lote(opcoes) {
+  let retidas = {};
+  let erroDoLote = null;
+  try { return await loteSemLiberar(opcoes); } catch (erro) {
+    if (erro?.naoConfirmados?.length) retidas = { naoConfirmados: erro.naoConfirmados.length, itens: erro.itensNaoConfirmados ?? [] };
+    erroDoLote = erro;
+    throw erro;
+  } finally {
+    try { opcoes?.paralelismo?.liberar?.(retidas); } catch (e) {
+      // Retenção que não pôde ser gravada: falha fechada. O erro é exposto (a reserva segue valendo e o processo tenta gravar de novo).
+      if (e?.retencaoNaoGravada) throw Object.assign(new Error(`${e.message}${erroDoLote ? ` (erro do lote: ${erroDoLote.message})` : ''}`), { naoConfirmados: erroDoLote?.naoConfirmados, retencaoNaoGravada: true });
+    }
+  }
+}
+async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -492,6 +564,12 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
   const rodando = new Map();
   const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
   const naoConfirmados = []; // ids de microtarefas cujo processo não teve a morte confirmada
+  const identificadores = new Map(); // id da microtarefa -> [{ pid, jobNome }] dos processos sem morte confirmada (quando se sabe)
+  const anotar = (id, item) => { if (!identificadores.has(id)) identificadores.set(id, []); identificadores.get(id).push(item); };
+  const marcarFatal = (f) => { f.naoConfirmados = [...new Set(naoConfirmados)]; f.itensNaoConfirmados = f.naoConfirmados.flatMap((id) => {
+    const itens = (identificadores.get(id) ?? []).filter((x, i, l) => l.findIndex((y) => y.jobNome === x.jobNome && y.pid === x.pid) === i);
+    return itens.length ? itens : [{}]; // sem identificador: a reserva vale pelo prazo
+  }); return f; };
   let fatal = null; // processo abortado que não deu para confirmar que morreu: o lote inteiro para com erro claro
   const encerrando = []; // { m, fim }: abortadas cujo processo ainda não confirmou que morreu; a vaga e o escopo seguem ocupados
   // A vaga é de agente LOCAL: quem já subiu para o Codex/Claude (`ocupa` falso: subiu, ou está só conferindo a resposta) não usa o modelo local nem a placa e não conta.
@@ -526,10 +604,16 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
       await Promise.race([Promise.all(esperas.map((w) => w.fim)), new Promise((ok) => { corte = setTimeout(ok, tempoParaConfirmarMs); })]);
       clearTimeout(corte);
       // Quem ainda não terminou depois do prazo não teve a morte confirmada.
-      for (const w of esperas) if (!w.acabou && !naoConfirmados.includes(w.id)) naoConfirmados.push(w.id);
+      for (const w of esperas) {
+        if (w.acabou) continue;
+        naoConfirmados.includes(w.id) || naoConfirmados.push(w.id);
+        // chamada ainda pendente: guarda o Job/PID dos processos dela (não só o id da microtarefa)
+        const dela = [...estados].find(([m]) => m.id === w.id)?.[1];
+        for (const a of ativosDoSinal(dela?.ctl.signal)) anotar(w.id, a);
+      }
       const semCitar = [...new Set(naoConfirmados)].filter((id) => !fatal.message.includes(`"${id}"`)); // mesmo com 1 só id, se a mensagem ainda não o cita
       if (semCitar.length) fatal = new Error(`${fatal.message} Também não foi confirmada a morte de: ${semCitar.join(', ')}.`);
-      throw fatal;
+      throw marcarFatal(fatal);
     }
     // O dono voltou ao PC: tira agentes locais em andamento (os mais novos primeiro) e devolve a microtarefa à fila.
     // Só tira quem está esperando o modelo local; quem já passou para o Codex/Claude ou para a conferência termina.
@@ -573,7 +657,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
         e.verFim = p.then(() => true, (erro) => erro?.naoConfirmado !== true);
         try { return await p; } catch (erro) {
           if (erro?.naoConfirmado) {
-            naoConfirmados.push(m.id);
+            naoConfirmados.push(m.id); anotar(m.id, { pid: erro.pid, jobNome: erro.jobNome });
             fatal = fatal || new Error(`o lote parou: não consegui confirmar que o comando de verificação da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
             avisarMudanca();
           }
@@ -593,7 +677,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
             // Morte não confirmada de um superior (Codex/Claude) também é fatal: nunca vira falha comum que segue o lote.
             return p.catch((erro) => {
               if (erro?.naoConfirmado) {
-                naoConfirmados.push(m.id);
+                naoConfirmados.push(m.id); anotar(m.id, { pid: erro.pid, jobNome: erro.jobNome });
                 fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do superior "${sup.nome}" da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
                 avisarMudanca();
               }
@@ -624,7 +708,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
               if (erro?.naoConfirmado) {
                 // Morte não confirmada (ao abortar, no tempo máximo ou com descendente sobrando): nunca vira erro comum
                 // que sobe para o Codex. O lote inteiro para, e esta chamada não responde mais.
-                naoConfirmados.push(m.id);
+                naoConfirmados.push(m.id); anotar(m.id, { pid: erro.pid, jobNome: erro.jobNome });
                 fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do agente local "${m.id}" morreu (${erro.message}). Veja os processos do modelo local no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
                 avisarMudanca(); liberar(false); // terminou, mas a morte NÃO foi confirmada
                 return;
@@ -654,7 +738,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
     await Promise.race([...rodando.values(), ...encerrando.map((x) => x.fim), mudanca, ...acordar]);
     clearTimeout(relogio);
   }
-  if (fatal) throw fatal; // o erro fatal surgiu quando já não havia mais nada rodando
+  if (fatal) throw marcarFatal(fatal); // o erro fatal surgiu quando já não havia mais nada rodando
   return microtarefas.map((m) => resultados.get(m.id));
 }
 
@@ -723,7 +807,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, ativosDoSinal, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

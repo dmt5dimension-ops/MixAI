@@ -3,7 +3,8 @@
     "ociosoAbaixoDeSegundos": 90,
     "gpuOutrosAcimaDePct": 30,
     "cpuOutrosAcimaDePct": 60,
-    "videoDecodeAcimaDePct": 1
+    "videoDecodeAcimaDePct": 8,
+    "playerCpuAcimaDePct": 3
   },
   "validadeEstadoSegundos": 300,
   "subidaMinSegundos": 60,

@@ -72,7 +72,16 @@ Get-Process 'ollama', 'ollama app' -ErrorAction SilentlyContinue | ForEach-Objec
 # Nome fixo "mixai-local" apontando para o modelo do modo. Para com erro se o Ollama falhar.
 & (Join-Path $PSScriptRoot 'criar-apelido.ps1') -Modelo $config.modelo -Contexto $config.contexto -Nucleos $config.nucleos
 
-# Guarda o modo ligado, para orquestra/paralelismo.js saber o teto de agentes.
-Set-Content (Join-Path $env:LOCALAPPDATA 'Ollama\mixai-modo.txt') $Modo
+# Guarda o modo ligado, para orquestra/paralelismo.js saber o teto de agentes. O OLLAMA_NUM_PARALLEL acima só diz quantas
+# requisições o servidor atende ao mesmo tempo; ele não reserva vaga por agente nem coordena vários lotes. O teto de agentes
+# é imposto pelo `lote`, que conta os agentes locais (um PC, um lote), e pelo modo gravado aqui.
+$arquivoModo = Join-Path $env:LOCALAPPDATA 'Ollama\mixai-modo.txt'
+Set-Content $arquivoModo $Modo
+# Confere o que ficou gravado: se não persistiu, o paralelismo usaria o modo antigo (ou o dia) enquanto este script anuncia
+# outro. Falha com erro explícito em vez de anunciar um modo que ninguém vai enxergar.
+$gravadoModo = if (Test-Path $arquivoModo) { ((Get-Content $arquivoModo -Raw) -as [string]).Trim() } else { '' }
+if ($gravadoModo -ne $Modo) {
+  throw "Não consegui gravar o modo $Modo em $arquivoModo (lido: '$gravadoModo'). O paralelismo usaria o modo errado; verifique a pasta e as permissões e rode de novo."
+}
 
 Write-Host "Modo $Modo ligado: $($config.modelo), $($config.nucleos) nucleos, contexto $($config.contexto), prioridade $($config.prioridade)."

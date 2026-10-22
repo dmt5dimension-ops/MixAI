@@ -1,6 +1,8 @@
 // Quantos agentes locais (Qwen) rodam ao mesmo tempo, conforme o uso do PC.
-// Usando o PC: 1. Parado: sobe um por vez até o que cabe na placa de vídeo, na memória e no modo dia/noite.
+// Usando o PC: 1. Parado: sobe um por vez (na primeira decisão o tempo que o PC já está parado conta como subida) até o que cabe
+// na placa de vídeo (medida: o que outros programas já ocupam sai da sobra), na memória e no modo dia/noite.
 // A leitura do Windows fica atrás de um "leitor" ({ ler() }); os testes usam leituras simuladas.
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -13,23 +15,29 @@ const modosPadrao = () => lerJson(path.join(raiz, 'local', 'modos.json'));
 const minimoMemoriaGB = () => lerJson(path.join(raiz, 'local', 'protecao.json')).memoriaLivreMinimaGB;
 
 // Quantos agentes cabem agora, e o que limita (o menor dos limites vale).
-function capacidade({ modo, memoriaLivreGB, agentesAtuais = 0, modos = modosPadrao(), config = configPadrao(), memoriaMinimaGB = minimoMemoriaGB() }) {
+function capacidade({ modo, memoriaLivreGB, agentesAtuais = 0, vramOutrosGB = null, ramMeuGB = null, modos = modosPadrao(), config = configPadrao(), memoriaMinimaGB = minimoMemoriaGB() }) {
   const m = modos[modo];
   if (!m) throw new Error(`modo desconhecido: ${modo} (use ${Object.keys(modos).join(' ou ')})`);
   const kvGB = (config.placa.kvMBPorMilTokens * (m.contexto / 1000)) / 1024;
-  const sobraPlacaGB = config.placa.vramGB - config.placa.reservaGB - config.placa.pesosGB;
+  // VRAM medida: o que OUTROS programas já ocupam na placa sai da sobra. Sem medida (null) vale só a reserva fixa da config
+  // (limite conhecido: não enxerga outro programa na placa).
+  const vramMedida = numeroValido(vramOutrosGB, 0, config.placa.vramGB * 2);
+  const sobraPlacaGB = config.placa.vramGB - config.placa.reservaGB - (vramMedida ? vramOutrosGB : 0) - config.placa.pesosGB;
+  // A parte da memória que se soma de volta é a dos agentes que rodam agora, limitada ao que o Ollama do MixAI realmente
+  // ocupa (medido): não credita memória a agente que ainda não ocupa nada.
+  const credito = numeroValido(ramMeuGB, 0) ? Math.min(agentesAtuais * config.ramPorAgenteGB, ramMeuGB) : agentesAtuais * config.ramPorAgenteGB;
   const limites = {
     modo: m.agentesMax,
-    placa: Math.floor(sobraPlacaGB / kvGB),
+    placa: Math.max(0, Math.floor(sobraPlacaGB / kvGB)),
     // A memória livre já está reduzida pelos agentes que rodam agora: soma de volta a parte deles, senão o teto cai a cada
     // agente aberto e o lote aborta e reinicia em loop perto do mínimo.
-    memoria: Math.floor((memoriaLivreGB + agentesAtuais * config.ramPorAgenteGB - memoriaMinimaGB) / config.ramPorAgenteGB),
+    memoria: Math.max(0, Math.floor((memoriaLivreGB + credito - memoriaMinimaGB) / config.ramPorAgenteGB)),
     absoluto: config.maximoAbsoluto,
   };
   // Zero é resposta válida: sem espaço na memória ou na placa, nenhum agente local agora (o lote espera abrir vaga).
   const max = Math.max(0, Math.min(...Object.values(limites)));
   const limitante = Object.entries(limites).sort((a, b) => a[1] - b[1])[0][0];
-  return { max, limites, limitante };
+  return { max, limites, limitante, vramMedida };
 }
 
 // Motivos pelos quais o dono está usando o PC. Leitura que faltou, não é número ou está fora do possível
@@ -43,13 +51,17 @@ function motivosDeUso(leitura, config) {
   if (!leitura || typeof leitura !== 'object') return indisponivel;
   const ok = numeroValido(leitura.ociosoSegundos, 0) && numeroValido(leitura.gpuOutrosPct, 0, 100.0001)
     && numeroValido(leitura.cpuOutrosPct, 0, 100.0001) && numeroValido(leitura.videoDecodePct, 0, 100.0001)
-    && numeroValido(leitura.memoriaLivreGB, 0);
+    && numeroValido(leitura.memoriaLivreGB, 0)
+    && (leitura.playersCpuPct === undefined || numeroValido(leitura.playersCpuPct, 0));
   if (!ok) return indisponivel;
   const motivos = [];
   if (leitura.ociosoSegundos < o.ociosoAbaixoDeSegundos) motivos.push(`mexeu no PC há ${leitura.ociosoSegundos}s`);
   if (leitura.gpuOutrosPct > o.gpuOutrosAcimaDePct) motivos.push(`outro programa usa ${leitura.gpuOutrosPct}% da placa`);
   if (leitura.cpuOutrosPct > o.cpuOutrosAcimaDePct) motivos.push(`outros programas usam ${leitura.cpuOutrosPct}% do processador`);
   if (leitura.videoDecodePct >= o.videoDecodeAcimaDePct) motivos.push(`vídeo tocando (decodificador em ${leitura.videoDecodePct}%)`);
+  // Indício de mídia por software (o decodificador da placa não mexe): CPU de um player de vídeo conhecido (vlc, mpv, ffplay...).
+  // Navegador tocando vídeo NÃO é detectado (não dá para separar do uso comum do navegador).
+  if (leitura.playersCpuPct !== undefined && leitura.playersCpuPct >= o.playerCpuAcimaDePct) motivos.push(`player de vídeo ativo (${leitura.playersCpuPct}% de um núcleo)`);
   return motivos;
 }
 
@@ -59,6 +71,9 @@ function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
   if (!Number.isInteger(nucleos) || nucleos < 1) return null;
   // Impossível (total acima de 100% ou Ollama acima de 100% por núcleo) é leitura quebrada, não "zero": vira null.
   if (!numeroValido(cpuTotalPct, 0, 100.0001) || !numeroValido(cpuMeuPct, 0, 100.0001 * nucleos)) return null;
+  // A parte do Ollama não pode passar do total da máquina (com folga de 10 pontos pela diferença de janelas de amostragem): se passar,
+  // a diferença negativa viraria "zero de outros" e declararia o PC livre. Leitura inconsistente = null.
+  if (cpuMeuPct / nucleos > cpuTotalPct + 10) return null;
   return Math.round(Math.min(100, Math.max(0, cpuTotalPct - cpuMeuPct / nucleos)) * 10) / 10;
 }
 
@@ -66,7 +81,7 @@ function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
 // `regime` é onde o alvo chega se o PC continuar parado (o teto), para quem só quer olhar.
 function decidir({ leitura, modo, agentesAtuais = 0, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
   const motivos = motivosDeUso(leitura, config);
-  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, agentesAtuais, modos, config, memoriaMinimaGB });
+  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, agentesAtuais, vramOutrosGB: leitura?.vramOutrosGB, ramMeuGB: leitura?.ramMeuGB, modos, config, memoriaMinimaGB });
   const antes = Number.isInteger(anterior?.alvo) && anterior.alvo >= 0 ? anterior.alvo : 1;
   if (motivos.length) {
     const alvo = Math.min(1, cap.max);
@@ -91,18 +106,19 @@ function decidir({ leitura, modo, agentesAtuais = 0, anterior = null, agora = Da
 // Leitor real: roda local/uso-windows.ps1. Devolve null se o PowerShell não existe ou falha.
 // `ler()` bloqueia (só para o uso na linha de comando); `lerAsync()` não bloqueia o Node (é o que o controle usa dentro do
 // lote, onde um bloqueio de até 30 s atrasaria abortos, temporizadores e os outros agentes).
-function leitorWindows() {
+function leitorWindows({ executar = execFile } = {}) {
   return {
     lerAsync() {
       return new Promise((resolve) => {
-        execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000, windowsHide: true }, (erro, stdout) => {
-          resolve(erro ? null : lerSaida(stdout));
+        executar('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000, windowsHide: true }, (erro, stdout, stderr) => {
+          // Erro do coletor (mesmo não terminante, escrito na saída de erro) = leitura incompleta: indisponível.
+          resolve(erro || String(stderr ?? '').trim() ? null : lerSaida(stdout));
         });
       });
     },
     ler() {
       const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000 });
-      if (r.error || r.status !== 0) return null;
+      if (r.error || r.status !== 0 || String(r.stderr ?? '').trim()) return null;
       return lerSaida(r.stdout);
     },
   };
@@ -132,14 +148,32 @@ function videoDecodeDe({ amostras, motores }, amostrasMinimas = 3) {
   return Math.round((soma.reduce((a, b) => a + b, 0) / amostras) * 100) / 100;
 }
 
+// Ocupação da placa por OUTROS programas: o coletor soma, por amostra e por tipo de motor (3D, Copy, Compute, vídeo...), o uso
+// dos processos que não são do MixAI. A ocupação é a do motor mais carregado de cada amostra (como no Gerenciador de Tarefas),
+// depois a média das amostras; somar motores diferentes contaria duas vezes o mesmo trabalho. `amostras` é a quantidade de amostras em que o
+// coletor provou ter lido os motores (0 = coleta sem cobertura). Linha inválida ou de amostra inexistente é null.
+function gpuOutrosDe({ amostras, linhas }, amostrasMinimas = 3) {
+  if (!Number.isInteger(amostras) || amostras < amostrasMinimas) return null;
+  const lista = Array.isArray(linhas) ? linhas : [];
+  const porAmostra = Array.from({ length: amostras }, () => new Map());
+  for (const l of lista) {
+    if (!l || typeof l.t !== 'string' || !l.t || !Number.isInteger(l.i) || l.i < 0 || l.i >= amostras || !numeroValido(l.v, 0)) return null;
+    porAmostra[l.i].set(l.t, (porAmostra[l.i].get(l.t) ?? 0) + l.v);
+  }
+  // O motor mais carregado EM CADA amostra, e só depois a média: 3D e Copy alternando a 90% é uma placa a 90%, não a 60%.
+  const maximos = porAmostra.map((tipos) => Math.min(100, Math.max(0, ...tipos.values())));
+  return Math.round((maximos.reduce((a, b) => a + b, 0) / amostras) * 10) / 10;
+}
+
 // Interpreta o que o uso-windows.ps1 imprimiu (a última linha é o JSON). Texto estranho vira null.
 function lerSaida(texto) {
   let l;
   try { l = JSON.parse(String(texto).trim().split(/\r?\n/).pop()); } catch { return null; }
   if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
-  const { videoAmostras, videoMotores, cpuTotalPct, cpuMeuPct, nucleos, ...resto } = l;
+  const { videoAmostras, videoMotores, cpuTotalPct, cpuMeuPct, nucleos, gpuAmostras, gpuPorTipo, ...resto } = l;
   return {
     ...resto,
+    gpuOutrosPct: resto.gpuOutrosPct ?? gpuOutrosDe({ amostras: gpuAmostras, linhas: gpuPorTipo }),
     cpuOutrosPct: resto.cpuOutrosPct ?? cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }),
     videoDecodePct: resto.videoDecodePct ?? videoDecodeDe({ amostras: videoAmostras, motores: videoMotores }),
   };
@@ -158,9 +192,177 @@ function modoAtual(env = process.env) {
   try { return fs.readFileSync(path.join(base, 'Ollama', 'mixai-modo.txt'), 'utf8').trim() || 'dia'; } catch { return 'dia'; }
 }
 
+// Reserva de vagas entre lotes. Cada controle (um por lote) guarda numa pasta compartilhada um arquivo com o que RESERVOU
+// (a vaga concedida, nunca menos que os agentes que ainda estão vivos, inclusive os morrendo), o PID e o relógio do último
+// batimento. Ler os outros, decidir e gravar a própria reserva acontece dentro de uma trava, então dois lotes juntos nunca
+// passam do teto: o que sobra para um é o teto menos o que os outros reservaram. Reserva de lote só é descartada quando o dono
+// morre (PID inexistente ou com outra data de criação); o tempo nunca a expira. Sem conseguir a trava NENHUMA vaga nova é concedida (só mantém as
+// que já existem). Reserva de agente cuja morte NÃO foi confirmada fica retida até o Job estar vazio (ou os PIDs
+// morrerem), mesmo depois que o lote acabou; só sem nada para consultar vale até `ate` (RETENCAO_MS). Saída manual:
+// `node orquestra/paralelismo.js --limpar-reservas`.
+//
+// A trava segue o desenho do grafo (`orquestra/grafo.js`): arquivos numerados `<base>.lock.<geração>` criados com 'wx', com
+// `pid:código` dentro. Quem quer a trava olha a MAIOR geração: se está `livre` (o dono a soltou) ou o dono morreu, cria a
+// seguinte; senão espera. NINGUÉM apaga nem reescreve a trava de outro, então não existe "conferir que está velha e depois
+// apagar" derrubando a trava nova de um dono vivo; a trava de dono vivo nunca é tomada, por mais velha que seja.
+const RETENCAO_MS = 10 * 60 * 1000;
+const pidVivo = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const esperaCurta = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* sem espera, só tenta de novo */ } };
+function criarTrava(base, { esperaMs = 2000 } = {}) {
+  const dir = path.dirname(base);
+  const prefixo = `${path.basename(base)}.lock.`;
+  const nome = (n) => path.join(dir, `${prefixo}${String(n).padStart(8, '0')}`);
+  const geracoes = () => fs.readdirSync(dir).filter((f) => f.startsWith(prefixo) && /^\d+$/.test(f.slice(prefixo.length))).map((f) => Number(f.slice(prefixo.length))).sort((a, b) => a - b);
+  const dono = `${process.pid}:${crypto.randomBytes(6).toString('hex')}`;
+  // Solta = livre, ou de dono que morreu. Texto vazio/estranho (o dono acabou de criar) conta como ocupada.
+  const solta = (n) => {
+    let t;
+    try { t = fs.readFileSync(nome(n), 'utf8'); } catch (e) { return e.code === 'ENOENT'; }
+    if (t === 'livre') return true;
+    const m = /^(\d+):/.exec(t);
+    return m ? !pidVivo(Number(m[1])) : false;
+  };
+  return (corpo) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const limite = Date.now() + esperaMs;
+    let minha = 0;
+    while (!minha) {
+      let todas;
+      try { todas = geracoes(); } catch { return null; }
+      const maior = todas.length ? todas[todas.length - 1] : 0;
+      if (maior === 0 || solta(maior)) {
+        try { fs.writeFileSync(nome(maior + 1), dono, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') return null; continue; }
+        let ha = false;
+        try { ha = geracoes().some((n) => n > maior + 1); } catch { /* confere de novo abaixo */ }
+        if (!ha) minha = maior + 1;
+        else { try { fs.writeFileSync(nome(maior + 1), 'livre'); } catch { /* fica presa até o dono (este processo) morrer */ } }
+      } else if (Date.now() > limite) return null;
+      else esperaCurta(10);
+      if (!minha && Date.now() > limite) return null;
+    }
+    try { return corpo(); } finally {
+      try { fs.writeFileSync(nome(minha), 'livre'); } catch { /* fica presa até este processo morrer */ }
+      try { for (const n of geracoes()) if (n < minha - 5) fs.rmSync(nome(n), { force: true }); } catch { /* limpeza fica para a próxima */ }
+    }
+  };
+}
+// Windows: pergunta ao Job Object (por nome) se ainda há processo dentro. true = vivo, false = vazio/fechado, null = não deu para saber.
+function jobVivoPadrao(nome) {
+  if (process.platform !== 'win32') return null;
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'job-confirmar-windows.ps1'), '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true });
+    if (r.error || r.status !== 0) return null;
+    const resposta = String(r.stdout).trim().split(/\r?\n/).pop();
+    if (resposta === 'FECHADO' || resposta === 'VAZIO') return false;
+    return /^VIVOS \d+$/.test(resposta) ? true : null;
+  } catch { return null; }
+}
+
+// Data de criação do processo (texto), para distinguir o dono de verdade de um PID reaproveitado; null se não der para ler.
+function inicioDoProcesso(pid) {
+  try {
+    if (process.platform === 'linux') {
+      const resto = fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /, '').split(' ');
+      return `l${resto[19]}`;
+    }
+    const cmd = process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`]] : ['ps', ['-o', 'lstart=', '-p', String(pid)]];
+    const r = spawnSync(cmd[0], cmd[1], { encoding: 'utf8', timeout: 10000, windowsHide: true });
+    const t = String(r.stdout ?? '').trim();
+    return r.status === 0 && t ? t : null;
+  } catch { return null; }
+}
+
+function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao, reintentoMs = 1000 }) {
+  const id = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  const comTrava = criarTrava(`${pasta}.trava`);
+  const meu = path.join(pasta, `${id}.json`);
+  let retido = false;
+  // O dono está vivo? PID existente E mesma data de criação (um PID reaproveitado por outro processo não prende a vaga).
+  const donoVivo = (pid, inicio) => {
+    if (!pidVivo(pid)) return false;
+    if (typeof inicio !== 'string' || !inicio) return true;
+    const atual = inicioDoProcesso(pid);
+    return atual === null || atual === inicio;
+  };
+  const valida = (r) => {
+    if (!r || !Number.isInteger(r.reservado) || r.reservado < 0 || !numeroValido(r.em, 0)) return false;
+    if (Array.isArray(r.itens) && r.ate !== undefined) {
+      // Reserva retida por morte não confirmada: cada item (um processo sem morte confirmada) é avaliado pelo PRÓPRIO
+      // identificador, e a reserva só cai quando TODOS estiverem resolvidos. Item com Job vale até o Job estar vazio ou não
+      // existir (vivo ou inconclusivo NÃO expira); item só com PID, até o processo morrer (PID + data de criação); item sem
+      // identificador não tem o que consultar e vale até `ate` (RETENCAO_MS).
+      return r.itens.some((item) => {
+        const temJob = item && typeof item.job === 'string' && item.job;
+        const temPid = item && Number.isInteger(item.pid);
+        if (!temJob && !temPid) return numeroValido(r.ate, 0) && relogio() <= r.ate;
+        // O item só se resolve quando TODA a evidência dele resolve: o Job ainda pode não ter sido criado (FECHADO) enquanto o
+        // wrapper (PID) já está vivo, então Job inexistente sozinho não basta se o PID continua vivo.
+        if (temJob) { let vivo = true; try { vivo = jobVivo(item.job) !== false; } catch { vivo = true; } if (vivo) return true; }
+        return temPid ? donoVivo(item.pid, item.inicio) : false;
+      });
+    }
+    // Reserva de lote: vale enquanto o dono estiver vivo (o batimento `em` serve só para dados, nunca expira a reserva).
+    return Number.isInteger(r.pid) && donoVivo(r.pid, r.inicio);
+  };
+  // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade) e `itens` ({ pid, job } de cada processo sem morte
+  // confirmada), mantém essa quantidade de vagas retida: a retenção é gravada (rename atômico sobre a própria reserva, dentro da
+  // trava) ANTES de qualquer remoção. Se a gravação falhar, a reserva NÃO é apagada, o processo continua tentando em segundo
+  // plano (o timer segura o Node vivo, então o dono não morre e a reserva comum não cai) e `liberar` lança `retencaoNaoGravada`.
+  let pendente = null;
+  const liberar = ({ naoConfirmados = 0, itens = [] } = {}) => {
+    if (retido || pendente) return;
+    if (naoConfirmados > 0) {
+      const lista = (itens.length ? itens : Array.from({ length: naoConfirmados }, () => ({}))).map((i) => ({
+        ...(typeof i?.jobNome === 'string' && i.jobNome ? { job: i.jobNome } : {}),
+        ...(Number.isInteger(i?.pid) ? { pid: i.pid, inicio: inicioDoProcesso(i.pid) } : {}),
+      }));
+      const gravar = () => {
+        fs.mkdirSync(pasta, { recursive: true });
+        const temporario = `${meu}.tmp`;
+        fs.writeFileSync(temporario, JSON.stringify({ reservado: naoConfirmados, itens: lista, ate: relogio() + RETENCAO_MS, em: relogio() }), { mode: 0o600 });
+        fs.renameSync(temporario, meu);
+        return true;
+      };
+      const tentar = () => {
+        for (let i = 0; i < 3; i++) {
+          try { if (comTrava(gravar) === true) return true; } catch { /* tenta de novo */ }
+          try { if (gravar()) return true; } catch { /* sem trava e sem gravar */ }
+          esperaCurta(50);
+        }
+        return false;
+      };
+      if (tentar()) { retido = true; return; }
+      pendente = setInterval(() => { if (tentar()) { clearInterval(pendente); pendente = null; retido = true; } }, reintentoMs);
+      throw Object.assign(new Error('não consegui gravar a retenção de vagas dos processos sem morte confirmada; este processo continua tentando e não encerra até gravar (encerre os processos do modelo local à mão)'), { retencaoNaoGravada: true });
+    }
+    try { fs.unlinkSync(meu); } catch { /* não havia */ }
+  };
+  process.once('exit', () => { if (!pendente) liberar(); });
+  // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama não concede vaga nova).
+  const reservar = ({ alvo, agentes, teto }) => comTrava(() => {
+    fs.mkdirSync(pasta, { recursive: true });
+    let outros = 0;
+    for (const nome of fs.readdirSync(pasta)) {
+      if (!nome.endsWith('.json') || nome === `${id}.json`) continue;
+      const arq = path.join(pasta, nome);
+      let r = null;
+      let ok = false;
+      try { r = JSON.parse(fs.readFileSync(arq, 'utf8')); ok = valida(r); } catch { ok = false; }
+      if (ok) outros += r.reservado; else { try { fs.unlinkSync(arq); } catch { /* já foi */ } }
+    }
+    const concedido = Math.max(0, Math.min(alvo, teto - outros));
+    const temporario = `${meu}.tmp`;
+    fs.writeFileSync(temporario, JSON.stringify({ reservado: Math.max(concedido, agentes), pid: process.pid, inicio: inicioDoProcesso(process.pid), em: relogio() }), { mode: 0o600 });
+    fs.renameSync(temporario, meu);
+    return concedido;
+  });
+  return { reservar, liberar };
+}
+
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
-function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, modos, config, aoDecidir } = {}) {
+function criarControle({ jobVivo, reintentoRetencaoMs, leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, pastaLotes = `${arquivoEstado}.lotes`, modos, config, aoDecidir } = {}) {
   let ultimo = null;
+  const reserva = criarReserva({ pasta: pastaLotes, relogio, jobVivo, reintentoMs: reintentoRetencaoMs });
   // Leitor assíncrono: a leitura roda em segundo plano e a decisão usa a última pronta. Sem leitura recente (a primeira
   // vez, ou uma que demorou demais) vale "indisponível" = usando o PC = 1 agente.
   let pronta = null;
@@ -183,7 +385,7 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     idadeDaLeitura = pronta ? relogio() - pronta.em : Infinity;
     return pronta && idadeDaLeitura < 4 * cacheMs ? pronta.leitura : null;
   };
-  return ({ agentesLocais = 0 } = {}) => {
+  const controle = ({ agentesLocais = 0 } = {}) => {
     ultimaChamada = relogio();
     // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente. Mas nunca esconde
     // uma leitura NOVA que chegou depois da última decisão: na descida (o dono voltou) o cache não vale.
@@ -193,31 +395,52 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     try {
       anterior = lerJson(arquivoEstado);
       const validade = (config ?? configPadrao()).validadeEstadoSegundos ?? 300;
-      if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
+      // Estado estrito: objeto com alvo inteiro, subiuEm e gravadoEm numéricos e o MESMO modo (outro modo ou lixo recomeça).
+      if (!anterior || typeof anterior !== 'object' || anterior.modo !== modo || !Number.isInteger(anterior.alvo) || anterior.alvo < 0 || !numeroValido(anterior.subiuEm, 0)) anterior = null;
+      else if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
     } catch { anterior = null; /* primeira vez */ }
     const d = decidir({ leitura: leituraAtual(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
     // Primeira decisão com leitura assíncrona ainda não pronta: vale 1 agente, mas não grava estado nem guarda cache, para a
     // leitura que chegar depois seguir o ramo da subida inicial (como se fosse a primeira decisão de verdade).
-    if (leitor.lerAsync && !pronta) return d.alvo;
+    // Vaga entre lotes: o que sobra do teto depois do que os outros lotes reservaram (null = sem a trava: nenhuma vaga nova).
+    const reservar = (alvo) => { const r = reserva.reservar({ alvo, agentes: agentesLocais, teto: d.capacidade.max }); return r === null ? Math.min(alvo, agentesLocais) : r; }; // sem trava: nenhuma vaga nova, só mantém as que já existem
+    if (leitor.lerAsync && !pronta) return reservar(d.alvo);
     // Para SUBIR o número de agentes a leitura tem que ser recente (menos de `cacheMs`); com amostra velha só mantém ou reduz
     // (o piso de 1 agente continua valendo) e o estado de subida não é gravado.
-    if (leitor.lerAsync && idadeDaLeitura >= cacheMs && d.alvo > Math.max(agentesLocais, 1)) return Math.max(agentesLocais, 1);
+    if (leitor.lerAsync && idadeDaLeitura >= cacheMs && d.alvo > Math.max(agentesLocais, 1)) return reservar(Math.max(agentesLocais, 1));
     // Leitura velha demais para provar que o PC continua livre (2 x cache) com vários agentes rodando: a leitura nova já foi
     // pedida acima, e enquanto ela não chega reduz na hora para 1 (a descida nunca espera o cache).
-    if (leitor.lerAsync && idadeDaLeitura >= 2 * cacheMs && agentesLocais > 1) return 1;
-    try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
-    if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
-    ultimo = { em: relogio(), alvo: d.alvo };
-    return d.alvo;
+    if (leitor.lerAsync && idadeDaLeitura >= 2 * cacheMs && agentesLocais > 1) return reservar(1);
+    // Escrita atômica (arquivo temporário + rename): outra instância nunca lê JSON truncado.
+    try {
+      const temporario = `${arquivoEstado}.${process.pid}.tmp`;
+      fs.writeFileSync(temporario, JSON.stringify({ ...d.estado, modo, gravadoEm: relogio() }), { mode: 0o600 });
+      fs.renameSync(temporario, arquivoEstado);
+    } catch { /* sem estado, só não sobe devagar */ }
+    const alvoFinal = reservar(d.alvo);
+    if (aoDecidir && alvoFinal !== ultimo?.alvo) aoDecidir({ ...d, alvo: alvoFinal, motivo: alvoFinal === d.alvo ? d.motivo : `${d.motivo}; vagas reservadas por outros lotes: ${alvoFinal} de ${d.alvo}` });
+    ultimo = { em: relogio(), alvo: alvoFinal };
+    return alvoFinal;
   };
+  controle.liberar = reserva.liberar;
+  return controle;
 }
 
-module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, leitorSimulado, modoAtual, criarControle };
+module.exports = { jobVivoPadrao, inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
 
-if (require.main === module) {
+// Saída manual: apaga todas as reservas e retenções de vagas (use só se tiver certeza de que nenhum lote nem agente está rodando).
+function limparReservas(pasta = `${path.join(os.tmpdir(), 'mixai-paralelismo.json')}.lotes`) {
+  let n = 0;
+  try { for (const nome of fs.readdirSync(pasta)) { if (nome.endsWith('.json')) { fs.unlinkSync(path.join(pasta, nome)); n += 1; } } } catch { /* sem pasta */ }
+  return n;
+}
+
+if (require.main === module && process.argv.includes('--limpar-reservas')) {
+  console.log(`reservas apagadas: ${limparReservas()}`);
+} else if (require.main === module) {
   const i = process.argv.indexOf('--modo');
   const modo = i >= 0 ? process.argv[i + 1] : modoAtual();
   const leitura = leitorWindows().ler();
   const d = decidir({ leitura, modo });
-  console.log(JSON.stringify({ modo, leitura, alvo: d.alvo, regime: d.regime, motivo: d.motivo, capacidade: d.capacidade, subida: `+1 a cada ${configPadrao().subidaMinSegundos}s com o PC parado` }, null, 2));
+  console.log(JSON.stringify({ modo, leitura, alvo: d.alvo, regime: d.regime, motivo: d.motivo, capacidade: d.capacidade, subida: `na primeira decisão o tempo que o PC já está parado conta (1 agente por ${configPadrao().subidaMinSegundos}s); depois +1 a cada ${configPadrao().subidaMinSegundos}s com o PC parado` }, null, 2));
 }

@@ -126,7 +126,7 @@ test("a saída do uso-windows.ps1 vira leitura: JSON na última linha, vídeo me
   assert.strictEqual(par.lerSaida("123"), null);
 });
 
-test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode', NVIDIA 'VideoDecode'), ignora jpeg/enhance, tira a média de 3 leituras e usa limiar >= 1%", () => {
+test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode', NVIDIA 'VideoDecode'), ignora jpeg/enhance, tira a média de 3 leituras e usa o limiar da config (acima do ruído de ~5% do 'video codec 0' sem vídeo)", () => {
   const nome = (motor) => `pid_4321_luid_0x00000000_0x0000F0D3_phys_0_eng_5_engtype_${motor}`;
   const leituras = (porAmostra) => porAmostra.flatMap((motores, i) => Object.entries(motores).map(([motor, v]) => ({ i, n: nome(motor), v })));
   // AMD tocando vídeo: o uso aparece em "video codec 0" (0 a 4%), "video decode" fica em 0.
@@ -151,11 +151,15 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   // um pico isolado diluído nas 3 leituras (0,0,2 => 0,67%) não conta; média de 1% ou mais conta
   const pico = leituras([{ "video codec 0": 0 }, { "video codec 0": 0 }, { "video codec 0": 2 }]);
   assert.ok(par.videoDecodeDe({ amostras: 3, motores: pico }) < config.ocupado.videoDecodeAcimaDePct);
-  const limite = leituras([{ "video codec 0": 1 }, { "video codec 0": 1 }, { "video codec 0": 1 }]);
+  const limiar = config.ocupado.videoDecodeAcimaDePct;
+  assert.ok(limiar > 5, "o limiar tem que ficar acima do ruído de ~5% medido no PC sem vídeo tocando");
+  const limite = leituras([{ "video codec 0": limiar }, { "video codec 0": limiar }, { "video codec 0": limiar }]);
+  const ruido = leituras([{ "video codec 0": 5 }, { "video codec 0": 5.5 }, { "video codec 0": 4.5 }]);
   const base = { ociosoSegundos: 700, gpuOutrosPct: 1, cpuOutrosPct: 2, memoriaLivreGB: 6 };
   const bruta = (motores) => JSON.stringify({ ...base, videoAmostras: 3, videoMotores: motores });
   assert.match(decide(par.lerSaida(bruta(limite)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /vídeo tocando/);
   assert.strictEqual(decide(par.lerSaida(bruta(pico)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
+  assert.strictEqual(decide(par.lerSaida(bruta(ruido)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "o ruído de ~5% sem vídeo não vira 'vídeo tocando' permanente");
   // coleta válida (3 amostras) sem nenhum motor de decodificação = sem vídeo: não bloqueia
   assert.strictEqual(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
   // falha de coleta (nenhuma amostra) continua indisponível
@@ -566,9 +570,13 @@ test("estado salvo de uma execução antiga expira: um lote novo não herda o al
   const agora = 10 * 3600 * 1000;
   const controle = par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
   assert.strictEqual(controle(), 1, "estado de 10 h atrás é ignorado");
-  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora - 1000, gravadoEm: agora - 1000 }));
-  assert.strictEqual(par.criarControle({ leitor: { ler: () => PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 3, "estado recente vale");
-  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora }));
+  controle.liberar(); // o lote acabou: devolve a vaga reservada (senão o lote seguinte dividiria o teto com ele)
+  // com a leitura "recém parado" e SEM estado, a subida inicial dá 1; com estado recente do mesmo modo o 3 só pode vir do estado
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora - 1000, gravadoEm: agora - 1000, modo: "noite" }));
+  const recente = par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
+  assert.strictEqual(recente(), 3, "estado recente (do mesmo modo) vale: prova a reutilização, não a subida inicial");
+  recente.liberar();
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora, modo: "noite" }));
   assert.strictEqual(par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 1, "sem data de gravação: ignorado");
 });
 
@@ -678,10 +686,10 @@ test("a memória livre que o controle recebe já vem reduzida pelos agentes que 
 });
 
 test("o prompt chega ao comando por arquivo (stdin sem pipe) e o arquivo temporário é apagado", async () => {
-  const antes = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length;
+  const antes = (fs.existsSync(path.join(os.tmpdir(), "mixai-prompts")) ? fs.readdirSync(path.join(os.tmpdir(), "mixai-prompts")) : []).filter((f) => f.startsWith("prompt-")).length;
   const saida = await chamar(`"${process.execPath}" -e "process.stdin.pipe(process.stdout)"`)("olá, prompt com acentuação ç ã");
   assert.strictEqual(saida, "olá, prompt com acentuação ç ã");
-  assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length, antes);
+  assert.strictEqual(fs.readdirSync(path.join(os.tmpdir(), "mixai-prompts")).filter((f) => f.startsWith("prompt-")).length, antes);
 });
 
 test("morte não confirmada no tempo máximo também para o lote (não vira erro comum que sobe para o Codex)", async () => {
@@ -1223,3 +1231,513 @@ test("uso-windows.ps1 exige cobertura: instâncias de motor iguais em todas as a
   assert.match(uso, /@\(\$errosContador\)\.Count -gt 0\) \{ return \$null \}/);
   assert.match(uso, /if \(-not \(Conjuntos-Iguais \$leituras\)\) \{ return \$null \}/);
 });
+
+// --- Acompanhamento da coleta de uso (itens da revisão exaustiva) ----------------------------------------------------
+test("GPU de outros programas: vale o motor MAIS carregado (média das amostras), não a soma de motores diferentes; sem cobertura ou linha inválida = null", () => {
+  const linhas = [0, 1, 2].flatMap((i) => [{ i, t: "3D", v: 40 }, { i, t: "Copy", v: 30 }, { i, t: "VideoDecode", v: 10 }]);
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas }), 40, "3D 40, Copy 30, vídeo 10: a placa está a 40, não a 80");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [] }), 0, "cobertura provada e ninguém usando");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [{ i: 0, t: "3D", v: 90 }, { i: 1, t: "3D", v: 90 }] }), 60, "amostra sem uso do tipo conta zero nela");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [0, 1, 2].map((i) => ({ i, t: "3D", v: 150 })) }), 100, "limita a 100");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 0, linhas: [] }), null, "coleta sem cobertura");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 2, linhas: [] }), null);
+  for (const ruim of [{ i: 0, t: "3D", v: null }, { i: 0, t: "3D", v: -1 }, { i: 7, t: "3D", v: 1 }, { i: 0, t: "", v: 1 }, { i: 0, v: 1 }]) {
+    assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [ruim] }), null, JSON.stringify(ruim));
+  }
+  // vem pela saída do script
+  const base = { ociosoSegundos: 900, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [], memoriaLivreGB: 6 };
+  assert.strictEqual(par.lerSaida(JSON.stringify({ ...base, gpuAmostras: 3, gpuPorTipo: linhas })).gpuOutrosPct, 40);
+  assert.strictEqual(par.lerSaida(JSON.stringify({ ...base, gpuAmostras: 0, gpuPorTipo: [] })).gpuOutrosPct, null, "sem cobertura: null, e o decisor trata como em uso");
+});
+
+test("CPU: parte do Ollama muito acima do total da máquina é leitura inconsistente (null), não 'zero de outros programas'", () => {
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 400, nucleos: 8 }), null, "Ollama a 50% da máquina com total em 5%");
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 40, cpuMeuPct: 400, nucleos: 8 }), 0, "Ollama a 50% com total em 40%: dentro da folga, não passa de 0");
+});
+
+test("capacidade usa a VRAM medida de outros programas e só credita a memória que o Ollama do MixAI realmente ocupa", () => {
+  const sem = par.capacidade({ modo: "noite", memoriaLivreGB: 6, modos, config, memoriaMinimaGB: 2 });
+  const ocupada = par.capacidade({ modo: "noite", memoriaLivreGB: 6, vramOutrosGB: 3, modos, config, memoriaMinimaGB: 2 });
+  assert.ok(sem.limites.placa >= 1, "controle: a placa livre cabe agente");
+  assert.strictEqual(ocupada.limites.placa, 0, "outro programa com 3 GB na placa: não cabe agente");
+  assert.strictEqual(ocupada.limitante, "placa");
+  assert.strictEqual(ocupada.vramMedida, true);
+  assert.strictEqual(sem.vramMedida, false, "sem medida vale só a reserva fixa");
+  // crédito de memória: 3 agentes contados, mas o Ollama do MixAI só ocupa 0.5 GB de verdade
+  const cheio = par.capacidade({ modo: "noite", memoriaLivreGB: 2.5, agentesAtuais: 3, modos, config, memoriaMinimaGB: 2 });
+  const medido = par.capacidade({ modo: "noite", memoriaLivreGB: 2.5, agentesAtuais: 3, ramMeuGB: 0.5, modos, config, memoriaMinimaGB: 2 });
+  assert.ok(medido.limites.memoria < cheio.limites.memoria, `${medido.limites.memoria} < ${cheio.limites.memoria}`);
+  // vem da leitura pelo decisor
+  const d = decide({ ...PARADO, vramOutrosGB: 3 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
+  assert.strictEqual(d.capacidade.limites.placa, 0);
+});
+
+test("estado do controle: gravação atômica com o modo, e estado de outro modo ou com lixo é ignorado (recomeça)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctl-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  await comMemoriaAsync(6, async () => {
+    const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6, cacheMs: 0, modos, config });
+    controle({ agentesLocais: 0 });
+    const gravado = JSON.parse(fs.readFileSync(arquivoEstado, "utf8"));
+    assert.strictEqual(gravado.modo, "noite");
+    assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => !n.startsWith("e.json.lotes")), ["e.json"], "nenhum temporário sobra (só a pasta e a trava das reservas de vagas)");
+    controle.liberar();
+    // outro modo: o estado não vale (recomeça pela primeira decisão)
+    fs.writeFileSync(arquivoEstado, JSON.stringify({ alvo: 1, subiuEm: 1e6, gravadoEm: 1e6, modo: "dia" }));
+    const c2 = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6 + 1000, cacheMs: 0, modos, config });
+    assert.ok(c2({ agentesLocais: 0 }) > 1, "estado do modo dia (alvo 1, acabou de subir) não segura o modo noite");
+    c2.liberar();
+    // lixo
+    for (const lixo of ["", "{", "[]", "null", JSON.stringify({ alvo: "x", subiuEm: 1, gravadoEm: 1e6, modo: "noite" }), JSON.stringify({ alvo: -2, subiuEm: 1, gravadoEm: 1e6, modo: "noite" })]) {
+      fs.writeFileSync(arquivoEstado, lixo);
+      const c3 = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6 + 2000, cacheMs: 0, modos, config });
+      assert.ok(c3({ agentesLocais: 0 }) > 1, `lixo ignorado: ${lixo}`);
+      c3.liberar();
+    }
+  });
+});
+
+test("leitorWindows: erro escrito pelo coletor na saída de erro torna a leitura indisponível (null), mesmo com JSON na saída", async () => {
+  const json = JSON.stringify({ ociosoSegundos: 900, memoriaLivreGB: 6, nucleos: 8, cpuTotalPct: 5, cpuMeuPct: 0, videoAmostras: 3, videoMotores: [], gpuAmostras: 3, gpuPorTipo: [] });
+  const comSaida = (stderr) => ({ executar: (c, a, o, cb) => cb(null, json, stderr) });
+  assert.ok((await par.leitorWindows(comSaida("")).lerAsync()).gpuOutrosPct === 0, "controle: sem erro vale");
+  assert.strictEqual(await par.leitorWindows(comSaida("Get-CimInstance : acesso negado")).lerAsync(), null);
+  assert.strictEqual(await par.leitorWindows({ executar: (c, a, o, cb) => cb(new Error("falhou")) }).lerAsync(), null);
+});
+
+test("prompt temporário fica em pasta privada: pasta aberta para outros é recusada antes de escrever o prompt ou iniciar o processo", async () => {
+  if (process.platform === "win32") return; // no Windows a permissão vem da ACL do %TEMP% do usuário
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "pasta-prompt-"));
+  const aberta = path.join(base, "aberta");
+  fs.mkdirSync(aberta, { mode: 0o755 });
+  fs.chmodSync(aberta, 0o755);
+  let lancou = 0;
+  await assert.rejects(
+    escada.chamarComando("x", { plataforma: "win32", lancar: () => { lancou += 1; throw new Error("não devia lançar"); }, pastaPrompts: aberta })("segredo"),
+    /não é privada/,
+  );
+  assert.strictEqual(lancou, 0);
+  assert.deepStrictEqual(fs.readdirSync(aberta), [], "nenhum prompt foi escrito na pasta aberta");
+  // pasta privada nova: funciona, e o arquivo some no fim
+  const privada = path.join(base, "privada");
+  const { spawn } = require("node:child_process");
+  const resposta = await escada.chamarComando("process.stdin.pipe(process.stdout)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [], pastaPrompts: privada })("olá");
+  assert.strictEqual(resposta, "olá");
+  assert.strictEqual((fs.statSync(privada).mode & 0o077), 0, "pasta criada só para o dono");
+  assert.deepStrictEqual(fs.readdirSync(privada), [], "o prompt temporário foi apagado");
+});
+
+test("uso-windows.ps1 e modo.ps1 (texto): sessão do console, tempo ocioso plausível, CIM como segunda fonte, cobertura de cpuMeu, VRAM e RAM medidas, modo gravado conferido", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /WTSGetActiveConsoleSessionId/);
+  assert.match(uso, /\(Get-Process -Id \$PID\)\.SessionId -ne \[MixaiOcioso\]::SessaoDoConsole\(\)\)\) \{ \$ocioso = \$null \}/, "outra sessão: ocioso indisponível");
+  assert.match(uso, /\$ocioso -gt \(\(Get-Date\) - \$so\.LastBootUpTime\)\.TotalSeconds/, "ocioso maior que o tempo ligado é impossível");
+  assert.match(uso, /function Ler-Contador/);
+  assert.match(uso, /function Ler-Cim/);
+  assert.match(uso, /\$r = Ler-Contador\s+if \(\$null -eq \$r\) \{ \$r = Ler-Cim \}/, "o CIM é tentado quando o contador é inválido");
+  assert.match(uso, /\$vistosCpu\.Count -ne \$pidsMeus\.Count\) \{ \$valido = \$false \}/, "cpuMeu exige cobertura dos processos do MixAI");
+  assert.match(uso, /GPU Adapter Memory\(\*\)\\Dedicated Usage/);
+  assert.match(uso, /GPU Process Memory\(\*\)\\Dedicated Usage/);
+  assert.match(uso, /vramOutrosGB\s+= \$vramOutrosGB/);
+  assert.match(uso, /ramMeuGB\s+= \$ramMeuGB/);
+  assert.match(uso, /gpuPorTipo\s+= @\(\$gpuPorTipo\)/);
+  const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
+  assert.match(modo, /\$gravadoModo -ne \$Modo/);
+  assert.match(modo, /throw "Não consegui gravar o modo/);
+  assert.ok(modo.search(/\$gravadoModo -ne/) > modo.search(/Set-Content \$arquivoModo \$Modo/), "confere depois de gravar");
+  assert.ok(modo.search(/Write-Host "Modo \$Modo ligado/) > modo.search(/\$gravadoModo -ne/), "só anuncia depois de conferir");
+});
+
+test("GPU: o motor mais carregado EM CADA amostra e só depois a média (3D e Copy alternando a 90% = placa a 90%)", () => {
+  const linhas = [{ i: 0, t: "3D", v: 90 }, { i: 0, t: "Copy", v: 0 }, { i: 1, t: "3D", v: 0 }, { i: 1, t: "Copy", v: 90 }, { i: 2, t: "3D", v: 90 }, { i: 2, t: "Copy", v: 0 }];
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas }), 90, "a média por tipo daria 60");
+});
+
+test("player de vídeo conhecido ativo (CPU) conta como vídeo por software; ausente não muda nada; inválido é leitura indisponível", () => {
+  assert.strictEqual(decide({ ...PARADO, playersCpuPct: 0 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
+  assert.match(decide({ ...PARADO, playersCpuPct: 12 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /player de vídeo ativo/);
+  assert.strictEqual(decide({ ...PARADO, playersCpuPct: 12 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1);
+  for (const ruim of [null, NaN, -1, "3"]) assert.match(decide({ ...PARADO, playersCpuPct: ruim }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/, String(ruim));
+});
+
+test("dois lotes juntos nunca passam do teto: o segundo fica com o que sobra, a vaga volta ao liberar, e reserva de lote morto ou sem batimento é descartada", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lotes-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  let agora = 1e6;
+  const mais = () => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 0, modos, config });
+  const teto = modos.noite.agentesMax;
+  const a = mais();
+  const b = mais();
+  const alvoA = a({ agentesLocais: 0 });
+  assert.strictEqual(alvoA, teto, "o primeiro lote reserva até o teto");
+  assert.strictEqual(b({ agentesLocais: 0 }), 0, "o segundo não tem vaga: o teto inteiro está reservado");
+  for (let i = 0; i < 5; i++) { const x = a({ agentesLocais: 1 }); const y = b({ agentesLocais: 0 }); assert.ok(x + y <= teto, `${x} + ${y} <= ${teto}`); }
+  a.liberar();
+  assert.strictEqual(b({ agentesLocais: 0 }), teto, "o primeiro acabou: a vaga volta");
+  // lote com agentes vivos (morrendo) continua reservando mesmo que o alvo caia
+  const c = mais();
+  assert.strictEqual(c({ agentesLocais: 0 }), 0, "o segundo (b) segura o teto");
+  b.liberar();
+  // reserva de PID inexistente e PID reaproveitado (outra data de criação) não contam
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.writeFileSync(path.join(pasta, "morto.json"), JSON.stringify({ reservado: 3, pid: 2147483000, em: agora }));
+  fs.writeFileSync(path.join(pasta, "reaproveitado.json"), JSON.stringify({ reservado: 3, pid: process.pid, inicio: "outro-processo", em: agora }));
+  fs.writeFileSync(path.join(pasta, "lixo.json"), "{");
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "nada disso reserva vaga");
+  assert.deepStrictEqual(fs.readdirSync(pasta).filter((n) => !n.startsWith(`${process.pid}-`)), [], "as reservas inválidas foram apagadas");
+  c.liberar();
+}));
+
+test("o lote devolve a reserva de vagas ao terminar (também com erro)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lotes-"));
+  let liberou = 0;
+  const controle = Object.assign(() => 1, { liberar: () => { liberou += 1; } });
+  await escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local: () => "ok", superiores: [] } });
+  assert.strictEqual(liberou, 1);
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: Object.assign(() => { throw new Error("quebrou"); }, { liberar: () => { liberou += 1; } }), arquivos: arquivosTemp(), agentes: { local: () => "ok", superiores: [] } }));
+  assert.strictEqual(liberou, 2);
+});
+
+test("pasta privada do prompt no Windows: pasta nova aleatória, icacls sem herança com só o usuário, ACL lida de volta; qualquer outro principal ou falha do icacls recusa e apaga a pasta", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "acl base "));
+  const chamadas = [];
+  const fingir = (listaDoIcacls) => (cmd, args) => { chamadas.push([cmd, ...args]); return args.length === 1 ? `${args[0]} ${listaDoIcacls}\n\nSuccessfully processed 1 files; Failed processing 0 files\n` : "Successfully processed 1 files; Failed processing 0 files\n"; };
+  const ok = escada.criarPastaPrivadaWindows(base, { executar: fingir("PC\\maria:(OI)(CI)(F)"), usuario: "maria", dominio: "PC" });
+  assert.ok(ok.startsWith(path.join(base, "mixai-prompts-")) && fs.existsSync(ok), "pasta nova com nome aleatório");
+  assert.deepStrictEqual(chamadas[0].slice(0, 1).concat(chamadas[0].slice(2)), ["icacls", "/inheritance:r", "/grant:r", "maria:(OI)(CI)F"]);
+  const outra = escada.criarPastaPrivadaWindows(base, { executar: fingir("PC\\maria:(OI)(CI)(F)"), usuario: "maria", dominio: "PC" });
+  assert.notStrictEqual(outra, ok, "cada pasta tem nome diferente");
+  // ACL com outro principal (herdado, Users, Everyone...) é recusada e a pasta some
+  for (const extra of ["PC\\maria:(OI)(CI)(F)\n                          BUILTIN\\Users:(I)(OI)(CI)(RX)", "Everyone:(OI)(CI)(F)", "BUILTIN\\Administrators:(OI)(CI)(F)"]) {
+    const antes = fs.readdirSync(base).length;
+    assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: fingir(extra), usuario: "maria", dominio: "PC" }), /não é só do usuário/);
+    assert.strictEqual(fs.readdirSync(base).length, antes, "a pasta recusada foi apagada");
+  }
+  assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: () => { throw new Error("icacls: acesso negado"); }, usuario: "maria" }), /não consegui tornar privada.*acesso negado/);
+  assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: fingir("sem acl legível"), usuario: "maria" }), /não consegui ler a ACL/);
+  assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: fingir(""), usuario: "" }), /USERNAME/);
+});
+
+test("Windows de verdade: a pasta privada do prompt criada pelo icacls real tem ACL só do usuário e dá para escrever nela", () => {
+  if (process.platform !== "win32") return;
+  const pasta = escada.criarPastaPrivadaWindows();
+  try {
+    fs.writeFileSync(path.join(pasta, "teste.txt"), "x");
+    assert.strictEqual(fs.readFileSync(path.join(pasta, "teste.txt"), "utf8"), "x");
+  } finally { fs.rmSync(pasta, { recursive: true, force: true }); }
+});
+
+test("uso-windows.ps1 (texto): VRAM só do adaptador do MixAI (luid), adaptadores vazios = null, RAM só dos runners (memória privada), players de vídeo conhecidos", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /luid_0x\[0-9a-fA-F\]\+_0x\[0-9a-fA-F\]\+/, "o luid liga o adaptador ao processo");
+  assert.match(uso, /\$meuPorAdaptador\[\$luidMeu\]/);
+  assert.match(uso, /\$amostrasAdaptador\.Count -eq 0\) \{ \$valido = \$false \}/, "CounterSamples vazio do adaptador dá null");
+  assert.doesNotMatch(uso, /\$totalVram \+= /, "não soma todos os adaptadores");
+  assert.match(uso, /Measure-Object PrivatePageCount -Sum/, "só memória privada");
+  assert.match(uso, /\$_\.Name -match '\^\(llama-server\|ollama_llama_server\|ollama-runner\)/, "só os runners do modelo, pelo nome exato");
+  assert.doesNotMatch(uso, /Measure-Object WorkingSetSize/, "o working set inteiro não é crédito");
+  assert.match(uso, /\$playersCpu = \$null/);
+  assert.match(uso, /vlc\|mpv\|mpc-hc/);
+  assert.match(uso, /playersCpuPct\s+= \$playersCpu/);
+});
+
+// --- Rodada do Codex no #27: trava, retenção, chave do motor --------------------------------------------------------
+
+test("sem conseguir a trava da reserva nenhuma vaga NOVA é concedida (só mantém as que já existem); trava de dono vivo nunca é tomada, de dono morto é superada", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "trava-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  const mk = () => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6, cacheMs: 0, modos, config });
+  // um dono VIVO (este processo) segura a trava, por mais velha que seja: ninguém a toma
+  const trava = `${pasta}.trava.lock.00000001`;
+  fs.mkdirSync(path.dirname(trava), { recursive: true });
+  fs.writeFileSync(trava, `${process.pid}:abc`);
+  const velho = new Date(Date.now() - 3600 * 1000);
+  fs.utimesSync(trava, velho, velho);
+  const c = mk();
+  const t0 = Date.now();
+  assert.strictEqual(c({ agentesLocais: 0 }), 0, "sem trava: nenhuma vaga nova");
+  assert.ok(Date.now() - t0 >= 1500, "esperou a trava antes de desistir");
+  assert.strictEqual(c({ agentesLocais: 2 }), 2, "sem trava: mantém as que já existem, não sobe");
+  assert.strictEqual(fs.readFileSync(trava, "utf8"), `${process.pid}:abc`, "a trava do dono vivo continua intacta");
+  // dono MORTO: superado por uma geração maior, sem apagar a dele
+  fs.writeFileSync(trava, "2147483000:morto");
+  assert.strictEqual(c({ agentesLocais: 0 }), modos.noite.agentesMax, "dono morto não segura");
+  assert.ok(fs.existsSync(trava), "a trava do morto não foi apagada, foi superada");
+  assert.ok(fs.existsSync(`${pasta}.trava.lock.00000002`));
+  c.liberar();
+}));
+
+test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fica até os processos morrerem ou expirar, e some depois", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "retida-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  let agora = 1e6;
+  await comMemoriaAsync(6, async () => {
+    const mk = () => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 0, modos, config });
+    const controle = mk();
+    const teto = modos.noite.agentesMax;
+    // o lote concede vagas e termina com morte não confirmada de um agente (processo "vivo": este mesmo processo)
+    const vivo = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)"], { stdio: "ignore" });
+    t.after?.(() => { try { vivo.kill("SIGKILL"); } catch { /* já foi */ } });
+    const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: vivo.pid }); };
+    await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), /o lote parou/);
+    const guardadas = fs.readdirSync(pasta).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(fs.readFileSync(path.join(pasta, n), "utf8")));
+    assert.strictEqual(guardadas.length, 1, "a reserva ficou");
+    assert.strictEqual(guardadas[0].reservado, 1);
+    assert.strictEqual(guardadas[0].itens.length, 1);
+    assert.strictEqual(guardadas[0].itens[0].pid, vivo.pid);
+    // outro lote só recebe o que sobra: 1 vaga continua retida
+    const outro = mk();
+    assert.strictEqual(outro({ agentesLocais: 0 }), teto - 1, "uma vaga está retida pelo agente que pode estar vivo");
+    outro.liberar();
+    // o tempo NÃO expira a retenção enquanto o processo retido vive
+    agora += 3 * 3600 * 1000;
+    const depois = mk();
+    assert.strictEqual(depois({ agentesLocais: 0 }), teto - 1, "processo retido ainda vivo: continua retida horas depois");
+    depois.liberar();
+    vivo.kill("SIGKILL");
+    await new Promise((r) => vivo.once("exit", r));
+    const morreu = mk();
+    assert.strictEqual(morreu({ agentesLocais: 0 }), teto, "o processo retido morreu: a vaga volta");
+    morreu.liberar();
+  });
+  // quando o processo retido já morreu, a vaga volta na hora
+  const morto = path.join(pasta, "retido-morto.json");
+  fs.mkdirSync(pasta, { recursive: true });
+  fs.writeFileSync(morto, JSON.stringify({ reservado: 1, itens: [{ pid: 2147483000 }], ate: agora + 1e6, em: agora }));
+  await comMemoriaAsync(6, async () => {
+    const c = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 0, modos, config });
+    assert.strictEqual(c({ agentesLocais: 0 }), modos.noite.agentesMax, "o processo retido morreu");
+    c.liberar();
+  });
+});
+
+test("o erro naoConfirmado leva o PID do processo (a reserva fica retida por ele)", async () => {
+  const { spawn } = require("node:child_process");
+  const lancar = (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] });
+  let filho;
+  const erro = await escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = lancar(c, fd)), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", AbortSignal.abort()).catch((e) => e);
+  assert.ok(erro.abortada, "já abortado: nem lança");
+  const ctl = new AbortController();
+  const p = escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = lancar(c, fd)), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 50);
+  const e2 = await p.catch((e) => e);
+  assert.strictEqual(e2.naoConfirmado, true);
+  assert.strictEqual(e2.pid, filho.pid);
+  try { filho.kill("SIGKILL"); } catch { /* já foi */ }
+});
+
+test("GPU: a chave do motor é adaptador + engine + tipo (não só o tipo): dois motores do mesmo tipo em adaptadores diferentes não se somam", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /\[regex\]::Match\(\$l\.n, 'pid_\\d\+_\(\.\+\)\$'\)/, "a chave é tudo depois de pid_<n>_");
+  assert.doesNotMatch(uso, /Match\(\$l\.n, 'engtype_/, "não agrupa só pelo tipo");
+  // o decisor pega o máximo entre os motores de cada amostra
+  const motor = (i, adaptador, v) => ({ i, t: `luid_0x0_0x${adaptador}_phys_0_eng_0_engtype_3D`, v });
+  const linhas = [0, 1, 2].flatMap((i) => [motor(i, "A", 60), motor(i, "B", 70)]);
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas }), 70, "3D de duas placas: vale a mais carregada (70), não 130");
+});
+
+test("ESCADA.md não diz mais que dois lotes passam do teto", () => {
+  const doc = fs.readFileSync(path.join(RAIZ, "orquestra", "ESCADA.md"), "utf8");
+  assert.doesNotMatch(doc, /o total pode passar do teto/);
+  assert.doesNotMatch(doc, /o arquivo de estado não reserva vagas/);
+});
+
+// --- Rodada do Codex no #27: validade, retenção pelo Job, gravação dentro da trava -----------------------------------
+
+const controleCom = (arquivoEstado, agora, extra = {}) => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora.v, cacheMs: 0, modos, config, ...extra });
+
+test("reserva de lote com dono vivo NÃO expira por tempo; só cai com dono morto ou PID reaproveitado (outra data de criação)", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "validade-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e9 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const meuInicio = par.inicioDoProcesso(process.pid);
+  fs.writeFileSync(path.join(pasta, "antigo.json"), JSON.stringify({ reservado: 3, pid: process.pid, inicio: meuInicio, em: agora.v - 24 * 3600 * 1000 }));
+  let c = controleCom(arquivoEstado, agora);
+  assert.strictEqual(c({ agentesLocais: 0 }), teto - 3, "dono vivo, mesmo sem batimento há um dia: segura");
+  c.liberar();
+  if (meuInicio !== null) {
+    fs.writeFileSync(path.join(pasta, "antigo.json"), JSON.stringify({ reservado: 3, pid: process.pid, inicio: "outro", em: agora.v }));
+    c = controleCom(arquivoEstado, agora);
+    assert.strictEqual(c({ agentesLocais: 0 }), teto, "PID reaproveitado por outro processo: não segura");
+    c.liberar();
+  }
+}));
+
+test("retenção pelo Job: vale enquanto o Job não estiver vazio (vivo ou inconclusivo, sem limite de tempo) e some quando ele esvazia; sem nada para consultar vale até `ate`", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "job-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  const estado = { "Local\\MixAI-a": true };
+  const consultas = [];
+  const jobVivo = (nome) => { consultas.push(nome); return estado[nome]; };
+  const retida = (extra = {}) => fs.writeFileSync(path.join(pasta, "retida.json"), JSON.stringify({ reservado: 1, itens: [{ job: "Local\\MixAI-a" }], ate: agora.v + 600000, em: agora.v, ...extra }));
+  fs.mkdirSync(pasta, { recursive: true });
+  retida(); // o PID do wrapper está morto, mas o Job tem processo: continua retida
+  let c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto - 1, "Job com processo vivo segura a vaga");
+  assert.deepStrictEqual(consultas, ["Local\\MixAI-a"]);
+  c.liberar();
+  agora.v += 5 * 3600 * 1000; // horas depois, Job ainda vivo ou inconclusivo: não expira
+  for (const v of [true, null]) {
+    estado["Local\\MixAI-a"] = v;
+    c = controleCom(arquivoEstado, agora, { jobVivo });
+    assert.strictEqual(c({ agentesLocais: 0 }), teto - 1, `Job ${v}: mantém`);
+    c.liberar();
+  }
+  estado["Local\\MixAI-a"] = false;
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "Job vazio: a vaga volta na hora");
+  c.liberar();
+  // sem Job nem PID para consultar: vale até `ate`
+  fs.writeFileSync(path.join(pasta, "sem-nada.json"), JSON.stringify({ reservado: 1, itens: [{}], ate: agora.v + 1000, em: agora.v }));
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto - 1);
+  c.liberar();
+  agora.v += 2000;
+  c = controleCom(arquivoEstado, agora, { jobVivo });
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "passou de `ate`");
+  c.liberar();
+}));
+
+test("--limpar-reservas apaga as reservas e retenções (saída manual)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "limpa-"));
+  const pasta = path.join(dir, "lotes");
+  fs.mkdirSync(pasta);
+  fs.writeFileSync(path.join(pasta, "a.json"), "{}"); fs.writeFileSync(path.join(pasta, "b.json"), "{}");
+  assert.strictEqual(par.limparReservas(pasta), 2);
+  assert.deepStrictEqual(fs.readdirSync(pasta), []);
+  const uso = fs.readFileSync(path.join(RAIZ, "orquestra", "paralelismo.js"), "utf8");
+  assert.match(uso, /--limpar-reservas/);
+});
+
+test("o erro naoConfirmado do comando leva o NOME DO JOB e o lote passa os Jobs para a reserva", async () => {
+  const { spawn } = require("node:child_process");
+  const ctl = new AbortController();
+  let filho;
+  const p = escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] })), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 50);
+  const e = await p.catch((x) => x);
+  try { filho.kill("SIGKILL"); } catch { /* já foi */ }
+  assert.match(e.jobNome, /^Local\\MixAI-[0-9a-f]+$/);
+  let recebido;
+  const paralelismo = Object.assign(() => 1, { liberar: (r) => { recebido = r; } });
+  const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: 4242, jobNome: "Local\\MixAI-zz" }); };
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), /o lote parou/);
+  assert.deepStrictEqual(recebido, { naoConfirmados: 1, itens: [{ pid: 4242, jobNome: "Local\\MixAI-zz" }] });
+});
+
+test("retenção é gravada ANTES de apagar a reserva; se a gravação falha a reserva NÃO é apagada; limpeza de outro lote não apaga retenção válida", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grava-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  const a = controleCom(arquivoEstado, agora, { reintentoRetencaoMs: 100 });
+  assert.strictEqual(a({ agentesLocais: 0 }), teto);
+  const arq = () => fs.readdirSync(pasta).filter((n) => n.endsWith(".json"));
+  const [meu] = arq();
+  // gravação impossível (o temporário é uma pasta): a reserva original continua lá, `liberar` falha FECHADO (lança) e o processo
+  // segue tentando; quando a gravação volta, a retenção é gravada e não depende mais do dono do lote
+  fs.mkdirSync(path.join(pasta, `${meu}.tmp`));
+  assert.throws(() => a.liberar({ naoConfirmados: 1, itens: [{ jobNome: "Local\\MixAI-a" }] }), (e) => e.retencaoNaoGravada === true);
+  assert.deepStrictEqual(arq(), [meu], "a reserva não foi apagada");
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(pasta, meu), "utf8")).reservado, teto);
+  fs.rmdirSync(path.join(pasta, `${meu}.tmp`));
+  await new Promise((r) => setTimeout(r, 400));
+  const gravada = JSON.parse(fs.readFileSync(path.join(pasta, meu), "utf8"));
+  assert.deepStrictEqual(gravada.itens, [{ job: "Local\\MixAI-a" }], "a nova tentativa gravou a retenção (não é mais a reserva comum do PID do lote)");
+  assert.strictEqual(gravada.pid, undefined);
+  // outro lote limpando: uma retenção válida (Job vivo) fica
+  const b = controleCom(arquivoEstado, agora, { jobVivo: () => true });
+  fs.writeFileSync(path.join(pasta, "retida.json"), JSON.stringify({ reservado: 1, itens: [{ job: "Local\\MixAI-a" }], ate: agora.v + 600000, em: agora.v }));
+  b({ agentesLocais: 0 });
+  assert.ok(arq().includes("retida.json"), "a limpeza não apaga retenção válida");
+  b.liberar();
+}));
+
+test("retenção mista: cada morte não confirmada é avaliada pelo próprio identificador; a reserva só cai quando TODAS estão resolvidas", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mista-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const estado = { "Local\\MixAI-vazio": false, "Local\\MixAI-vivo": true };
+  const jobVivo = (nome) => estado[nome];
+  const grava = (itens) => fs.writeFileSync(path.join(pasta, "mista.json"), JSON.stringify({ reservado: itens.length, itens, ate: agora.v + 600000, em: agora.v }));
+  const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
+  grava([{ job: "Local\\MixAI-vazio" }, { pid: process.pid, inicio: par.inicioDoProcesso(process.pid) }]);
+  assert.strictEqual(alvo(), teto - 2, "Job vazio + PID vivo: segue retida");
+  assert.ok(fs.existsSync(path.join(pasta, "mista.json")));
+  grava([{ job: "Local\\MixAI-vazio" }, { job: "Local\\MixAI-vivo" }]);
+  assert.strictEqual(alvo(), teto - 2, "Job vazio + Job vivo: segue retida");
+  grava([{ job: "Local\\MixAI-vazio" }, {}]);
+  assert.strictEqual(alvo(), teto - 2, "Job vazio + item sem identificador (vale até `ate`): segue retida");
+  grava([{ job: "Local\\MixAI-vazio" }, { pid: 2147483000 }]);
+  assert.strictEqual(alvo(), teto, "todos resolvidos: a vaga volta");
+  assert.ok(!fs.existsSync(path.join(pasta, "mista.json")));
+}));
+
+test("Windows de verdade: jobVivoPadrao encerra e confere um Job nomeado criado pelo wrapper (processo vivo antes, morto depois, false); Job inexistente também é false", async () => {
+  if (process.platform !== "win32") return; // só o Windows tem Job Object: no PC este teste roda de verdade
+  const { spawn } = require("node:child_process");
+  const nome = `Local\\MixAI-teste-${process.pid}-${Date.now()}`;
+  const filho = spawn("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(RAIZ, "orquestra", "job-windows.ps1")], { env: { ...process.env, MIXAI_COMANDO: "ping -n 60 127.0.0.1 >nul", MIXAI_JOB: nome }, stdio: "ignore", windowsHide: true });
+  const saiu = new Promise((r) => filho.once("exit", r));
+  try {
+    await new Promise((r) => setTimeout(r, 5000));
+    assert.strictEqual(filho.exitCode, null, "o comando está vivo dentro do Job");
+    // a consulta encerra o job (TerminateJobObject) e só devolve false (resolvido) quando ele ficou vazio
+    assert.strictEqual(par.jobVivoPadrao(nome), false, "Job encerrado e vazio");
+    await Promise.race([saiu, new Promise((r) => setTimeout(r, 5000))]);
+    assert.notStrictEqual(filho.exitCode ?? filho.signalCode, null, "o processo dentro do Job morreu");
+    assert.strictEqual(par.jobVivoPadrao(`Local\\MixAI-inexistente-${Date.now()}`), false, "Job que não existe mais");
+  } finally { try { filho.kill(); } catch { /* já foi */ } }
+});
+
+test("GPU/RAM: o coletor só conta como runner o nome exato do runner, nunca o ollama.exe do servidor", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /-match '\^\(llama-server\|ollama_llama_server\|ollama-runner\)\(\\\.exe\)\?\$'/);
+  assert.doesNotMatch(uso, /-match 'llama\|runner'/);
+  const re = /^(llama-server|ollama_llama_server|ollama-runner)(\.exe)?$/i;
+  for (const ok of ["llama-server.exe", "ollama_llama_server.exe", "ollama-runner.exe", "LLAMA-SERVER.EXE"]) assert.ok(re.test(ok), ok);
+  for (const ruim of ["ollama.exe", "ollama app.exe", "llama-quantize.exe", "runner.exe", "my-runner.exe"]) assert.ok(!re.test(ruim), ruim);
+});
+
+test("chamada ainda pendente quando o lote desiste de esperar: a retenção guarda o Job e o PID dessa chamada, não só o id da microtarefa", async () => {
+  const { spawn } = require("node:child_process");
+  let filho;
+  const arquivos = arquivosTemp();
+  let recebido;
+  const paralelismo = Object.assign(() => 2, { liberar: (r) => { recebido = r; } });
+  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] })), matar: () => true, orfaos: () => [], reintentoMs: 50, tentativasDeMatar: 100, prazoDeFechamentoMs: 600000 });
+  // a parada é aceita mas a chamada nunca termina (descendente segurando): fica pendente
+  // a microtarefa "b" falha com morte não confirmada (sem identificador); a "a" está pendente e é abortada sem nunca terminar
+  const local = (prompt, signal) => (prompt.includes("contexto de b") ? new Promise((ok, no) => setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 150)) : chamada(prompt, signal));
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a"), microDe("b")], verificadorDe: verificadorOk, paralelismo, tempoParaConfirmarMs: 400, arquivos, agentes: { local, superiores: [] } }), /o lote parou/);
+  try { filho.kill("SIGKILL"); } catch { /* já foi */ }
+  assert.ok(recebido?.itens?.some((i) => i.pid === filho.pid && /^Local\\MixAI-/.test(i.jobNome)), JSON.stringify(recebido));
+});
+
+test("item com Job E PID: Job ainda inexistente (wrapper vivo antes de criá-lo) NÃO resolve o item; só quando o PID também morreu", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "antes-job-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const grava = (pid) => fs.writeFileSync(path.join(pasta, "antes.json"), JSON.stringify({ reservado: 1, itens: [{ job: "Local\\MixAI-ainda-nao-existe", pid, inicio: pid === process.pid ? par.inicioDoProcesso(process.pid) : undefined }], ate: agora.v + 600000, em: agora.v }));
+  const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo: () => false }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
+  grava(process.pid);
+  assert.strictEqual(alvo(), teto - 1, "Job FECHADO mas o PID está vivo: segue retida");
+  assert.ok(fs.existsSync(path.join(pasta, "antes.json")));
+  grava(2147483000);
+  assert.strictEqual(alvo(), teto, "Job inexistente e PID morto: a vaga volta");
+}));
