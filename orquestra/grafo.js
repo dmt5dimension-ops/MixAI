@@ -75,23 +75,30 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     const i = idade(f);
     return i !== null && i > velhaMs;
   };
+  // Tira o arquivo só se o dono dele está morto (ou o conteúdo não é de um processo e passou de `velhaMs`).
+  // Sai por troca de nome (só um processo consegue) e confere que levou o que tinha visto; se levou outro
+  // (alguém criou um novo no meio), devolve na hora. Dono vivo nunca é tirado.
+  const tirarSeVelha = (f) => {
+    const vista = ler(f);
+    if (vista === null || !velha(f)) return false;
+    const levada = `${f}.${dono.replace(/[^\w]/g, '')}.velha`;
+    try { fs.renameSync(f, levada); } catch { return false; }
+    if (ler(levada) !== vista) {
+      try { fs.linkSync(levada, f); } catch { /* já existe outro */ }
+      fs.rmSync(levada, { force: true });
+      return false;
+    }
+    fs.rmSync(levada, { force: true });
+    return true;
+  };
   while (!criar(trava)) {
     if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
     if (velha(trava)) {
-      // A trava de limpeza abandonada (dono morto) sai por troca de nome: só um processo consegue, e ele
-      // confere que levou a mesma que viu; se levou outra, devolve.
-      const vista = ler(limpeza);
-      if (vista !== null && velha(limpeza)) {
-        const levada = `${limpeza}.${dono.replace(/[^\w]/g, '')}`;
-        try {
-          fs.renameSync(limpeza, levada);
-          if (ler(levada) !== vista) { try { fs.linkSync(levada, limpeza); } catch { /* já existe outra */ } }
-          fs.rmSync(levada, { force: true });
-        } catch { /* outro processo levou primeiro */ }
-      }
+      // Trava de limpeza de dono vivo nunca é tirada; a de dono morto também só sai por `tirarSeVelha`.
+      tirarSeVelha(limpeza);
       if (criar(limpeza)) {
         try {
-          if (velha(trava)) fs.rmSync(trava, { force: true });
+          tirarSeVelha(trava);
         } finally {
           if (ler(limpeza) === dono) fs.rmSync(limpeza, { force: true });
         }

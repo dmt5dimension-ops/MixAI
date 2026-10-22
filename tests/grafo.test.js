@@ -197,6 +197,22 @@ test("trava de limpeza abandonada (dono morto) é recuperada por vários process
   assert.deepStrictEqual(fs.readdirSync(path.dirname(arq)), ["grafo.json"]);
 });
 
+test("trava de limpeza de dono vivo nunca é tirada, mesmo com a trava principal de dono morto", () => {
+  const { spawnSync, spawn } = require("node:child_process");
+  const arq = tmp();
+  const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+  const vivo = spawn(process.execPath, ["-e", "setTimeout(()=>{},5000)"]);
+  try {
+    fs.writeFileSync(arq + ".lock", `${pidMorto}:a`);
+    fs.writeFileSync(arq + ".limpeza", `${vivo.pid}:b`);
+    const velho = new Date(Date.now() - 600000);
+    fs.utimesSync(arq + ".limpeza", velho, velho);
+    assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 300 }), /travado/);
+    assert.strictEqual(fs.readFileSync(arq + ".limpeza", "utf8"), `${vivo.pid}:b`, "limpeza de dono vivo foi mantida");
+    assert.strictEqual(fs.readFileSync(arq + ".lock", "utf8"), `${pidMorto}:a`, "e a trava morta não foi mexida por quem não tinha a limpeza");
+  } finally { vivo.kill(); }
+});
+
 test("adicionar recusa dependência que criaria ciclo", () => {
   let g = exemplo();
   assert.throws(() => grafo.adicionar(g, { id: "d", titulo: "x", depende: ["d"] }, AGORA), /ciclo/);
