@@ -222,17 +222,50 @@ function confirmarJob(nome, executar = execFile) {
   });
 }
 
+// Processos vivos (fora zumbis) cujo ambiente carrega a marca MIXAI_JOB=<nome>: todo descendente do comando, mesmo o que
+// saiu do grupo com setsid ou foi adotado pelo init. Só Linux (/proc). Devolve a lista de pids, ou null se não deu para
+// ler o /proc (inconclusivo). Processos de outro usuário (EACCES) não podem ser nossos e são ignorados.
+function descendentesPorMarca(nome) {
+  let entradas;
+  try { entradas = fs.readdirSync('/proc'); } catch { return null; }
+  const alvo = `\0MIXAI_JOB=${nome}\0`;
+  const vivos = [];
+  for (const n of entradas) {
+    if (!/^\d+$/.test(n) || Number(n) === process.pid) continue;
+    try {
+      const ambiente = `\0${fs.readFileSync(`/proc/${n}/environ`, 'latin1')}\0`;
+      if (!ambiente.includes(alvo)) continue;
+      const stat = fs.readFileSync(`/proc/${n}/stat`, 'utf8');
+      if (stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z') vivos.push(Number(n));
+    } catch (e) {
+      if (['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes(e.code)) continue; // sumiu, ou é de outro usuário
+      return null;
+    }
+  }
+  return vivos;
+}
+
 // Depois que o shell fechou: sobrou algum descendente vivo (sem pipe, que o 'close' não enxerga)? Mata e confere.
 // Devolve (uma promessa de) a lista dos que continuam vivos (vazia = limpo) ou null se não deu para conferir.
-// Windows: consulta o job. Outros sistemas: o grupo de processos.
+// Windows: consulta o job. Outros sistemas: o grupo de processos E os processos com a marca MIXAI_JOB (pega quem saiu do
+// grupo com setsid); sem /proc a conferência é inconclusiva (não dá para provar que ninguém escapou do grupo).
 async function orfaosVivos(filho, { plataforma = process.platform, executar = execFile } = {}) {
   if (plataforma === 'win32') return filho.jobNome ? confirmarJob(filho.jobNome, executar) : null;
-  const grupoVivo = () => grupoTemVivos(filho.pid);
-  if (!grupoVivo()) return [];
+  const marcados = () => (filho.jobNome ? descendentesPorMarca(filho.jobNome) : []);
+  const situacao = () => { const m = marcados(); return m === null ? null : { marcados: m, grupo: grupoTemVivos(filho.pid) }; };
+  let agora = situacao();
+  if (agora === null) return null;
+  if (!agora.marcados.length && !agora.grupo) return [];
   try { process.kill(-filho.pid, 'SIGKILL'); } catch { /* já foi */ }
+  for (const pid of agora.marcados) { try { process.kill(pid, 'SIGKILL'); } catch { /* já foi */ } }
   const limite = Date.now() + 1000;
-  while (grupoVivo() && Date.now() < limite) await new Promise((ok) => setTimeout(ok, 20));
-  return grupoVivo() ? [-filho.pid] : [];
+  for (;;) {
+    agora = situacao();
+    if (agora === null) return null;
+    if ((!agora.marcados.length && !agora.grupo) || Date.now() >= limite) break;
+    await new Promise((ok) => setTimeout(ok, 20));
+  }
+  return [...agora.marcados, ...(agora.grupo ? [-filho.pid] : [])];
 }
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
@@ -261,7 +294,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       try {
         if (lancar) filho = lancar(comando, fdEntrada);
         else if (plataforma === 'win32') filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
-        else filho = spawn(comando, { shell: true, stdio: [fdEntrada, 'pipe', 'pipe'], detached: true }); // grupo próprio: matar o grupo leva os filhos do shell
+        else filho = spawn(comando, { shell: true, env: { ...process.env, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], detached: true }); // grupo próprio; a marca MIXAI_JOB no ambiente é herdada por TODO descendente, até o que sair do grupo (setsid)
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { apagarEntrada(); throw e; }
     filho.jobNome = jobNome;
@@ -364,10 +397,16 @@ const COMANDOS = {
   claude: 'claude -p',
 };
 
-function verificadorPorComando(comando) {
-  return (saida) => {
-    const r = spawnSync(comando, { shell: true, input: saida, encoding: 'utf8', timeout: TEMPO_MAXIMO_MS });
-    return { ok: r.status === 0, motivo: String(r.stderr || r.stdout || '').trim().slice(0, 500) };
+// O comando de verificação roda como qualquer outro comando: assíncrono, dentro do Job Object no Windows, com tempo
+// máximo e abortável pelo `signal` (o lote cancela a verificação em andamento no erro fatal). Verificação que não
+// confirma a morte (`naoConfirmado`) NÃO vira "resposta errada": o erro sobe até o lote, que para.
+function verificadorPorComando(comando, opcoes = {}) {
+  const chamar = chamarComando(comando, opcoes);
+  return async (saida, signal) => {
+    try { await chamar(saida, signal); return { ok: true, motivo: '' }; } catch (erro) {
+      if (erro?.naoConfirmado || erro?.abortada) throw erro;
+      return { ok: false, motivo: String(erro?.message || erro).trim().slice(0, 500) };
+    }
   };
 }
 
@@ -535,6 +574,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
         e.ctl.abort(); // chega às chamadas ao local e aos superiores (Codex/Claude), que também recebem o sinal
         if (e.emLocal) esperas.push({ id: m.id, fim: e.fim, acabou: false });
         if (e.supFim) esperas.push({ id: m.id, fim: e.supFim, acabou: false });
+        if (e.verFim) esperas.push({ id: m.id, fim: e.verFim, acabou: false });
       }
       for (const w of esperas) w.fim.then((confirmada) => { w.acabou = confirmada !== false; }); // `fim` = a chamada terminou; só `true` prova a morte
       let corte;
@@ -578,6 +618,22 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
       const entrada = promptMicro(m);
       const e = { ctl: new AbortController(), abandonada: false, emLocal: false, ocupa: true, fim: null };
       estados.set(m, e);
+      // A verificação também é um processo: roda com o sinal da microtarefa, e a morte não confirmada dela para o lote (nunca
+      // vira "resposta errada"); o erro fatal espera a verificação em andamento terminar.
+      const verificadorM = verificadorDe(m);
+      const verificar = async (saida) => {
+        if (e.abandonada || fatal) throw Object.assign(new Error('verificação cancelada: o lote parou ou a microtarefa foi tirada'), { cancelada: true });
+        const p = Promise.resolve().then(() => verificadorM(saida, e.ctl.signal));
+        e.verFim = p.then(() => true, (erro) => erro?.naoConfirmado !== true);
+        try { return await p; } catch (erro) {
+          if (erro?.naoConfirmado) {
+            naoConfirmados.push(m.id);
+            fatal = fatal || new Error(`o lote parou: não consegui confirmar que o comando de verificação da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
+            avisarMudanca();
+          }
+          throw erro;
+        }
+      };
       const agentesDaMicro = {
         ...agentes,
         superiores: (agentes.superiores || []).map((sup) => ({
@@ -626,8 +682,8 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
         },
       };
       const execucao = maxTentativas !== undefined || antagonico
-        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
-        : resolver({ entrada, cabeNoLocal: true, verificar: verificadorDe(m), agentes: agentesDaMicro, arquivos });
+        ? resolverComLoop({ entrada, verificar, agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
+        : resolver({ entrada, cabeNoLocal: true, verificar, agentes: agentesDaMicro, arquivos });
       const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
         .then((r) => {
@@ -713,7 +769,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, matarArvore, orfaosVivos, confirmarJob, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

@@ -964,3 +964,73 @@ test("o controle de paralelismo com leitor assíncrono não bloqueia: sem leitur
   agora += 10000;
   assert.strictEqual(c2({ agentesLocais: 0 }), 1);
 });
+
+// --- Verificação como processo, e descendente que sai do grupo (setsid) ---------------------------------------------
+test("fora do Windows: descendente que saiu do grupo com setsid é achado pela marca MIXAI_JOB e morto (não é declarado limpo)", async () => {
+  if (process.platform === "win32") return; // no Windows quem faz isso é o Job Object
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "setsid-"));
+  const marca = path.join(dir, "pid");
+  const netoJs = path.join(dir, "neto.js");
+  const paiJs = path.join(dir, "pai.js");
+  fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
+  // detached:true = setsid: o neto nasce em outro grupo e outra sessão, e o pai sai logo
+  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true }).unref(); setTimeout(()=>process.exit(0), 300);`);
+  const resposta = await escada.chamarComando(`"${process.execPath}" "${paiJs}"`)("x");
+  assert.strictEqual(resposta, "");
+  assert.ok(fs.existsSync(marca), "o neto chegou a nascer");
+  const pid = Number(fs.readFileSync(marca, "utf8"));
+  const estaVivo = () => { try { process.kill(pid, 0); } catch { return false; } try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; } };
+  let vivo = true;
+  for (let i = 0; i < 50 && vivo; i++) { vivo = estaVivo(); if (vivo) await new Promise((r) => setTimeout(r, 20)); }
+  assert.strictEqual(vivo, false, "o descendente com setsid foi morto pela conferência");
+});
+
+test("fora do Windows: sem /proc legível a conferência é inconclusiva (null), nunca 'limpo'", async () => {
+  if (process.platform === "win32") return;
+  const lerDir = fs.readdirSync;
+  fs.readdirSync = (p, ...r) => { if (p === "/proc") throw Object.assign(new Error("sem /proc"), { code: "ENOENT" }); return lerDir(p, ...r); };
+  try { assert.strictEqual(await escada.orfaosVivos({ pid: 2147483000, jobNome: "Local\\MixAI-x" }, { plataforma: "linux" }), null); } finally { fs.readdirSync = lerDir; }
+});
+
+test("verificadorPorComando: processo de verdade (assíncrono, abortável): código 0 = ok, outro = não ok com o motivo, morte não confirmada sobe como erro", async () => {
+  const ok = escada.verificadorPorComando(`"${process.execPath}" -e "process.exit(0)"`);
+  assert.deepStrictEqual(await ok("x"), { ok: true, motivo: "" });
+  const ruim = escada.verificadorPorComando(`"${process.execPath}" -e "console.error('faltou X'); process.exit(3)"`);
+  const r = await ruim("x");
+  assert.strictEqual(r.ok, false);
+  assert.match(r.motivo, /faltou X/);
+  const preso = escada.verificadorPorComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 });
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 20);
+  await assert.rejects(preso("x", ctl.signal), (erro) => erro.naoConfirmado === true);
+});
+
+test("naoConfirmado do comando de VERIFICAÇÃO para o lote com mensagem clara (não vira resposta errada da microtarefa)", async () => {
+  const verificadorDe = () => async () => { throw Object.assign(new Error("verificador não morreu"), { naoConfirmado: true }); };
+  await assert.rejects(
+    escada.lote({ microtarefas: [microDe("a")], verificadorDe, arquivos: arquivosTemp(), agentes: { local: () => "ok", superiores: [{ nome: "codex", chamar: () => "ok" }] } }),
+    /comando de verificação da microtarefa "a" morreu/,
+  );
+});
+
+test("erro fatal do lote cancela também a verificação em andamento e espera ela terminar", async () => {
+  let sinalDaVerificacao = null;
+  let verificacaoTerminou = false;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    if (prompt.includes("contexto de b")) signal.addEventListener("abort", () => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })));
+    else ok("ok"); // a responde e vai para a verificação, que demora
+  });
+  const verificadorDe = (m) => (saida, signal) => new Promise((ok, no) => {
+    if (m.id !== "a") return ok({ ok: true });
+    sinalDaVerificacao = signal;
+    signal.addEventListener("abort", () => setTimeout(() => { verificacaoTerminou = true; no(Object.assign(new Error("abortada"), { abortada: true })); }, 30));
+  });
+  let limite = 2;
+  setTimeout(() => { limite = 0; }, 60);
+  await assert.rejects(
+    escada.lote({ microtarefas: ["a", "b"].map(microDe), verificadorDe, reavaliarMs: 10, arquivos: arquivosTemp(), paralelismo: () => limite, agentes: { local, superiores: [] } }),
+    /o lote parou/,
+  );
+  assert.ok(sinalDaVerificacao && sinalDaVerificacao.aborted, "a verificação recebeu o aborto");
+  assert.strictEqual(verificacaoTerminou, true, "o lote esperou a verificação terminar");
+});
