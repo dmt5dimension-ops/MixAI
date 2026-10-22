@@ -55,3 +55,13 @@ node orquestra/escada.js lote plano.json --paralelo 2
 - Estourou o limite de tentativas: o grande resolve direto.
 - Cada falha que acabou resolvida vira um caso de regressão em `orquestra/falhas/falhas.jsonl` (resposta certa e o comando que confere). `tests/falhas-escada.test.js` confere para sempre que a resposta certa continua passando. Falha que ninguém resolveu vai para `orquestra/falhas/pendentes.jsonl`, que não entra nos testes.
 - Com `--antagonico`, a resposta só vale se outro agente grande (nunca o que produziu) não achar defeito. O modelo local nunca faz esse papel. Se nenhum outro grande puder conferir (sem cota), a resposta não vale e a tarefa fica em `pendentes.jsonl`.
+
+## Grafo persistente de tarefas (etapa 6)
+
+`orquestra/grafo.json` guarda as tarefas, quem depende de quem e em que estado cada uma está. `orquestra/grafo.js` é a biblioteca e a linha de comando; o supervisor (vigia) e a escada leem e gravam o mesmo arquivo.
+
+- Tarefa: `id`, `titulo`, `estado` (`pendente`, `em_andamento`, `feita`, `falhou`), `depende` (ids), `agente` (`claude`, `codex`, `local`), `escopo`, `verificar`, `tentativas`, `atualizado`, `resultado`.
+- "Pronta" não é um estado gravado: é a tarefa `pendente` cujas dependências estão todas `feita`. `node orquestra/grafo.js proximas` lista as prontas, e é isso que o supervisor usa para mandar o agente da tarefa seguinte começar.
+- `iniciar <id> <agente>` só aceita tarefa pronta; `concluir` e `falhar` só aceitam tarefa `em_andamento`. `falhar` devolve a tarefa à fila; na 3ª falha ela vira `falhou` e as dependentes aparecem como `travada` no `status`.
+- Todo comando que grava valida o grafo antes: recusa dependência que não existe, ciclo e duas tarefas `em_andamento` com o mesmo arquivo no escopo. A gravação é atômica (arquivo temporário e troca), e arquivo corrompido dá erro sem ser apagado.
+- Exemplos: `node orquestra/grafo.js add t1 "Título" --agente codex --depende t0 --escopo src/a.js`, `iniciar t1 codex`, `concluir t1 "PR #20"`, `status`.
