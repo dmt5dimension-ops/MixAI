@@ -1,5 +1,6 @@
 // Quantos agentes locais (Qwen) rodam ao mesmo tempo, conforme o uso do PC.
-// Usando o PC: 1. Parado: sobe um por vez até o que cabe na placa de vídeo, na memória e no modo dia/noite.
+// Usando o PC: 1. Parado: sobe um por vez (na primeira decisão o tempo que o PC já está parado conta como subida) até o que cabe
+// na placa de vídeo (medida: o que outros programas já ocupam sai da sobra), na memória e no modo dia/noite.
 // A leitura do Windows fica atrás de um "leitor" ({ ler() }); os testes usam leituras simuladas.
 const fs = require('node:fs');
 const os = require('node:os');
@@ -13,23 +14,29 @@ const modosPadrao = () => lerJson(path.join(raiz, 'local', 'modos.json'));
 const minimoMemoriaGB = () => lerJson(path.join(raiz, 'local', 'protecao.json')).memoriaLivreMinimaGB;
 
 // Quantos agentes cabem agora, e o que limita (o menor dos limites vale).
-function capacidade({ modo, memoriaLivreGB, agentesAtuais = 0, modos = modosPadrao(), config = configPadrao(), memoriaMinimaGB = minimoMemoriaGB() }) {
+function capacidade({ modo, memoriaLivreGB, agentesAtuais = 0, vramOutrosGB = null, ramMeuGB = null, modos = modosPadrao(), config = configPadrao(), memoriaMinimaGB = minimoMemoriaGB() }) {
   const m = modos[modo];
   if (!m) throw new Error(`modo desconhecido: ${modo} (use ${Object.keys(modos).join(' ou ')})`);
   const kvGB = (config.placa.kvMBPorMilTokens * (m.contexto / 1000)) / 1024;
-  const sobraPlacaGB = config.placa.vramGB - config.placa.reservaGB - config.placa.pesosGB;
+  // VRAM medida: o que OUTROS programas já ocupam na placa sai da sobra. Sem medida (null) vale só a reserva fixa da config
+  // (limite conhecido: não enxerga outro programa na placa).
+  const vramMedida = numeroValido(vramOutrosGB, 0, config.placa.vramGB * 2);
+  const sobraPlacaGB = config.placa.vramGB - config.placa.reservaGB - (vramMedida ? vramOutrosGB : 0) - config.placa.pesosGB;
+  // A parte da memória que se soma de volta é a dos agentes que rodam agora, limitada ao que o Ollama do MixAI realmente
+  // ocupa (medido): não credita memória a agente que ainda não ocupa nada.
+  const credito = numeroValido(ramMeuGB, 0) ? Math.min(agentesAtuais * config.ramPorAgenteGB, ramMeuGB) : agentesAtuais * config.ramPorAgenteGB;
   const limites = {
     modo: m.agentesMax,
-    placa: Math.floor(sobraPlacaGB / kvGB),
+    placa: Math.max(0, Math.floor(sobraPlacaGB / kvGB)),
     // A memória livre já está reduzida pelos agentes que rodam agora: soma de volta a parte deles, senão o teto cai a cada
     // agente aberto e o lote aborta e reinicia em loop perto do mínimo.
-    memoria: Math.floor((memoriaLivreGB + agentesAtuais * config.ramPorAgenteGB - memoriaMinimaGB) / config.ramPorAgenteGB),
+    memoria: Math.max(0, Math.floor((memoriaLivreGB + credito - memoriaMinimaGB) / config.ramPorAgenteGB)),
     absoluto: config.maximoAbsoluto,
   };
   // Zero é resposta válida: sem espaço na memória ou na placa, nenhum agente local agora (o lote espera abrir vaga).
   const max = Math.max(0, Math.min(...Object.values(limites)));
   const limitante = Object.entries(limites).sort((a, b) => a[1] - b[1])[0][0];
-  return { max, limites, limitante };
+  return { max, limites, limitante, vramMedida };
 }
 
 // Motivos pelos quais o dono está usando o PC. Leitura que faltou, não é número ou está fora do possível
@@ -59,6 +66,9 @@ function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
   if (!Number.isInteger(nucleos) || nucleos < 1) return null;
   // Impossível (total acima de 100% ou Ollama acima de 100% por núcleo) é leitura quebrada, não "zero": vira null.
   if (!numeroValido(cpuTotalPct, 0, 100.0001) || !numeroValido(cpuMeuPct, 0, 100.0001 * nucleos)) return null;
+  // A parte do Ollama não pode passar do total da máquina (com folga de 10 pontos pela diferença de janelas de amostragem): se passar,
+  // a diferença negativa viraria "zero de outros" e declararia o PC livre. Leitura inconsistente = null.
+  if (cpuMeuPct / nucleos > cpuTotalPct + 10) return null;
   return Math.round(Math.min(100, Math.max(0, cpuTotalPct - cpuMeuPct / nucleos)) * 10) / 10;
 }
 
@@ -66,7 +76,7 @@ function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
 // `regime` é onde o alvo chega se o PC continuar parado (o teto), para quem só quer olhar.
 function decidir({ leitura, modo, agentesAtuais = 0, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
   const motivos = motivosDeUso(leitura, config);
-  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, agentesAtuais, modos, config, memoriaMinimaGB });
+  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, agentesAtuais, vramOutrosGB: leitura?.vramOutrosGB, ramMeuGB: leitura?.ramMeuGB, modos, config, memoriaMinimaGB });
   const antes = Number.isInteger(anterior?.alvo) && anterior.alvo >= 0 ? anterior.alvo : 1;
   if (motivos.length) {
     const alvo = Math.min(1, cap.max);
@@ -91,18 +101,19 @@ function decidir({ leitura, modo, agentesAtuais = 0, anterior = null, agora = Da
 // Leitor real: roda local/uso-windows.ps1. Devolve null se o PowerShell não existe ou falha.
 // `ler()` bloqueia (só para o uso na linha de comando); `lerAsync()` não bloqueia o Node (é o que o controle usa dentro do
 // lote, onde um bloqueio de até 30 s atrasaria abortos, temporizadores e os outros agentes).
-function leitorWindows() {
+function leitorWindows({ executar = execFile } = {}) {
   return {
     lerAsync() {
       return new Promise((resolve) => {
-        execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000, windowsHide: true }, (erro, stdout) => {
-          resolve(erro ? null : lerSaida(stdout));
+        executar('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000, windowsHide: true }, (erro, stdout, stderr) => {
+          // Erro do coletor (mesmo não terminante, escrito na saída de erro) = leitura incompleta: indisponível.
+          resolve(erro || String(stderr ?? '').trim() ? null : lerSaida(stdout));
         });
       });
     },
     ler() {
       const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000 });
-      if (r.error || r.status !== 0) return null;
+      if (r.error || r.status !== 0 || String(r.stderr ?? '').trim()) return null;
       return lerSaida(r.stdout);
     },
   };
@@ -132,14 +143,31 @@ function videoDecodeDe({ amostras, motores }, amostrasMinimas = 3) {
   return Math.round((soma.reduce((a, b) => a + b, 0) / amostras) * 100) / 100;
 }
 
+// Ocupação da placa por OUTROS programas: o coletor soma, por amostra e por tipo de motor (3D, Copy, Compute, vídeo...), o uso
+// dos processos que não são do MixAI. A ocupação é a do motor mais carregado (como no Gerenciador de Tarefas), média das
+// amostras; somar motores diferentes contaria duas vezes o mesmo trabalho. `amostras` é a quantidade de amostras em que o
+// coletor provou ter lido os motores (0 = coleta sem cobertura). Linha inválida ou de amostra inexistente é null.
+function gpuOutrosDe({ amostras, linhas }, amostrasMinimas = 3) {
+  if (!Number.isInteger(amostras) || amostras < amostrasMinimas) return null;
+  const lista = Array.isArray(linhas) ? linhas : [];
+  const porTipo = new Map();
+  for (const l of lista) {
+    if (!l || typeof l.t !== 'string' || !l.t || !Number.isInteger(l.i) || l.i < 0 || l.i >= amostras || !numeroValido(l.v, 0)) return null;
+    porTipo.set(l.t, (porTipo.get(l.t) ?? 0) + l.v);
+  }
+  const maximo = Math.max(0, ...[...porTipo.values()].map((soma) => soma / amostras));
+  return Math.round(Math.min(100, maximo) * 10) / 10;
+}
+
 // Interpreta o que o uso-windows.ps1 imprimiu (a última linha é o JSON). Texto estranho vira null.
 function lerSaida(texto) {
   let l;
   try { l = JSON.parse(String(texto).trim().split(/\r?\n/).pop()); } catch { return null; }
   if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
-  const { videoAmostras, videoMotores, cpuTotalPct, cpuMeuPct, nucleos, ...resto } = l;
+  const { videoAmostras, videoMotores, cpuTotalPct, cpuMeuPct, nucleos, gpuAmostras, gpuPorTipo, ...resto } = l;
   return {
     ...resto,
+    gpuOutrosPct: resto.gpuOutrosPct ?? gpuOutrosDe({ amostras: gpuAmostras, linhas: gpuPorTipo }),
     cpuOutrosPct: resto.cpuOutrosPct ?? cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }),
     videoDecodePct: resto.videoDecodePct ?? videoDecodeDe({ amostras: videoAmostras, motores: videoMotores }),
   };
@@ -193,7 +221,9 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     try {
       anterior = lerJson(arquivoEstado);
       const validade = (config ?? configPadrao()).validadeEstadoSegundos ?? 300;
-      if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
+      // Estado estrito: objeto com alvo inteiro, subiuEm e gravadoEm numéricos e o MESMO modo (outro modo ou lixo recomeça).
+      if (!anterior || typeof anterior !== 'object' || anterior.modo !== modo || !Number.isInteger(anterior.alvo) || anterior.alvo < 0 || !numeroValido(anterior.subiuEm, 0)) anterior = null;
+      else if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
     } catch { anterior = null; /* primeira vez */ }
     const d = decidir({ leitura: leituraAtual(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
     // Primeira decisão com leitura assíncrona ainda não pronta: vale 1 agente, mas não grava estado nem guarda cache, para a
@@ -205,19 +235,24 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     // Leitura velha demais para provar que o PC continua livre (2 x cache) com vários agentes rodando: a leitura nova já foi
     // pedida acima, e enquanto ela não chega reduz na hora para 1 (a descida nunca espera o cache).
     if (leitor.lerAsync && idadeDaLeitura >= 2 * cacheMs && agentesLocais > 1) return 1;
-    try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
+    // Escrita atômica (arquivo temporário + rename): outra instância nunca lê JSON truncado.
+    try {
+      const temporario = `${arquivoEstado}.${process.pid}.tmp`;
+      fs.writeFileSync(temporario, JSON.stringify({ ...d.estado, modo, gravadoEm: relogio() }), { mode: 0o600 });
+      fs.renameSync(temporario, arquivoEstado);
+    } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };
     return d.alvo;
   };
 }
 
-module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, leitorSimulado, modoAtual, criarControle };
+module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
 
 if (require.main === module) {
   const i = process.argv.indexOf('--modo');
   const modo = i >= 0 ? process.argv[i + 1] : modoAtual();
   const leitura = leitorWindows().ler();
   const d = decidir({ leitura, modo });
-  console.log(JSON.stringify({ modo, leitura, alvo: d.alvo, regime: d.regime, motivo: d.motivo, capacidade: d.capacidade, subida: `+1 a cada ${configPadrao().subidaMinSegundos}s com o PC parado` }, null, 2));
+  console.log(JSON.stringify({ modo, leitura, alvo: d.alvo, regime: d.regime, motivo: d.motivo, capacidade: d.capacidade, subida: `na primeira decisão o tempo que o PC já está parado conta (1 agente por ${configPadrao().subidaMinSegundos}s); depois +1 a cada ${configPadrao().subidaMinSegundos}s com o PC parado` }, null, 2));
 }

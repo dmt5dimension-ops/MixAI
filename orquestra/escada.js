@@ -206,7 +206,20 @@ async function orfaosVivos(filho, { executar = execFile } = {}) {
 }
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024 } = {}) {
+const PASTA_DE_PROMPTS = path.join(os.tmpdir(), 'mixai-prompts');
+// Cria (se preciso) a pasta dos prompts temporários e confere que é privada. No Windows o %TEMP% é por usuário e a permissão
+// vem da ACL dele; nos outros sistemas confere o dono e que grupo/outros não têm acesso.
+function garantirPastaPrivada(pasta) {
+  fs.mkdirSync(pasta, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return;
+  const st = fs.lstatSync(pasta);
+  const eu = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (!st.isDirectory() || st.isSymbolicLink() || (eu !== null && st.uid !== eu) || (st.mode & 0o077) !== 0) {
+    throw new Error(`a pasta dos prompts temporários (${pasta}) não é privada (precisa ser uma pasta do dono, sem acesso para outros): apague-a e rode de novo`);
+  }
+}
+
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = PASTA_DE_PROMPTS } = {}) {
   // `signal` (opcional): ao ser abortado, mata o comando e tudo que ele criou. Usado pelo lote para reduzir agentes
   // locais quando o dono volta a usar o PC. A parada repete o pedido a cada `reintentoMs` até a chamada terminar:
   // pedido recusado `tentativasDeMatar` vezes, ou aceito mas sem o fim da chamada em `prazoDeFechamentoMs`, termina com
@@ -218,7 +231,9 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     if (signal?.aborted) return reject(Object.assign(new Error('chamada abortada'), { abortada: true }));
     // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
     // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
-    const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
+    // Pasta própria e privada (só o dono): no Windows o %TEMP% já é do usuário; nos outros sistemas a pasta precisa ser do dono e
+    // sem acesso para grupo/outros, senão a chamada é recusada antes de escrever o prompt.
+    const entrada = path.join(pastaPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
       try { fs.rmSync(entrada, { force: true }); } catch {
@@ -229,6 +244,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
     let filho;
     try {
+      garantirPastaPrivada(pastaPrompts);
       fs.writeFileSync(entrada, String(prompt), { mode: 0o600, flag: 'wx' }); // só o dono lê; nunca segue um arquivo que já exista
       const fdEntrada = fs.openSync(entrada, 'r');
       try {

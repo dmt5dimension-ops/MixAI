@@ -678,10 +678,10 @@ test("a memória livre que o controle recebe já vem reduzida pelos agentes que 
 });
 
 test("o prompt chega ao comando por arquivo (stdin sem pipe) e o arquivo temporário é apagado", async () => {
-  const antes = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length;
+  const antes = (fs.existsSync(path.join(os.tmpdir(), "mixai-prompts")) ? fs.readdirSync(path.join(os.tmpdir(), "mixai-prompts")) : []).filter((f) => f.startsWith("prompt-")).length;
   const saida = await chamar(`"${process.execPath}" -e "process.stdin.pipe(process.stdout)"`)("olá, prompt com acentuação ç ã");
   assert.strictEqual(saida, "olá, prompt com acentuação ç ã");
-  assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length, antes);
+  assert.strictEqual(fs.readdirSync(path.join(os.tmpdir(), "mixai-prompts")).filter((f) => f.startsWith("prompt-")).length, antes);
 });
 
 test("morte não confirmada no tempo máximo também para o lote (não vira erro comum que sobe para o Codex)", async () => {
@@ -1222,4 +1222,117 @@ test("uso-windows.ps1 exige cobertura: instâncias de motor iguais em todas as a
   assert.match(uso, /-ErrorVariable errosCim/);
   assert.match(uso, /@\(\$errosContador\)\.Count -gt 0\) \{ return \$null \}/);
   assert.match(uso, /if \(-not \(Conjuntos-Iguais \$leituras\)\) \{ return \$null \}/);
+});
+
+// --- Acompanhamento da coleta de uso (itens da revisão exaustiva) ----------------------------------------------------
+test("GPU de outros programas: vale o motor MAIS carregado (média das amostras), não a soma de motores diferentes; sem cobertura ou linha inválida = null", () => {
+  const linhas = [0, 1, 2].flatMap((i) => [{ i, t: "3D", v: 40 }, { i, t: "Copy", v: 30 }, { i, t: "VideoDecode", v: 10 }]);
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas }), 40, "3D 40, Copy 30, vídeo 10: a placa está a 40, não a 80");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [] }), 0, "cobertura provada e ninguém usando");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [{ i: 0, t: "3D", v: 90 }, { i: 1, t: "3D", v: 90 }] }), 60, "amostra sem uso do tipo conta zero nela");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [0, 1, 2].map((i) => ({ i, t: "3D", v: 150 })) }), 100, "limita a 100");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 0, linhas: [] }), null, "coleta sem cobertura");
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 2, linhas: [] }), null);
+  for (const ruim of [{ i: 0, t: "3D", v: null }, { i: 0, t: "3D", v: -1 }, { i: 7, t: "3D", v: 1 }, { i: 0, t: "", v: 1 }, { i: 0, v: 1 }]) {
+    assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas: [ruim] }), null, JSON.stringify(ruim));
+  }
+  // vem pela saída do script
+  const base = { ociosoSegundos: 900, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [], memoriaLivreGB: 6 };
+  assert.strictEqual(par.lerSaida(JSON.stringify({ ...base, gpuAmostras: 3, gpuPorTipo: linhas })).gpuOutrosPct, 40);
+  assert.strictEqual(par.lerSaida(JSON.stringify({ ...base, gpuAmostras: 0, gpuPorTipo: [] })).gpuOutrosPct, null, "sem cobertura: null, e o decisor trata como em uso");
+});
+
+test("CPU: parte do Ollama muito acima do total da máquina é leitura inconsistente (null), não 'zero de outros programas'", () => {
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 400, nucleos: 8 }), null, "Ollama a 50% da máquina com total em 5%");
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 40, cpuMeuPct: 400, nucleos: 8 }), 0, "Ollama a 50% com total em 40%: dentro da folga, não passa de 0");
+});
+
+test("capacidade usa a VRAM medida de outros programas e só credita a memória que o Ollama do MixAI realmente ocupa", () => {
+  const sem = par.capacidade({ modo: "noite", memoriaLivreGB: 6, modos, config, memoriaMinimaGB: 2 });
+  const ocupada = par.capacidade({ modo: "noite", memoriaLivreGB: 6, vramOutrosGB: 3, modos, config, memoriaMinimaGB: 2 });
+  assert.ok(sem.limites.placa >= 1, "controle: a placa livre cabe agente");
+  assert.strictEqual(ocupada.limites.placa, 0, "outro programa com 3 GB na placa: não cabe agente");
+  assert.strictEqual(ocupada.limitante, "placa");
+  assert.strictEqual(ocupada.vramMedida, true);
+  assert.strictEqual(sem.vramMedida, false, "sem medida vale só a reserva fixa");
+  // crédito de memória: 3 agentes contados, mas o Ollama do MixAI só ocupa 0.5 GB de verdade
+  const cheio = par.capacidade({ modo: "noite", memoriaLivreGB: 2.5, agentesAtuais: 3, modos, config, memoriaMinimaGB: 2 });
+  const medido = par.capacidade({ modo: "noite", memoriaLivreGB: 2.5, agentesAtuais: 3, ramMeuGB: 0.5, modos, config, memoriaMinimaGB: 2 });
+  assert.ok(medido.limites.memoria < cheio.limites.memoria, `${medido.limites.memoria} < ${cheio.limites.memoria}`);
+  // vem da leitura pelo decisor
+  const d = decide({ ...PARADO, vramOutrosGB: 3 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
+  assert.strictEqual(d.capacidade.limites.placa, 0);
+});
+
+test("estado do controle: gravação atômica com o modo, e estado de outro modo ou com lixo é ignorado (recomeça)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ctl-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  await comMemoriaAsync(6, async () => {
+    const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6, cacheMs: 0, modos, config });
+    controle({ agentesLocais: 0 });
+    const gravado = JSON.parse(fs.readFileSync(arquivoEstado, "utf8"));
+    assert.strictEqual(gravado.modo, "noite");
+    assert.deepStrictEqual(fs.readdirSync(dir), ["e.json"], "nenhum temporário sobra");
+    // outro modo: o estado não vale (recomeça pela primeira decisão)
+    fs.writeFileSync(arquivoEstado, JSON.stringify({ alvo: 1, subiuEm: 1e6, gravadoEm: 1e6, modo: "dia" }));
+    const c2 = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6 + 1000, cacheMs: 0, modos, config });
+    assert.ok(c2({ agentesLocais: 0 }) > 1, "estado do modo dia (alvo 1, acabou de subir) não segura o modo noite");
+    // lixo
+    for (const lixo of ["", "{", "[]", "null", JSON.stringify({ alvo: "x", subiuEm: 1, gravadoEm: 1e6, modo: "noite" }), JSON.stringify({ alvo: -2, subiuEm: 1, gravadoEm: 1e6, modo: "noite" })]) {
+      fs.writeFileSync(arquivoEstado, lixo);
+      const c3 = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6 + 2000, cacheMs: 0, modos, config });
+      assert.ok(c3({ agentesLocais: 0 }) > 1, `lixo ignorado: ${lixo}`);
+    }
+  });
+});
+
+test("leitorWindows: erro escrito pelo coletor na saída de erro torna a leitura indisponível (null), mesmo com JSON na saída", async () => {
+  const json = JSON.stringify({ ociosoSegundos: 900, memoriaLivreGB: 6, nucleos: 8, cpuTotalPct: 5, cpuMeuPct: 0, videoAmostras: 3, videoMotores: [], gpuAmostras: 3, gpuPorTipo: [] });
+  const comSaida = (stderr) => ({ executar: (c, a, o, cb) => cb(null, json, stderr) });
+  assert.ok((await par.leitorWindows(comSaida("")).lerAsync()).gpuOutrosPct === 0, "controle: sem erro vale");
+  assert.strictEqual(await par.leitorWindows(comSaida("Get-CimInstance : acesso negado")).lerAsync(), null);
+  assert.strictEqual(await par.leitorWindows({ executar: (c, a, o, cb) => cb(new Error("falhou")) }).lerAsync(), null);
+});
+
+test("prompt temporário fica em pasta privada: pasta aberta para outros é recusada antes de escrever o prompt ou iniciar o processo", async () => {
+  if (process.platform === "win32") return; // no Windows a permissão vem da ACL do %TEMP% do usuário
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "pasta-prompt-"));
+  const aberta = path.join(base, "aberta");
+  fs.mkdirSync(aberta, { mode: 0o755 });
+  fs.chmodSync(aberta, 0o755);
+  let lancou = 0;
+  await assert.rejects(
+    escada.chamarComando("x", { plataforma: "win32", lancar: () => { lancou += 1; throw new Error("não devia lançar"); }, pastaPrompts: aberta })("segredo"),
+    /não é privada/,
+  );
+  assert.strictEqual(lancou, 0);
+  assert.deepStrictEqual(fs.readdirSync(aberta), [], "nenhum prompt foi escrito na pasta aberta");
+  // pasta privada nova: funciona, e o arquivo some no fim
+  const privada = path.join(base, "privada");
+  const { spawn } = require("node:child_process");
+  const resposta = await escada.chamarComando("process.stdin.pipe(process.stdout)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [], pastaPrompts: privada })("olá");
+  assert.strictEqual(resposta, "olá");
+  assert.strictEqual((fs.statSync(privada).mode & 0o077), 0, "pasta criada só para o dono");
+  assert.deepStrictEqual(fs.readdirSync(privada), [], "o prompt temporário foi apagado");
+});
+
+test("uso-windows.ps1 e modo.ps1 (texto): sessão do console, tempo ocioso plausível, CIM como segunda fonte, cobertura de cpuMeu, VRAM e RAM medidas, modo gravado conferido", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /WTSGetActiveConsoleSessionId/);
+  assert.match(uso, /\(Get-Process -Id \$PID\)\.SessionId -ne \[MixaiOcioso\]::SessaoDoConsole\(\)\)\) \{ \$ocioso = \$null \}/, "outra sessão: ocioso indisponível");
+  assert.match(uso, /\$ocioso -gt \(\(Get-Date\) - \$so\.LastBootUpTime\)\.TotalSeconds/, "ocioso maior que o tempo ligado é impossível");
+  assert.match(uso, /function Ler-Contador/);
+  assert.match(uso, /function Ler-Cim/);
+  assert.match(uso, /\$r = Ler-Contador\s+if \(\$null -eq \$r\) \{ \$r = Ler-Cim \}/, "o CIM é tentado quando o contador é inválido");
+  assert.match(uso, /\$vistosCpu\.Count -ne \$pidsMeus\.Count\) \{ \$valido = \$false \}/, "cpuMeu exige cobertura dos processos do MixAI");
+  assert.match(uso, /GPU Adapter Memory\(\*\)\\Dedicated Usage/);
+  assert.match(uso, /GPU Process Memory\(\*\)\\Dedicated Usage/);
+  assert.match(uso, /vramOutrosGB\s+= \$vramOutrosGB/);
+  assert.match(uso, /ramMeuGB\s+= \$ramMeuGB/);
+  assert.match(uso, /gpuPorTipo\s+= @\(\$gpuPorTipo\)/);
+  const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
+  assert.match(modo, /\$gravadoModo -ne \$Modo/);
+  assert.match(modo, /throw "Não consegui gravar o modo/);
+  assert.ok(modo.search(/\$gravadoModo -ne/) > modo.search(/Set-Content \$arquivoModo \$Modo/), "confere depois de gravar");
+  assert.ok(modo.search(/Write-Host "Modo \$Modo ligado/) > modo.search(/\$gravadoModo -ne/), "só anuncia depois de conferir");
 });
