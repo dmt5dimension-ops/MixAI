@@ -194,44 +194,99 @@ function modoAtual(env = process.env) {
 
 // Reserva de vagas entre lotes. Cada controle (um por lote) guarda numa pasta compartilhada um arquivo com o que RESERVOU
 // (a vaga concedida, nunca menos que os agentes que ainda estão vivos, inclusive os morrendo), o PID e o relógio do último
-// batimento. Ler os outros, decidir e gravar a própria reserva acontece dentro de uma trava (mkdir atômico), então dois lotes
-// juntos nunca passam do teto: o que sobra para um é o teto menos o que os outros reservaram. Reserva de lote que morreu
-// (PID inexistente) ou sem batimento há mais de VALIDADE_LOTE_MS é descartada.
+// batimento. Ler os outros, decidir e gravar a própria reserva acontece dentro de uma trava, então dois lotes juntos nunca
+// passam do teto: o que sobra para um é o teto menos o que os outros reservaram. Reserva de lote que morreu (PID inexistente)
+// ou sem batimento há mais de VALIDADE_LOTE_MS é descartada. Sem conseguir a trava NENHUMA vaga nova é concedida (só mantém as
+// que já existem). Reserva de agente cuja morte NÃO foi confirmada fica retida (sem batimento) até os processos morrerem ou
+// até RETENCAO_MS, mesmo depois que o lote acabou.
+//
+// A trava segue o desenho do grafo (`orquestra/grafo.js`): arquivos numerados `<base>.lock.<geração>` criados com 'wx', com
+// `pid:código` dentro. Quem quer a trava olha a MAIOR geração: se está `livre` (o dono a soltou) ou o dono morreu, cria a
+// seguinte; senão espera. NINGUÉM apaga nem reescreve a trava de outro, então não existe "conferir que está velha e depois
+// apagar" derrubando a trava nova de um dono vivo; a trava de dono vivo nunca é tomada, por mais velha que seja.
 const VALIDADE_LOTE_MS = 60000;
+const RETENCAO_MS = 10 * 60 * 1000;
 const pidVivo = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const esperaCurta = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* sem espera, só tenta de novo */ } };
+function criarTrava(base, { esperaMs = 2000 } = {}) {
+  const dir = path.dirname(base);
+  const prefixo = `${path.basename(base)}.lock.`;
+  const nome = (n) => path.join(dir, `${prefixo}${String(n).padStart(8, '0')}`);
+  const geracoes = () => fs.readdirSync(dir).filter((f) => f.startsWith(prefixo) && /^\d+$/.test(f.slice(prefixo.length))).map((f) => Number(f.slice(prefixo.length))).sort((a, b) => a - b);
+  const dono = `${process.pid}:${crypto.randomBytes(6).toString('hex')}`;
+  // Solta = livre, ou de dono que morreu. Texto vazio/estranho (o dono acabou de criar) conta como ocupada.
+  const solta = (n) => {
+    let t;
+    try { t = fs.readFileSync(nome(n), 'utf8'); } catch (e) { return e.code === 'ENOENT'; }
+    if (t === 'livre') return true;
+    const m = /^(\d+):/.exec(t);
+    return m ? !pidVivo(Number(m[1])) : false;
+  };
+  return (corpo) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const limite = Date.now() + esperaMs;
+    let minha = 0;
+    while (!minha) {
+      let todas;
+      try { todas = geracoes(); } catch { return null; }
+      const maior = todas.length ? todas[todas.length - 1] : 0;
+      if (maior === 0 || solta(maior)) {
+        try { fs.writeFileSync(nome(maior + 1), dono, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') return null; continue; }
+        let ha = false;
+        try { ha = geracoes().some((n) => n > maior + 1); } catch { /* confere de novo abaixo */ }
+        if (!ha) minha = maior + 1;
+        else { try { fs.writeFileSync(nome(maior + 1), 'livre'); } catch { /* fica presa até o dono (este processo) morrer */ } }
+      } else if (Date.now() > limite) return null;
+      else esperaCurta(10);
+      if (!minha && Date.now() > limite) return null;
+    }
+    try { return corpo(); } finally {
+      try { fs.writeFileSync(nome(minha), 'livre'); } catch { /* fica presa até este processo morrer */ }
+      try { for (const n of geracoes()) if (n < minha - 5) fs.rmSync(nome(n), { force: true }); } catch { /* limpeza fica para a próxima */ }
+    }
+  };
+}
 function criarReserva({ pasta, relogio }) {
   const id = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
-  const trava = `${pasta}.trava`;
+  const comTrava = criarTrava(`${pasta}.trava`);
   const meu = path.join(pasta, `${id}.json`);
-  const comTrava = (corpo) => {
-    let tem = false;
-    for (let i = 0; i < 80 && !tem; i++) {
-      try { fs.mkdirSync(trava); tem = true; } catch (e) {
-        if (e.code !== 'EEXIST') return null;
-        try { if (Date.now() - fs.statSync(trava).mtimeMs > 10000) fs.rmdirSync(trava); } catch { /* sumiu */ } // trava de quem morreu
-        esperaCurta(25);
-      }
+  let retido = false;
+  const valida = (r) => {
+    if (!r || !Number.isInteger(r.reservado) || r.reservado < 0 || !numeroValido(r.em, 0)) return false;
+    if (Array.isArray(r.retidos) && r.ate !== undefined) {
+      // Reserva retida por morte não confirmada: vale até os processos morrerem (se não souber quais, até `ate`).
+      const pids = r.retidos.filter(Number.isInteger);
+      return relogio() <= r.ate && (pids.length === 0 || pids.some(pidVivo));
     }
-    if (!tem) return null;
-    try { return corpo(); } finally { try { fs.rmdirSync(trava); } catch { /* já foi */ } }
+    return Number.isInteger(r.pid) && relogio() - r.em <= VALIDADE_LOTE_MS && pidVivo(r.pid);
   };
-  const liberar = () => { try { fs.unlinkSync(meu); } catch { /* não havia */ } };
-  process.once('exit', liberar);
-  // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama só mantém, nunca sobe).
+  // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade) e `pids`, mantém essa quantidade de vagas retida.
+  const liberar = ({ naoConfirmados = 0, pids = [] } = {}) => {
+    if (retido) return;
+    if (naoConfirmados > 0) {
+      try {
+        fs.mkdirSync(pasta, { recursive: true });
+        const temporario = `${meu}.tmp`;
+        fs.writeFileSync(temporario, JSON.stringify({ reservado: naoConfirmados, retidos: pids.filter(Number.isInteger), ate: relogio() + RETENCAO_MS, em: relogio() }), { mode: 0o600 });
+        fs.renameSync(temporario, meu);
+        retido = true;
+        return;
+      } catch { /* sem como reter: devolve abaixo (limite conhecido) */ }
+    }
+    try { fs.unlinkSync(meu); } catch { /* não havia */ }
+  };
+  process.once('exit', () => liberar());
+  // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama não concede vaga nova).
   const reservar = ({ alvo, agentes, teto }) => comTrava(() => {
     fs.mkdirSync(pasta, { recursive: true });
     let outros = 0;
     for (const nome of fs.readdirSync(pasta)) {
       if (!nome.endsWith('.json') || nome === `${id}.json`) continue;
       const arq = path.join(pasta, nome);
-      let valida = false;
       let r = null;
-      try {
-        r = JSON.parse(fs.readFileSync(arq, 'utf8'));
-        valida = r && Number.isInteger(r.reservado) && r.reservado >= 0 && Number.isInteger(r.pid) && numeroValido(r.em, 0) && relogio() - r.em <= VALIDADE_LOTE_MS && pidVivo(r.pid);
-      } catch { valida = false; }
-      if (valida) outros += r.reservado; else { try { fs.unlinkSync(arq); } catch { /* já foi */ } }
+      let ok = false;
+      try { r = JSON.parse(fs.readFileSync(arq, 'utf8')); ok = valida(r); } catch { ok = false; }
+      if (ok) outros += r.reservado; else { try { fs.unlinkSync(arq); } catch { /* já foi */ } }
     }
     const concedido = Math.max(0, Math.min(alvo, teto - outros));
     const temporario = `${meu}.tmp`;
@@ -285,8 +340,8 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     const d = decidir({ leitura: leituraAtual(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
     // Primeira decisão com leitura assíncrona ainda não pronta: vale 1 agente, mas não grava estado nem guarda cache, para a
     // leitura que chegar depois seguir o ramo da subida inicial (como se fosse a primeira decisão de verdade).
-    // Vaga entre lotes: o que sobra do teto depois do que os outros lotes reservaram (null = não deu para coordenar: só mantém).
-    const reservar = (alvo) => { const r = reserva.reservar({ alvo, agentes: agentesLocais, teto: d.capacidade.max }); return r === null ? Math.min(alvo, Math.max(agentesLocais, 1)) : r; };
+    // Vaga entre lotes: o que sobra do teto depois do que os outros lotes reservaram (null = sem a trava: nenhuma vaga nova).
+    const reservar = (alvo) => { const r = reserva.reservar({ alvo, agentes: agentesLocais, teto: d.capacidade.max }); return r === null ? Math.min(alvo, agentesLocais) : r; }; // sem trava: nenhuma vaga nova, só mantém as que já existem
     if (leitor.lerAsync && !pronta) return reservar(d.alvo);
     // Para SUBIR o número de agentes a leitura tem que ser recente (menos de `cacheMs`); com amostra velha só mantém ou reduz
     // (o piso de 1 agente continua valendo) e o estado de subida não é gravado.

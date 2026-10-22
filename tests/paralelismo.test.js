@@ -1279,7 +1279,7 @@ test("estado do controle: gravação atômica com o modo, e estado de outro modo
     controle({ agentesLocais: 0 });
     const gravado = JSON.parse(fs.readFileSync(arquivoEstado, "utf8"));
     assert.strictEqual(gravado.modo, "noite");
-    assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n !== "e.json.lotes"), ["e.json"], "nenhum temporário sobra (só a pasta das reservas de vagas)");
+    assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => !n.startsWith("e.json.lotes")), ["e.json"], "nenhum temporário sobra (só a pasta e a trava das reservas de vagas)");
     controle.liberar();
     // outro modo: o estado não vale (recomeça pela primeira decisão)
     fs.writeFileSync(arquivoEstado, JSON.stringify({ alvo: 1, subiuEm: 1e6, gravadoEm: 1e6, modo: "dia" }));
@@ -1438,4 +1438,99 @@ test("uso-windows.ps1 (texto): VRAM só do adaptador do MixAI (luid), adaptadore
   assert.match(uso, /\$playersCpu = \$null/);
   assert.match(uso, /vlc\|mpv\|mpc-hc/);
   assert.match(uso, /playersCpuPct\s+= \$playersCpu/);
+});
+
+// --- Rodada do Codex no #27: trava, retenção, chave do motor --------------------------------------------------------
+
+test("sem conseguir a trava da reserva nenhuma vaga NOVA é concedida (só mantém as que já existem); trava de dono vivo nunca é tomada, de dono morto é superada", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "trava-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  const mk = () => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6, cacheMs: 0, modos, config });
+  // um dono VIVO (este processo) segura a trava, por mais velha que seja: ninguém a toma
+  const trava = `${pasta}.trava.lock.00000001`;
+  fs.mkdirSync(path.dirname(trava), { recursive: true });
+  fs.writeFileSync(trava, `${process.pid}:abc`);
+  const velho = new Date(Date.now() - 3600 * 1000);
+  fs.utimesSync(trava, velho, velho);
+  const c = mk();
+  const t0 = Date.now();
+  assert.strictEqual(c({ agentesLocais: 0 }), 0, "sem trava: nenhuma vaga nova");
+  assert.ok(Date.now() - t0 >= 1500, "esperou a trava antes de desistir");
+  assert.strictEqual(c({ agentesLocais: 2 }), 2, "sem trava: mantém as que já existem, não sobe");
+  assert.strictEqual(fs.readFileSync(trava, "utf8"), `${process.pid}:abc`, "a trava do dono vivo continua intacta");
+  // dono MORTO: superado por uma geração maior, sem apagar a dele
+  fs.writeFileSync(trava, "2147483000:morto");
+  assert.strictEqual(c({ agentesLocais: 0 }), modos.noite.agentesMax, "dono morto não segura");
+  assert.ok(fs.existsSync(trava), "a trava do morto não foi apagada, foi superada");
+  assert.ok(fs.existsSync(`${pasta}.trava.lock.00000002`));
+  c.liberar();
+}));
+
+test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fica até os processos morrerem ou expirar, e some depois", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "retida-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  let agora = 1e6;
+  await comMemoriaAsync(6, async () => {
+    const mk = () => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 0, modos, config });
+    const controle = mk();
+    const teto = modos.noite.agentesMax;
+    // o lote concede vagas e termina com morte não confirmada de um agente (processo "vivo": este mesmo processo)
+    const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: process.pid }); };
+    await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), /o lote parou/);
+    const guardadas = fs.readdirSync(pasta).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(fs.readFileSync(path.join(pasta, n), "utf8")));
+    assert.strictEqual(guardadas.length, 1, "a reserva ficou");
+    assert.strictEqual(guardadas[0].reservado, 1);
+    assert.deepStrictEqual(guardadas[0].retidos, [process.pid]);
+    // outro lote só recebe o que sobra: 1 vaga continua retida
+    const outro = mk();
+    assert.strictEqual(outro({ agentesLocais: 0 }), teto - 1, "uma vaga está retida pelo agente que pode estar vivo");
+    outro.liberar();
+    // expira (10 min): a vaga volta
+    agora += 11 * 60 * 1000;
+    const depois = mk();
+    assert.strictEqual(depois({ agentesLocais: 0 }), teto, "retenção expirada");
+    depois.liberar();
+  });
+  // quando o processo retido já morreu, a vaga volta na hora
+  const morto = path.join(pasta, "retido-morto.json");
+  fs.mkdirSync(pasta, { recursive: true });
+  fs.writeFileSync(morto, JSON.stringify({ reservado: 1, retidos: [2147483000], ate: agora + 1e6, em: agora }));
+  await comMemoriaAsync(6, async () => {
+    const c = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 0, modos, config });
+    assert.strictEqual(c({ agentesLocais: 0 }), modos.noite.agentesMax, "o processo retido morreu");
+    c.liberar();
+  });
+});
+
+test("o erro naoConfirmado leva o PID do processo (a reserva fica retida por ele)", async () => {
+  const { spawn } = require("node:child_process");
+  const lancar = (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] });
+  let filho;
+  const erro = await escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = lancar(c, fd)), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", AbortSignal.abort()).catch((e) => e);
+  assert.ok(erro.abortada, "já abortado: nem lança");
+  const ctl = new AbortController();
+  const p = escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = lancar(c, fd)), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 50);
+  const e2 = await p.catch((e) => e);
+  assert.strictEqual(e2.naoConfirmado, true);
+  assert.strictEqual(e2.pid, filho.pid);
+  try { filho.kill("SIGKILL"); } catch { /* já foi */ }
+});
+
+test("GPU: a chave do motor é adaptador + engine + tipo (não só o tipo): dois motores do mesmo tipo em adaptadores diferentes não se somam", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /\[regex\]::Match\(\$l\.n, 'pid_\\d\+_\(\.\+\)\$'\)/, "a chave é tudo depois de pid_<n>_");
+  assert.doesNotMatch(uso, /Match\(\$l\.n, 'engtype_/, "não agrupa só pelo tipo");
+  // o decisor pega o máximo entre os motores de cada amostra
+  const motor = (i, adaptador, v) => ({ i, t: `luid_0x0_0x${adaptador}_phys_0_eng_0_engtype_3D`, v });
+  const linhas = [0, 1, 2].flatMap((i) => [motor(i, "A", 60), motor(i, "B", 70)]);
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas }), 70, "3D de duas placas: vale a mais carregada (70), não 130");
+});
+
+test("ESCADA.md não diz mais que dois lotes passam do teto", () => {
+  const doc = fs.readFileSync(path.join(RAIZ, "orquestra", "ESCADA.md"), "utf8");
+  assert.doesNotMatch(doc, /o total pode passar do teto/);
+  assert.doesNotMatch(doc, /o arquivo de estado não reserva vagas/);
 });

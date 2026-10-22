@@ -72,7 +72,8 @@ if ($null -ne $ocioso -and ((Get-Process -Id $PID).SessionId -ne [MixaiOcioso]::
 # diferentes entre as amostras, tenta a classe CIM Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine, que não muda com
 # o idioma do Windows; se as duas fontes forem inválidas, a placa fica indisponível ($null).
 # A ocupação da placa por outros programas (antes gpuOutrosPct aqui) agora é calculada em orquestra/paralelismo.js
-# (gpuOutrosDe, o motor mais carregado) a partir das somas por amostra e tipo de motor que este script entrega em gpuPorTipo.
+# (gpuOutrosDe, o motor mais carregado de cada amostra) a partir das somas por amostra e por MOTOR (adaptador + engine) que
+# este script entrega em gpuPorTipo (o campo `t` é o identificador do motor).
 # Dos motores de vídeo só entrega os números crus; orquestra/paralelismo.js decide o que é decodificação.
 # Cobertura: o conjunto de instâncias de motor tem que ser o MESMO em todas as amostras, e erro parcial da coleta (algumas
 # instâncias leram, outras falharam) não é silenciado: qualquer um dos dois devolve $null (leitura indisponível).
@@ -138,8 +139,10 @@ if ($motores -and $motores.amostras -ge 1) {
     if (-not (Test-Numero $l.v)) { $valido = $false; continue }
     $pidDono = [int][regex]::Match($l.n, 'pid_(\d+)_').Groups[1].Value
     if ($pidsMeus -notcontains $pidDono) {
-      $tipo = [regex]::Match($l.n, 'engtype_(.+)$').Groups[1].Value
-      if (-not $tipo) { $valido = $false; continue } # motor sem tipo identificável
+      # A chave é o MOTOR (adaptador + engine + tipo, tudo depois de pid_<n>_), não só o tipo: dois motores do mesmo tipo em
+      # adaptadores diferentes não se somam. Os processos que usam o mesmo motor sim (é o mesmo motor ocupado).
+      $tipo = [regex]::Match($l.n, 'pid_\d+_(.+)$').Groups[1].Value
+      if (-not $tipo) { $valido = $false; continue } # motor sem identificação
       $chave = "$($l.i)|$tipo"
       $porTipo[$chave] = [double]$porTipo[$chave] + [double]$l.v
       if ($l.n -match 'video') { $video += [pscustomobject]@{ i = $l.i; n = $l.n; v = [Math]::Round([double]$l.v, 2) } }
