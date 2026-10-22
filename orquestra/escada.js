@@ -213,7 +213,15 @@ function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tenta
     let estourou = false;
     const fim = (f, valor) => { if (terminou) return; terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo); f(valor); };
     // Morte não confirmada: larga o processo (pipes fechados e sem segurar o Node), senão o comando nunca termina.
-    const largar = () => { for (const f of [filho.stdin, filho.stdout, filho.stderr]) { try { f.destroy(); } catch { /* já fechado */ } } try { filho.unref(); } catch { /* sem efeito */ } };
+    const largar = () => {
+      for (const f of [filho.stdin, filho.stdout, filho.stderr]) {
+        if (!f) continue;
+        try { f.removeAllListeners('data'); f.on('error', () => {}); f.destroy(); } catch { /* já fechado */ }
+        try { f.unref?.(); } catch { /* sem efeito */ }
+      }
+      try { filho.removeAllListeners('close'); filho.removeAllListeners('error'); filho.on('error', () => {}); } catch { /* sem efeito */ }
+      try { filho.unref(); } catch { /* sem efeito */ }
+    };
     const parar = () => {
       if (matar(filho)) return;
       let feitas = 1;
