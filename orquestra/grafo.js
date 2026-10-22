@@ -11,9 +11,14 @@ const limitePadrao = 3;
 
 const novo = () => ({ versao: 1, tarefas: {} });
 const copia = (g) => JSON.parse(JSON.stringify(g));
-// Caminho comparável: barras normais, sem ./ nem barra final, minúsculas (o Windows não diferencia) e curinga vira a pasta antes dele.
-const normaliza = (p) => {
-  let c = path.posix.normalize(String(p).replace(/\\/g, '/')).toLowerCase().replace(/^\.\//, '').replace(/\/+$/, '');
+// Caminho comparável: barras normais, sem ./ nem barra final, minúsculas (o Windows não diferencia), curinga vira a pasta
+// antes dele e caminho absoluto DENTRO do repositório vira relativo a ele (src/a.js e D:\MixAI\src\a.js são o mesmo arquivo).
+const RAIZ_DO_REPO = path.resolve(__dirname, '..');
+const barras = (p) => path.posix.normalize(String(p).replace(/\\/g, '/')).toLowerCase();
+const normaliza = (p, raiz = RAIZ_DO_REPO) => {
+  let c = barras(p).replace(/^\.\//, '').replace(/\/+$/, '');
+  const r = barras(raiz).replace(/\/+$/, '');
+  if (/^(?:[a-z]:)?\//.test(c)) { if (c === r) c = ''; else if (c.startsWith(`${r}/`)) c = c.slice(r.length + 1); }
   const i = c.search(/[*?[]/);
   if (i >= 0) c = c.slice(0, i).replace(/\/?[^/]*$/, '');
   return c === '.' ? '' : c;
@@ -57,9 +62,15 @@ function formaInvalida(g) {
 }
 
 function carregar(arquivo = padrao) {
-  if (!fs.existsSync(arquivo)) return novo();
+  // Só "não existe" (ENOENT) começa um grafo novo. Qualquer outra falha de leitura (acesso negado, pasta no lugar do
+  // arquivo...) não pode virar "grafo vazio": quem chama `atualizar` gravaria um grafo novo por cima do verdadeiro.
+  let texto;
+  try { texto = comRetentativa(() => fs.readFileSync(arquivo, 'utf8')); } catch (erro) {
+    if (erro.code === 'ENOENT') return novo();
+    throw new Error(`não consegui ler o grafo em ${arquivo} (${erro.code || erro.message}); o arquivo não foi alterado`);
+  }
   try {
-    const g = JSON.parse(comRetentativa(() => fs.readFileSync(arquivo, 'utf8')));
+    const g = JSON.parse(texto);
     if (g?.versao !== 1 || typeof g.tarefas !== 'object' || g.tarefas === null || Array.isArray(g.tarefas)) throw new Error('formato');
     const problema = formaInvalida(g);
     if (problema) throw new Error(problema);
@@ -165,13 +176,13 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     falhou = true;
     throw erro;
   } finally {
-    // Solta escrevendo `livre` na própria geração (só se ainda for sua). Normalmente não apaga: o arquivo é o marcador
-    // de qual geração veio por último. Se nem escrever `livre` der, apaga a própria geração (é minha, não de outro).
-    // Se nada disso der, a trava fica presa enquanto este processo viver: avisa em vez de ignorar.
+    // Solta escrevendo `livre` na própria geração (só se ainda for sua). NUNCA apaga a própria geração: apagar faria a
+    // maior geração voltar a ser uma antiga e solta, e dois processos poderiam passar juntos pela checagem "não há
+    // geração maior" e gravar ao mesmo tempo (uma atualização perdida). Se `livre` não puder ser escrito, a trava fica
+    // presa enquanto este processo viver (depois vira solta, porque o dono morreu): avisa em vez de ignorar.
     if (lerOuErro(nome(minha)).texto === dono) {
       let solta = false;
-      try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); solta = true; } catch { /* tenta apagar */ }
-      if (!solta) { try { comRetentativa(() => fs.rmSync(nome(minha), { force: true })); solta = true; } catch { /* abaixo */ } }
+      try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); solta = true; } catch { /* abaixo */ }
       if (!solta) {
         const aviso = `não consegui soltar a trava ${nome(minha)}${falhou ? '' : ' (o grafo foi gravado)'}; apague esse arquivo se ninguém estiver usando o grafo`;
         if (falhou) console.error(aviso); else throw new Error(aviso);
@@ -248,7 +259,7 @@ function devolver(g, id, motivo = null, agora = new Date().toISOString()) {
   const t = pegar(g, id);
   if (t.estado !== 'em_revisao') throw new Error(`tarefa ${id} precisa estar em_revisao (está ${t.estado})`);
   const em_andamento = lista(g).filter((x) => x.estado === 'em_andamento');
-  const conflito = em_andamento.find((x) => t.escopo.map(normaliza).some((p) => x.escopo.map(normaliza).some((q) => sobrepoe(p, q))));
+  const conflito = em_andamento.find((x) => t.escopo.map((p) => normaliza(p)).some((p) => x.escopo.map((p) => normaliza(p)).some((q) => sobrepoe(p, q))));
   if (conflito) throw new Error(`tarefa ${id} não pode voltar a em_andamento: o escopo dela se sobrepõe ao de ${conflito.id}, que está em_andamento`);
   return mudar(g, id, { estado: 'em_andamento', resultado: motivo }, agora);
 }
@@ -289,8 +300,8 @@ function validar(g) {
   const andando = lista(g).filter((t) => t.estado === 'em_andamento');
   for (let i = 0; i < andando.length; i++) {
     for (let j = i + 1; j < andando.length; j++) {
-      const a = andando[i].escopo.map(normaliza);
-      const comum = andando[j].escopo.map(normaliza).find((p) => a.some((q) => sobrepoe(p, q)));
+      const a = andando[i].escopo.map((p) => normaliza(p));
+      const comum = andando[j].escopo.map((p) => normaliza(p)).find((p) => a.some((q) => sobrepoe(p, q)));
       if (comum !== undefined) erros.push(`escopo sobreposto (${comum || 'tudo'}): ${andando[i].id} e ${andando[j].id} estão em_andamento ao mesmo tempo`);
     }
   }
@@ -348,7 +359,7 @@ function principal(args) {
   return 0;
 }
 
-module.exports = { novo, carregar, salvar, atualizar, comRetentativa, adicionar, prontas, travadas, iniciar, revisar, devolver, concluir, falhar, validar, resumo };
+module.exports = { normaliza, novo, carregar, salvar, atualizar, comRetentativa, adicionar, prontas, travadas, iniciar, revisar, devolver, concluir, falhar, validar, resumo };
 
 if (require.main === module) {
   try {

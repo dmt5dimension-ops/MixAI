@@ -466,17 +466,53 @@ test("nomes herdados do Object (constructor, toString, __proto__) não contam co
   assert.throws(() => grafo.adicionar(c, { id: "constructor", titulo: "C", escopo: ["x"] }, AGORA), /já existe/);
 });
 
-test("soltar a trava: se escrever 'livre' falha, apaga a própria geração; se nada funciona, avisa (não ignora em silêncio)", () => {
+test("soltar a trava: se escrever 'livre' falha, a própria geração NÃO é apagada (a trava fica presa e ninguém passa por cima) e o erro avisa", () => {
   const arq = tmp();
   const escrever = fs.writeFileSync;
-  const apagar = fs.rmSync;
   const ehLivre = (f, d) => String(f).includes(".lock.") && d === "livre";
   try {
     fs.writeFileSync = (f, d, ...r) => { if (ehLivre(f, d)) throw Object.assign(new Error("disco"), { code: "EIO" }); return escrever(f, d, ...r); };
-    grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA));
-    assert.deepStrictEqual(travas(arq), [], "a própria geração foi apagada");
-    fs.rmSync = (f, ...r) => { if (String(f).includes(".lock.")) throw Object.assign(new Error("disco"), { code: "EIO" }); return apagar(f, ...r); };
-    assert.throws(() => grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "b", titulo: "B", escopo: ["y"] }, AGORA)), /não consegui soltar a trava.*grafo foi gravado/);
-  } finally { fs.writeFileSync = escrever; fs.rmSync = apagar; }
-  assert.ok("b" in grafo.carregar(arq).tarefas, "a gravação aconteceu");
+    assert.throws(() => grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA)), /não consegui soltar a trava.*grafo foi gravado/);
+  } finally { fs.writeFileSync = escrever; }
+  assert.ok("a" in grafo.carregar(arq).tarefas, "a gravação aconteceu");
+  assert.strictEqual(travas(arq).length, 1, "a geração continua lá, com o dono (este processo, vivo)");
+  // A CORRIDA: outro processo tenta atualizar enquanto a trava está presa. Não pode passar (se passasse, gravaria junto).
+  const filho = require("node:child_process").spawnSync(process.execPath, ["-e", `
+    const g = require(${JSON.stringify(path.join(RAIZ, "orquestra", "grafo.js"))});
+    try { g.atualizar(${JSON.stringify(arq)}, (x) => g.adicionar(x, { id: "b", titulo: "B", escopo: ["y"] }), { esperaMs: 300 }); console.log("PASSOU"); } catch (e) { console.log("BLOQUEADO " + e.message); }
+  `], { encoding: "utf8" });
+  assert.match(filho.stdout, /BLOQUEADO grafo travado/, "outro processo é barrado: nenhuma atualização é perdida");
+  assert.ok(!("b" in grafo.carregar(arq).tarefas));
+  // o próprio dono (que está vivo) também não passa por cima de si mesmo; some quando o dono morre (aqui, simulado)
+  fs.writeFileSync(travas(arq)[0] ? path.join(path.dirname(arq), travas(arq)[0]) : arq, "999999999:morto");
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "c", titulo: "C", escopo: ["z"] }, AGORA));
+  assert.ok("c" in grafo.carregar(arq).tarefas, "dono morto: a trava é superada por uma geração maior");
+});
+
+test("grafo: só ENOENT começa um grafo novo; outra falha de leitura (aqui, uma pasta no lugar do arquivo) não vira grafo vazio nem é sobrescrita", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grafo-enoent-"));
+  assert.deepStrictEqual(grafo.carregar(path.join(dir, "nao-existe.json")), { versao: 1, tarefas: {} }, "não existe = grafo novo");
+  const arq = path.join(dir, "g.json");
+  fs.mkdirSync(arq); // ler isto dá EISDIR, não ENOENT
+  assert.throws(() => grafo.carregar(arq), /não consegui ler o grafo.*EISDIR/);
+  assert.throws(() => grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA)), /não consegui ler o grafo/);
+  assert.ok(fs.statSync(arq).isDirectory(), "nada foi sobrescrito");
+});
+
+test("escopo: caminho absoluto dentro do repositório e o relativo são o mesmo arquivo (Windows e Linux)", () => {
+  assert.strictEqual(grafo.normaliza("src/a.js", "D:\\MixAI"), "src/a.js");
+  assert.strictEqual(grafo.normaliza("D:\\MixAI\\src\\a.js", "D:\\MixAI"), "src/a.js");
+  assert.strictEqual(grafo.normaliza("d:/mixai/SRC/a.js", "D:\\MixAI\\"), "src/a.js");
+  assert.strictEqual(grafo.normaliza("/home/x/repo/src/a.js", "/home/x/repo"), "src/a.js");
+  assert.strictEqual(grafo.normaliza("D:\\MixAI", "D:\\MixAI"), "", "a raiz inteira");
+  assert.strictEqual(grafo.normaliza("D:\\OutroRepo\\src\\a.js", "D:\\MixAI"), "d:/outrorepo/src/a.js", "fora do repositório continua absoluto e diferente");
+  assert.strictEqual(grafo.normaliza("D:\\MixAI\\src\\*.js", "D:\\MixAI"), "src", "curinga continua valendo a pasta");
+  assert.strictEqual(grafo.normaliza("D:\\MixAI-extra\\a.js", "D:\\MixAI"), "d:/mixai-extra/a.js", "prefixo parecido não é a raiz");
+  // e pelo grafo, com a raiz real do repositório: dois escopos do mesmo arquivo conflitam
+  const raiz = path.resolve(RAIZ);
+  let g = grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", escopo: ["src/a.js"] }, AGORA);
+  g = grafo.adicionar(g, { id: "b", titulo: "B", escopo: [path.join(raiz, "src", "a.js")] }, AGORA);
+  g = grafo.iniciar(g, "a", "codex", AGORA);
+  g = grafo.iniciar(g, "b", "claude", AGORA);
+  assert.ok(grafo.validar(g).some((e) => /escopo sobreposto/.test(e)), "a validação (que `atualizar` aplica antes de gravar) recusa os dois em_andamento");
 });
