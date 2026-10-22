@@ -62,6 +62,11 @@
       "funcoes": []
     },
     {
+      "arquivo": "local/iniciar-vigia.ps1",
+      "descricao": "Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.",
+      "funcoes": []
+    },
+    {
       "arquivo": "local/modo.ps1",
       "descricao": "Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).",
       "funcoes": []
@@ -249,35 +254,35 @@
         },
         {
           "nome": "validarPlano",
-          "linha": 286
+          "linha": 289
         },
         {
           "nome": "normaliza",
-          "linha": 300
+          "linha": 303
         },
         {
           "nome": "sobrepoe",
-          "linha": 301
+          "linha": 304
         },
         {
           "nome": "promptMicro",
-          "linha": 306
+          "linha": 309
         },
         {
           "nome": "lote",
-          "linha": 314
+          "linha": 317
         },
         {
           "nome": "exportar",
-          "linha": 341
+          "linha": 344
         },
         {
           "nome": "principal",
-          "linha": 348
+          "linha": 351
         },
         {
           "nome": "verificadorDe",
-          "linha": 360
+          "linha": 363
         }
       ],
       "exporta": [
@@ -445,6 +450,10 @@
         {
           "nome": "local",
           "linha": 407
+        },
+        {
+          "nome": "local",
+          "linha": 427
         }
       ],
       "exporta": []
@@ -545,6 +554,10 @@
         {
           "nome": "rodar",
           "linha": 150
+        },
+        {
+          "nome": "prepararComGhFalso",
+          "linha": 164
         }
       ],
       "exporta": []
@@ -647,6 +660,12 @@
       ]
     },
     {
+      "o_que": "O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho",
+      "testes": [
+        "tests/modelo-local.test.js"
+      ]
+    },
+    {
       "o_que": "Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js)",
       "testes": [
         "tests/papeis.test.js"
@@ -666,6 +685,12 @@
     },
     {
       "o_que": "Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`)",
+      "testes": [
+        "tests/preparar-repo.test.js"
+      ]
+    },
+    {
+      "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
       ]
@@ -693,6 +718,12 @@
       "testes": [
         "tests/escada.test.js",
         "tests/falhas-escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto",
+      "testes": [
+        "tests/escada.test.js"
       ]
     },
     {
