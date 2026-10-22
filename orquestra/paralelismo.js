@@ -206,6 +206,9 @@ function modoAtual(env = process.env) {
 // seguinte; senão espera. NINGUÉM apaga nem reescreve a trava de outro, então não existe "conferir que está velha e depois
 // apagar" derrubando a trava nova de um dono vivo; a trava de dono vivo nunca é tomada, por mais velha que seja.
 const RETENCAO_MS = 10 * 60 * 1000;
+// Agente com Job registrado mas SEM PID (o controlador morreu entre registrar o Job e gravar o PID): o wrapper pode estar vivo sem ter
+// criado o Job ainda, então a reserva fica conservadora por este tempo (o PowerShell leva alguns segundos para criar o Job).
+const GRACA_SEM_PID_MS = 2 * 60 * 1000;
 const pidVivo = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const esperaCurta = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* sem espera, só tenta de novo */ } };
 function criarTrava(base, { esperaMs = 2000 } = {}) {
@@ -342,6 +345,14 @@ function criarReserva({ pasta, relogio, jobVivo = null, encerrarJob = encerrarJo
   const valida = (r, ctx) => {
     if (!r || !Number.isInteger(r.reservado) || r.reservado < 0 || !numeroValido(r.em, 0)) return false;
     const jobVivoDe = (nome) => ctx.jobs.get(nome) !== false; // sem resposta = vivo
+    // Um agente (ou item de retenção) está vivo se o Job tem processo, ou o PID do wrapper vive (mesma data de criação), ou, sem PID
+    // gravado ainda, se está dentro da graça (o wrapper pode existir sem ter criado o Job). Job inexistente sozinho não resolve.
+    const agenteVivo = (a, emDoArquivo) => {
+      if (typeof a.job === 'string' && a.job && jobVivoDe(a.job)) return true;
+      if (Number.isInteger(a.pid)) return donoVivo(a.pid, a.inicio, ctx);
+      if (typeof a.job === 'string' && a.job) return relogio() - (numeroValido(a.desde, 0) ? a.desde : emDoArquivo) <= GRACA_SEM_PID_MS;
+      return false;
+    };
     if (Array.isArray(r.itens) && r.ate !== undefined) {
       // Reserva retida por morte não confirmada: cada item (um processo sem morte confirmada) é avaliado pelo PRÓPRIO
       // identificador, e a reserva só cai quando TODOS estiverem resolvidos. Item com Job vale até o Job estar vazio ou não
@@ -351,16 +362,13 @@ function criarReserva({ pasta, relogio, jobVivo = null, encerrarJob = encerrarJo
         const temJob = item && typeof item.job === 'string' && item.job;
         const temPid = item && Number.isInteger(item.pid);
         if (!temJob && !temPid) return numeroValido(r.ate, 0) && relogio() <= r.ate;
-        // O item só se resolve quando TODA a evidência dele resolve: o Job ainda pode não ter sido criado (FECHADO) enquanto o
-        // wrapper (PID) já está vivo, então Job inexistente sozinho não basta se o PID continua vivo.
-        if (temJob && jobVivoDe(item.job)) return true;
-        return temPid ? donoVivo(item.pid, item.inicio, ctx) : false;
+        return agenteVivo(item, r.em);
       });
     }
     // Reserva de lote: vale enquanto o dono estiver vivo OU algum agente dele continuar vivo (Job ativo, ou o PID do wrapper com a
     // mesma data de criação, que cobre a janela antes de o Job existir). O batimento `em` serve só para dados, nunca expira a reserva.
     if (Number.isInteger(r.pid) && donoVivo(r.pid, r.inicio, ctx)) return true;
-    return Array.isArray(r.agentes) && r.agentes.some((a) => a && ((typeof a.job === 'string' && a.job && jobVivoDe(a.job)) || (Number.isInteger(a.pid) && donoVivo(a.pid, a.inicio, ctx))));
+    return Array.isArray(r.agentes) && r.agentes.some((a) => a && agenteVivo(a, r.em));
   };
   // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade) e `itens` ({ pid, job } de cada processo sem morte
   // confirmada), mantém essa quantidade de vagas retida: a retenção é gravada (rename atômico sobre a própria reserva, dentro da
@@ -371,6 +379,7 @@ function criarReserva({ pasta, relogio, jobVivo = null, encerrarJob = encerrarJo
     if (retido || pendente) return;
     if (naoConfirmados > 0) {
       const lista = (itens.length ? itens : Array.from({ length: naoConfirmados }, () => ({}))).map((i) => ({
+        ...(numeroValido(i?.desde, 0) ? { desde: i.desde } : {}),
         ...(typeof i?.jobNome === 'string' && i.jobNome ? { job: i.jobNome } : {}),
         ...(Number.isInteger(i?.pid) ? { pid: i.pid, inicio: inicioDoProcesso(i.pid) } : {}),
       }));
@@ -395,21 +404,28 @@ function criarReserva({ pasta, relogio, jobVivo = null, encerrarJob = encerrarJo
     }
     try { fs.unlinkSync(meu); } catch { /* não havia */ }
   };
+  // Agentes vivos do lote, cada um com o momento em que apareceu pela primeira vez (`desde`).
+  const vistosDesde = new Map();
+  const listarAgentes = () => {
+    let lista = [];
+    try { lista = agentesDoLote().filter(Boolean); } catch { lista = []; }
+    return lista.map((a) => { const chave = a.jobNome ?? `pid:${a.pid}`; if (!vistosDesde.has(chave)) vistosDesde.set(chave, relogio()); return { ...a, desde: vistosDesde.get(chave) }; });
+  };
   // Saindo com agentes ainda vivos: NÃO devolve a reserva; vira retenção pelos Jobs e PIDs deles (o processo não consegue mais esperar).
   process.once('exit', () => {
     if (pendente || retido) return;
     let vivos = [];
-    try { vivos = agentesDoLote(); } catch { vivos = []; }
+    vivos = listarAgentes();
     try { if (vivos.length) liberar({ naoConfirmados: vivos.length, itens: vivos }); else liberar(); } catch { /* sem como gravar agora */ }
   });
   // Data de criação dos wrappers dos agentes: levantada FORA da trava (spawn), usada dentro dela só como dado.
   const iniciosDosMeus = new Map();
   const prepararAgentes = () => {
     if (meuInicio === undefined) meuInicio = inicioDoProcesso(process.pid);
-    const lista = [];
-    try { lista.push(...agentesDoLote()); } catch { /* sem agentes */ }
+    const lista = listarAgentes();
     for (const a of lista) if (Number.isInteger(a?.pid) && !iniciosDosMeus.has(a.pid)) iniciosDosMeus.set(a.pid, inicioDoProcesso(a.pid));
     return lista.map((a) => ({
+      desde: a.desde,
       ...(typeof a?.jobNome === 'string' && a.jobNome ? { job: a.jobNome } : {}),
       ...(Number.isInteger(a?.pid) ? { pid: a.pid, inicio: iniciosDosMeus.get(a.pid) ?? null } : {}),
     }));

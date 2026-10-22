@@ -1673,14 +1673,14 @@ test("retenção mista: cada morte não confirmada é avaliada pelo próprio ide
   const jobVivo = (nome) => estado[nome];
   const grava = (itens) => fs.writeFileSync(path.join(pasta, "mista.json"), JSON.stringify({ reservado: itens.length, itens, ate: agora.v + 600000, em: agora.v }));
   const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
-  grava([{ job: "Local\\MixAI-vazio" }, { pid: process.pid, inicio: par.inicioDoProcesso(process.pid) }]);
+  grava([{ job: "Local\\MixAI-vazio", desde: 1 }, { pid: process.pid, inicio: par.inicioDoProcesso(process.pid) }]);
   assert.strictEqual(alvo(), teto - 2, "Job vazio + PID vivo: segue retida");
   assert.ok(fs.existsSync(path.join(pasta, "mista.json")));
-  grava([{ job: "Local\\MixAI-vazio" }, { job: "Local\\MixAI-vivo" }]);
+  grava([{ job: "Local\\MixAI-vazio", desde: 1 }, { job: "Local\\MixAI-vivo", desde: 1 }]);
   assert.strictEqual(alvo(), teto - 2, "Job vazio + Job vivo: segue retida");
-  grava([{ job: "Local\\MixAI-vazio" }, {}]);
+  grava([{ job: "Local\\MixAI-vazio", desde: 1 }, {}]);
   assert.strictEqual(alvo(), teto - 2, "Job vazio + item sem identificador (vale até `ate`): segue retida");
-  grava([{ job: "Local\\MixAI-vazio" }, { pid: 2147483000 }]);
+  grava([{ job: "Local\\MixAI-vazio", desde: 1 }, { pid: 2147483000 }]);
   assert.strictEqual(alvo(), teto, "todos resolvidos: a vaga volta");
   assert.ok(!fs.existsSync(path.join(pasta, "mista.json")));
 }));
@@ -1754,7 +1754,7 @@ test("reserva de lote cujo dono morreu continua valendo enquanto algum Job dos a
   const teto = modos.noite.agentesMax;
   fs.mkdirSync(pasta, { recursive: true });
   const estado = { "Local\\MixAI-x": true, "Local\\MixAI-y": false };
-  const grava = (jobs) => fs.writeFileSync(path.join(pasta, "morto.json"), JSON.stringify({ reservado: 2, pid: 2147483000, agentes: jobs.map((j) => ({ job: j })), em: agora.v }));
+  const grava = (jobs) => fs.writeFileSync(path.join(pasta, "morto.json"), JSON.stringify({ reservado: 2, pid: 2147483000, agentes: jobs.map((j) => ({ job: j, desde: 1 })), em: agora.v }));
   const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo: (n) => estado[n] }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
   grava(["Local\\MixAI-x", "Local\\MixAI-y"]);
   assert.strictEqual(alvo(), teto - 2, "dono morto mas um Job ativo: a vaga segue reservada");
@@ -1883,4 +1883,46 @@ test("se a reserva com o agente não pode ser gravada, o agente NÃO é iniciado
   // o lote falhou fechado e segue tentando gravar a retenção (timer vivo): libera a gravação para o teste poder terminar
   for (const n of fs.readdirSync(pasta).filter((x) => x.endsWith(".tmp"))) fs.rmdirSync(path.join(pasta, n));
   await new Promise((r) => setTimeout(r, 1500));
+}));
+
+test("janela entre registrar o Job e gravar o PID: agente com Job inexistente e SEM PID segura a vaga pela graça, em reserva comum e em retenção; depois da graça libera", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "janela-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e9 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo: () => false, encerrarJob: async () => false }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
+  const arq = path.join(pasta, "janela.json");
+  // reserva comum de um dono já morto, agente só com o nome do Job (Job ainda não existe)
+  fs.writeFileSync(arq, JSON.stringify({ reservado: 1, pid: 2147483000, agentes: [{ job: "Local\\\\MixAI-j", desde: agora.v - 5000 }], em: agora.v }));
+  assert.strictEqual(alvo(), teto - 1, "Job FECHADO e sem PID, dentro da graça: segue reservada");
+  fs.writeFileSync(arq, JSON.stringify({ reservado: 1, pid: 2147483000, agentes: [{ job: "Local\\\\MixAI-j", desde: agora.v - 3 * 60 * 1000 }], em: agora.v }));
+  assert.strictEqual(alvo(), teto, "passou da graça sem PID nem Job: a vaga volta");
+  // retenção (saída do controlador) com o mesmo agente
+  fs.writeFileSync(arq, JSON.stringify({ reservado: 1, itens: [{ job: "Local\\\\MixAI-j", desde: agora.v - 5000 }], ate: agora.v + 600000, em: agora.v }));
+  assert.strictEqual(alvo(), teto - 1, "retenção: dentro da graça segue");
+  fs.writeFileSync(arq, JSON.stringify({ reservado: 1, itens: [{ job: "Local\\\\MixAI-j", desde: agora.v - 3 * 60 * 1000 }], ate: agora.v + 600000, em: agora.v }));
+  assert.strictEqual(alvo(), teto, "retenção: passou da graça");
+}));
+
+test("o controlador sai entre as fases 'antes' e 'depois' (agente só com o nome do Job): a reserva vira retenção com `desde` e outro lote não recebe a vaga", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "janela-saida-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  const script = path.join(dir, "filho.js");
+  fs.writeFileSync(script, `const par = require(${JSON.stringify(path.join(RAIZ, "orquestra", "paralelismo.js"))});
+const r = par.criarReserva({ pasta: ${JSON.stringify(pasta)}, relogio: Date.now });
+r.definirAgentes(() => [{ jobNome: "Local\\\\\\\\MixAI-so-nome" }]);
+r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+`);
+  const res = require("node:child_process").spawnSync(process.execPath, [script], { encoding: "utf8" });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const guardada = JSON.parse(fs.readFileSync(path.join(pasta, fs.readdirSync(pasta).find((n) => n.endsWith(".json"))), "utf8"));
+  assert.strictEqual(guardada.itens[0].job, "Local\\\\MixAI-so-nome");
+  assert.ok(Number.isInteger(guardada.itens[0].desde), "guarda desde quando o agente existe");
+  assert.strictEqual(guardada.itens[0].pid, undefined);
+  const c = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: Date.now, cacheMs: 0, modos, config, jobVivo: () => false });
+  assert.strictEqual(c({ agentesLocais: 0 }), modos.noite.agentesMax - 1, "Job ainda inexistente e filho possivelmente vivo: a vaga continua ocupada");
+  c.liberar();
 }));
