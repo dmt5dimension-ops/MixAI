@@ -160,3 +160,47 @@ test("rodar de novo não sobrescreve a cópia ao lado (.orquestrador) que já ex
   assert.strictEqual(fs.readFileSync(aoLado, "utf8"), "# juntado pelo dono\n");
   assert.strictEqual(fs.readFileSync(path.join(destino, "AGENTS.md"), "utf8"), "# do dono\n");
 });
+
+function prepararComGhFalso(comandoQueFalha) {
+  const { spawnSync, execFileSync } = require("node:child_process");
+  const os = require("node:os");
+  const ps = (process.platform === "win32" ? ["powershell", "pwsh"] : ["pwsh"]).find(
+    (c) => spawnSync(c, ["-NoProfile", "-Command", "exit 0"]).status === 0,
+  );
+  if (!ps) return null;
+
+  const destino = fs.mkdtempSync(path.join(os.tmpdir(), "prep-gh-"));
+  const bin = path.join(destino, "bin");
+  fs.mkdirSync(bin);
+  execFileSync("git", ["init", "-q"], { cwd: destino });
+  if (process.platform === "win32") {
+    fs.writeFileSync(path.join(bin, "gh.cmd"),
+      `@echo off\r\nif "%1"=="${comandoQueFalha}" exit /b 17\r\nexit /b 0\r\n`);
+  } else {
+    const gh = path.join(bin, "gh");
+    fs.writeFileSync(gh, `#!/bin/sh\nif [ "$1" = "${comandoQueFalha}" ]; then exit 17; fi\nexit 0\n`);
+    fs.chmodSync(gh, 0o755);
+  }
+  const novoPath = bin + path.delimiter + (process.env.PATH || process.env.Path || "");
+  return spawnSync(ps, ["-NoProfile", "-File", path.join(RAIZ, "ferramentas", "preparar-repo.ps1"),
+    "-Repo", destino, "-ComandoTeste", "pytest -q"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: novoPath, Path: novoPath, GH_TOKEN: "", GITHUB_TOKEN: "" },
+  });
+}
+
+test("falha ao criar label encerra a preparação sem anunciar sucesso", () => {
+  const r = prepararComGhFalso("label");
+  if (!r) return;
+  assert.match(r.stdout, /Labels da revisao cruzada/);
+  assert.notStrictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /ok: feito-por:claude|==> Pronto/);
+});
+
+test("falha ao definir REGRESSION_CMD encerra a preparação sem anunciar sucesso", () => {
+  const r = prepararComGhFalso("variable");
+  if (!r) return;
+  assert.match(r.stdout, /Comando de regressao no CI/);
+  assert.notStrictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /ok: variavel REGRESSION_CMD|==> Pronto/);
+});
