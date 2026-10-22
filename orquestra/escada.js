@@ -241,9 +241,11 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     let saidaGrande = false;
     let abortado = false;
     let erroDoProcesso = null;
+    let tirarOuvinteDeAborto = null;
     const fim = (f, valor) => {
       if (terminou) return;
       terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
+      if (tirarOuvinteDeAborto) tirarOuvinteDeAborto(); // só sai depois da conferência: um aborto durante ela ainda conta
       apagarEntrada();
       f(valor);
     };
@@ -285,7 +287,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       const abortar = () => { abortado = true; parar(); };
       if (signal.aborted) abortar();
       else signal.addEventListener('abort', abortar, { once: true });
-      filho.on('close', () => signal.removeEventListener('abort', abortar));
+      tirarOuvinteDeAborto = () => signal.removeEventListener('abort', abortar);
     }
     // Um só orçamento de BYTES para stdout e stderr juntos; passou, a árvore é parada em vez de esgotar a memória.
     const saidas = [];
@@ -523,7 +525,8 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
       clearTimeout(corte);
       // Quem ainda não terminou depois do prazo não teve a morte confirmada.
       for (const w of esperas) if (!w.acabou && !naoConfirmados.includes(w.id)) naoConfirmados.push(w.id);
-      if (naoConfirmados.length > 1) fatal = new Error(`${fatal.message} Também não foi confirmada a morte de: ${naoConfirmados.slice(1).join(', ')}.`);
+      const semCitar = [...new Set(naoConfirmados)].filter((id) => !fatal.message.includes(`"${id}"`)); // mesmo com 1 só id, se a mensagem ainda não o cita
+      if (semCitar.length) fatal = new Error(`${fatal.message} Também não foi confirmada a morte de: ${semCitar.join(', ')}.`);
       throw fatal;
     }
     // O dono voltou ao PC: tira agentes locais em andamento (os mais novos primeiro) e devolve a microtarefa à fila.

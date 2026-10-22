@@ -1,6 +1,6 @@
 // Testa o ajuste de quantos agentes locais rodam juntos conforme o uso do PC (orquestra/paralelismo.js).
 // A leitura do Windows é simulada; o script real (local/uso-windows.ps1) só roda no PC do dono.
-const { test } = require("node:test");
+const { test, afterEach } = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -15,13 +15,17 @@ const matarReal = (f) => escada.matarArvore(f);
 // O orquestrador com paralelismo só roda no Windows (Job Object); fora dele `chamarComando` recusa (testado abaixo).
 // Para exercitar o resto da lógica em Linux (CI), `chamar` injeta um lançador de shell em grupo próprio, com a morte
 // do grupo no lugar do Job Object. No Windows passa direto para o código real.
+// Processos que os testes deixam vivos de propósito (matar recusado): encerrados de verdade ao fim de cada teste.
+const rastreados = new Set();
+afterEach(() => { for (const pid of rastreados) matarGrupo(pid); rastreados.clear(); });
+const rastrear = (matar) => (f) => { rastreados.add(f.pid); return matar(f); };
 const semente = () => process.platform === "win32" ? {} : {
   plataforma: "win32",
-  lancar: (c, fd) => require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true }),
+  lancar: (c, fd) => { const f = require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true }); rastreados.add(f.pid); return f; },
   matar: (f) => { matarGrupo(f.pid); return true; },
   orfaos: (f) => { matarGrupo(f.pid); return []; },
 };
-const chamar = (comando, opcoes = {}) => escada.chamarComando(comando, opcoes.lancar ? opcoes : { ...semente(), ...opcoes });
+const chamar = (comando, opcoes = {}) => escada.chamarComando(comando, { ...(opcoes.lancar ? {} : semente()), ...opcoes, ...(opcoes.matar ? { matar: rastrear(opcoes.matar) } : {}) });
 const par = require(path.join(RAIZ, "orquestra", "paralelismo.js"));
 const escada = require(path.join(RAIZ, "orquestra", "escada.js"));
 const modos = JSON.parse(fs.readFileSync(path.join(RAIZ, "local", "modos.json"), "utf8"));
@@ -288,6 +292,8 @@ test("modoAtual usa a variável MIXAI_MODO, o arquivo que o modo.ps1 deixa, e ca
 });
 
 const esperar = (ms) => new Promise((ok) => setTimeout(ok, ms));
+// Testes assíncronos que dependem da memória livre do SO: fixa o valor (senão a máquina com pouca RAM dá capacidade 0).
+const comMemoriaAsync = async (gb, corpo) => { const original = os.freemem; os.freemem = () => gb * 1024 ** 3; try { return await corpo(); } finally { os.freemem = original; } };
 const microDe = (id) => ({ id, instrucao: "x", contexto: `contexto de ${id}`, escopo: [`src/${id}.js`], verificar: "true" });
 const arquivosTemp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "esc-")); return { regras: path.join(d, "r.json"), casos: path.join(d, "casos.jsonl"), treino: path.join(d, "t.jsonl"), falhas: path.join(d, "falhas.jsonl"), pendentes: path.join(d, "p.jsonl") }; };
 // O verificador do lote devolve { ok }; devolver só um booleano reprova tudo sem ninguém perceber.
@@ -981,7 +987,7 @@ test("erro fatal do lote cancela também a chamada em andamento a um superior (C
   assert.strictEqual(superiorTerminou, true, "o lote esperou a chamada ao superior terminar antes de lançar o erro");
 });
 
-test("o controle de paralelismo com leitor assíncrono não bloqueia: sem leitura pronta vale 1 (indisponível); com leitura pronta usa o PC parado; leitura velha demais vale 1", async () => {
+test("o controle de paralelismo com leitor assíncrono não bloqueia: sem leitura pronta vale 1 (indisponível); com leitura pronta usa o PC parado; leitura velha demais vale 1", () => comMemoriaAsync(6, async () => {
   let agora = 1e6;
   let leituras = 0;
   const leitor = { lerAsync: async () => { leituras += 1; return { ...PARADO, ociosoSegundos: 900 }; }, ler: () => { throw new Error("o controle não pode usar a leitura que bloqueia"); } };
@@ -998,7 +1004,7 @@ test("o controle de paralelismo com leitor assíncrono não bloqueia: sem leitur
   assert.strictEqual(c2({ agentesLocais: 0 }), 1);
   agora += 10000;
   assert.strictEqual(c2({ agentesLocais: 0 }), 1);
-});
+}));
 
 // --- Verificação como processo; só Windows ------------------------------------------------------------------------
 test("fora do Windows (sem lançador injetado) chamarComando recusa com erro explícito e não executa nada", async () => {
@@ -1018,7 +1024,7 @@ test("verificadorPorComando: processo de verdade (assíncrono, abortável): cód
   const r = await ruim("x");
   assert.strictEqual(r.ok, false);
   assert.match(r.motivo, /faltou X/);
-  const preso = escada.verificadorPorComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { ...semente(), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 });
+  const preso = escada.verificadorPorComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { ...semente(), matar: rastrear(() => false), orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 });
   const ctl = new AbortController();
   setTimeout(() => ctl.abort(), 20);
   await assert.rejects(preso("x", ctl.signal), (erro) => erro.naoConfirmado === true);
@@ -1085,7 +1091,7 @@ test("conferência lenta do job não vira 'tempo máximo' num comando que já ac
   );
 });
 
-test("primeira decisão sem leitura pronta não grava estado; quando a leitura chega a decisão segue o ramo da subida inicial", async () => {
+test("primeira decisão sem leitura pronta não grava estado; quando a leitura chega a decisão segue o ramo da subida inicial", () => comMemoriaAsync(6, async () => {
   const arquivoEstado = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json");
   const leitor = { lerAsync: async () => ({ ...PARADO, ociosoSegundos: 900 }) };
   const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado, relogio: () => 1e6, cacheMs: 1000, modos, config });
@@ -1096,7 +1102,7 @@ test("primeira decisão sem leitura pronta não grava estado; quando a leitura c
   assert.strictEqual(fs.existsSync(arquivoEstado), true, "com leitura pronta o estado é gravado");
   const esperado = decide(PARADO, "noite", null, 1e6);
   assert.strictEqual(alvo, decide({ ...PARADO, ociosoSegundos: 900 }, "noite", null, 1e6).alvo, `como a primeira decisão real (${esperado.alvo})`);
-});
+}));
 
 test("uso-windows.ps1: o PID do Ollama do MixAI vale só com a data de criação batendo, e qualquer amostra sem motor pid_ dá GPU null", () => {
   const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
@@ -1104,13 +1110,14 @@ test("uso-windows.ps1: o PID do Ollama do MixAI vale só com a data de criação
   assert.match(uso, /\$_\.CreationDate\.ToUniversalTime\(\)\.ToString\('o'\) -eq \$partes\[1\]/, "compara a data de criação");
   assert.match(uso, /\$amostrasComPid\.Count -eq \$motores\.amostras/, "todas as amostras precisam ter motor pid_");
   assert.doesNotMatch(uso, /\$viuPid/);
+  assert.match(uso, /\$l\.n -notmatch 'pid_\(\\d\+\)_'\) \{ \$valido = \$false; continue \}/, "motor de GPU fora do formato pid_<n>_ invalida a medida");
   const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
   assert.match(modo, /function Registrar-Ollama/);
   assert.match(modo, /CreationDate\.ToUniversalTime\(\)\.ToString\('o'\)/);
   assert.match(modo, /-PassThru \| ForEach-Object \{ Registrar-Ollama \$_ \}/);
 });
 
-test("com leitura velha (>= cacheMs) o controle nunca SOBE o número de agentes: só mantém ou reduz; com leitura recente sobe", async () => {
+test("com leitura velha (>= cacheMs) o controle nunca SOBE o número de agentes: só mantém ou reduz; com leitura recente sobe", () => comMemoriaAsync(6, async () => {
   let agora = 1e6;
   const leitor = { lerAsync: async () => ({ ...PARADO, ociosoSegundos: 900 }) };
   const arquivoEstado = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json");
@@ -1123,4 +1130,25 @@ test("com leitura velha (>= cacheMs) o controle nunca SOBE o número de agentes:
   await new Promise((r) => setImmediate(r)); // chegou uma leitura nova, agora com 0 ms
   agora += 500;
   assert.ok(controle({ agentesLocais: 1 }) > 1, "leitura recente e PC parado: sobe");
+}));
+
+test("fatal com UM só id sem morte confirmada que a mensagem não cita: o erro lista o id", async () => {
+  // a falha original é do limite/controlador (não cita "a"); a microtarefa a ainda não terminou dentro do prazo
+  const local = (prompt, signal) => new Promise((ok, no) => signal.addEventListener("abort", () => setTimeout(() => no(new Error("abortado")), 400)));
+  let limite = 1;
+  setTimeout(() => { limite = () => { throw new Error("controlador quebrou"); }; }, 60);
+  const erro = await escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: () => (typeof limite === "function" ? limite() : limite), reavaliarMs: 10, tempoParaConfirmarMs: 100, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }).then(() => null, (e) => e);
+  assert.ok(erro, "o lote parou");
+  assert.match(erro.message, /Também não foi confirmada a morte de: a\./);
+});
+
+test("aborto que chega DURANTE a conferência do job conta: a chamada rejeita como abortada, nunca é sucesso", async () => {
+  const { spawn } = require("node:child_process");
+  const lancar = (comando, fd) => spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] });
+  const ctl = new AbortController();
+  const orfaos = () => new Promise((ok) => { setTimeout(() => ctl.abort(), 30); setTimeout(() => ok([]), 150); }); // o aborto vem no meio da conferência
+  await assert.rejects(
+    escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos, matar: () => true })("x", ctl.signal),
+    (erro) => erro.abortada === true,
+  );
 });

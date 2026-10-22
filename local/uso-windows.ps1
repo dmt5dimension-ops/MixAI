@@ -92,7 +92,9 @@ if ($motores -and $motores.amostras -ge 1) {
   $video = @()
   $amostrasComPid = @{}
   foreach ($l in $motores.leituras) {
-    if ($l.n -match 'pid_(\d+)_') { $amostrasComPid[[int]$l.i] = $true }
+    # Qualquer motor de GPU fora do formato pid_<n>_ invalida a medida inteira (null): não dá para saber de quem ele é.
+    if ($l.n -notmatch 'pid_(\d+)_') { $valido = $false; continue }
+    $amostrasComPid[[int]$l.i] = $true
     if ($l.n -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
       if (-not (Test-Numero $l.v)) { $valido = $false; continue }
       $somas[$l.i] += [double]$l.v
