@@ -1,3 +1,0 @@
-# Listas que todo PR acrescenta: mantém as duas metades na mesclagem (git merge; o GitHub web pode ignorar).
-docs/memoria/estado.md merge=union
-orquestra/ESCADA.md merge=union
