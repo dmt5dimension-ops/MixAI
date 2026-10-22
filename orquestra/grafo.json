@@ -102,6 +102,7 @@
         "orquestra/grafo.json",
         "orquestra/ESCADA.md",
         "tests/grafo.test.js",
+        ".gitignore",
         "docs/memoria/"
       ],
       "verificar": null,

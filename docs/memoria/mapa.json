@@ -326,116 +326,124 @@
           "linha": 31
         },
         {
+          "nome": "listaDeTextos",
+          "linha": 41
+        },
+        {
+          "nome": "formaInvalida",
+          "linha": 43
+        },
+        {
           "nome": "carregar",
-          "linha": 40
+          "linha": 57
         },
         {
           "nome": "salvar",
-          "linha": 52
+          "linha": 71
         },
         {
           "nome": "processoVivo",
-          "linha": 64
+          "linha": 83
         },
         {
           "nome": "atualizar",
-          "linha": 79
+          "linha": 98
         },
         {
           "nome": "nome",
-          "linha": 84
+          "linha": 103
         },
         {
           "nome": "geracoes",
-          "linha": 85
+          "linha": 104
         },
         {
           "nome": "idade",
-          "linha": 88
+          "linha": 107
         },
         {
           "nome": "ler",
-          "linha": 90
+          "linha": 109
         },
         {
           "nome": "lerOuErro",
-          "linha": 91
+          "linha": 110
         },
         {
           "nome": "criar",
-          "linha": 92
+          "linha": 111
         },
         {
           "nome": "solta",
-          "linha": 100
+          "linha": 119
         },
         {
           "nome": "pegar",
-          "linha": 140
+          "linha": 159
         },
         {
           "nome": "adicionar",
-          "linha": 146
+          "linha": 165
         },
         {
           "nome": "feita",
-          "linha": 164
+          "linha": 184
         },
         {
           "nome": "prontas",
-          "linha": 166
+          "linha": 186
         },
         {
           "nome": "travadas",
-          "linha": 171
+          "linha": 191
         },
         {
           "nome": "mudar",
-          "linha": 181
+          "linha": 201
         },
         {
           "nome": "iniciar",
-          "linha": 187
+          "linha": 207
         },
         {
           "nome": "revisar",
-          "linha": 195
+          "linha": 215
         },
         {
           "nome": "devolver",
-          "linha": 202
+          "linha": 222
         },
         {
           "nome": "concluir",
-          "linha": 211
+          "linha": 231
         },
         {
           "nome": "falhar",
-          "linha": 217
+          "linha": 237
         },
         {
           "nome": "validar",
-          "linha": 224
+          "linha": 244
         },
         {
           "nome": "visita",
-          "linha": 230
+          "linha": 250
         },
         {
           "nome": "resumo",
-          "linha": 249
+          "linha": 269
         },
         {
           "nome": "opcao",
-          "linha": 256
+          "linha": 276
         },
         {
           "nome": "principal",
-          "linha": 264
+          "linha": 284
         },
         {
           "nome": "virgulas",
-          "linha": 266
+          "linha": 286
         }
       ],
       "exporta": [

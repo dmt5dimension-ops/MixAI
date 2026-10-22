@@ -373,3 +373,22 @@ test("o grafo do repositório existe, é válido e está versionado", () => {
     if (t.estado === "em_andamento" || t.estado === "em_revisao") assert.ok(t.escopo.length > 0, `${t.id} sem escopo`);
   }
 });
+
+test("depende como texto é recusado ao adicionar; arquivo com tarefa em formato errado é recusado já na leitura, sem ser alterado", () => {
+  assert.throws(() => grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", escopo: ["x"], depende: "b" }, AGORA), /depende/);
+  const bom = { id: "a", titulo: "A", estado: "pendente", depende: [], agente: null, escopo: ["x"], verificar: null, tentativas: 0, atualizado: AGORA, resultado: null };
+  for (const [campo, valor] of [["depende", "b"], ["escopo", "x"], ["estado", "quase"], ["titulo", 5], ["id", "outro"], ["agente", "gpt"], ["tentativas", "1"], ["depende", [1]]]) {
+    const arq = tmp();
+    const texto = JSON.stringify({ versao: 1, tarefas: { a: { ...bom, [campo]: valor } } });
+    fs.writeFileSync(arq, texto);
+    assert.throws(() => grafo.carregar(arq), /corrompido/, campo);
+    assert.throws(() => grafo.atualizar(arq, (g) => g), /corrompido/, campo);
+    assert.strictEqual(fs.readFileSync(arq, "utf8"), texto, `${campo}: arquivo intacto`);
+  }
+  assert.strictEqual(grafo.carregar((() => { const arq = tmp(); fs.writeFileSync(arq, JSON.stringify({ versao: 1, tarefas: { a: bom } })); return arq; })()).tarefas.a.id, "a");
+});
+
+test("o grafo real é lido sem erro e o escopo da etapa 6 inclui o .gitignore", () => {
+  const g = grafo.carregar(path.join(RAIZ, "orquestra", "grafo.json"));
+  assert.ok(g.tarefas.etapa6.escopo.includes(".gitignore"));
+});

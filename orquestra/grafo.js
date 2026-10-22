@@ -37,11 +37,30 @@ function comRetentativa(fn, tentativas = 40) {
   }
 }
 
+const estadosValidos = ['pendente', 'em_andamento', 'em_revisao', 'feita', 'falhou'];
+const listaDeTextos = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+// Forma de cada tarefa: o que `prontas`, `travadas` e `validar` assumem. Devolve o primeiro problema, ou null.
+function formaInvalida(g) {
+  for (const [chave, t] of Object.entries(g.tarefas)) {
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return `tarefa ${chave} não é um objeto`;
+    if (t.id !== chave) return `tarefa ${chave} tem id ${JSON.stringify(t.id)}`;
+    if (typeof t.titulo !== 'string' || !t.titulo) return `tarefa ${chave} sem título`;
+    if (!estadosValidos.includes(t.estado)) return `tarefa ${chave} com estado inválido ${JSON.stringify(t.estado)}`;
+    if (!listaDeTextos(t.depende)) return `tarefa ${chave}: depende precisa ser uma lista de ids`;
+    if (!listaDeTextos(t.escopo)) return `tarefa ${chave}: escopo precisa ser uma lista de caminhos`;
+    if (t.agente != null && !agentes.includes(t.agente)) return `tarefa ${chave} com agente inválido ${JSON.stringify(t.agente)}`;
+    if (!Number.isInteger(t.tentativas) || t.tentativas < 0) return `tarefa ${chave}: tentativas inválidas`;
+  }
+  return null;
+}
+
 function carregar(arquivo = padrao) {
   if (!fs.existsSync(arquivo)) return novo();
   try {
     const g = JSON.parse(comRetentativa(() => fs.readFileSync(arquivo, 'utf8')));
     if (g?.versao !== 1 || typeof g.tarefas !== 'object' || g.tarefas === null || Array.isArray(g.tarefas)) throw new Error('formato');
+    const problema = formaInvalida(g);
+    if (problema) throw new Error(problema);
     return g;
   } catch (erro) {
     throw new Error(`grafo corrompido em ${arquivo} (${erro.message}); o arquivo não foi alterado`);
@@ -150,6 +169,7 @@ function adicionar(g, dados, agora = new Date().toISOString()) {
   if (!dados.titulo) throw new Error(`tarefa ${id} precisa de título`);
   if (dados.agente != null && !agentes.includes(dados.agente)) throw new Error(`agente inválido: ${dados.agente} (use ${agentes.join(', ')})`);
   if (!Array.isArray(dados.escopo) || !dados.escopo.length || dados.escopo.some((e) => typeof e !== 'string' || !e.trim())) throw new Error(`tarefa ${id} precisa de escopo (lista de arquivos ou pastas que ela pode mudar)`);
+  if (dados.depende != null && !listaDeTextos(dados.depende)) throw new Error(`tarefa ${id}: depende precisa ser uma lista de ids`);
   const depende = dados.depende || [];
   if (depende.includes(id)) throw new Error(`ciclo: ${id} depende de si mesma`);
   for (const d of depende) if (!g.tarefas[d]) throw new Error(`dependência ${d} não existe`);
