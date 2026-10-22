@@ -35,7 +35,11 @@
         "etapa2"
       ],
       "agente": "codex",
-      "escopo": [],
+      "escopo": [
+        "orquestra/escada.js",
+        "tests/escada.test.js",
+        "orquestra/ESCADA.md"
+      ],
       "verificar": null,
       "tentativas": 0,
       "atualizado": "2026-10-22T00:50:42.341Z",
@@ -49,7 +53,11 @@
         "etapa2"
       ],
       "agente": "claude",
-      "escopo": [],
+      "escopo": [
+        "orquestra/mapa.js",
+        "tests/mapa.test.js",
+        "docs/memoria/"
+      ],
       "verificar": null,
       "tentativas": 0,
       "atualizado": "2026-10-22T00:50:42.369Z",

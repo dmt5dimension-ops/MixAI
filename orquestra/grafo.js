@@ -9,7 +9,14 @@ const limitePadrao = 3;
 
 const novo = () => ({ versao: 1, tarefas: {} });
 const copia = (g) => JSON.parse(JSON.stringify(g));
-const normaliza = (p) => path.posix.normalize(String(p).replace(/\\/g, '/')).replace(/^\.\//, '');
+// Caminho comparável: barras normais, sem ./ nem barra final, minúsculas (o Windows não diferencia) e curinga vira a pasta antes dele.
+const normaliza = (p) => {
+  let c = path.posix.normalize(String(p).replace(/\\/g, '/')).toLowerCase().replace(/^\.\//, '').replace(/\/+$/, '');
+  const i = c.search(/[*?[]/);
+  if (i >= 0) c = c.slice(0, i).replace(/\/?[^/]*$/, '');
+  return c === '.' ? '' : c;
+};
+const sobrepoe = (a, b) => a === b || a === '' || b === '' || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 const lista = (g) => Object.values(g.tarefas);
 
 function carregar(arquivo = padrao) {
@@ -28,6 +35,39 @@ function salvar(arquivo, g) {
   const temp = `${arquivo}.${process.pid}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(g, null, 2) + '\n');
   fs.renameSync(temp, arquivo);
+}
+
+function esperar(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Lê, muda e grava o grafo com o arquivo trancado, para o supervisor e a escada não se atropelarem.
+function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {}) {
+  const trava = `${arquivo}.lock`;
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true });
+  const limite = Date.now() + esperaMs;
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(trava, 'wx'));
+      break;
+    } catch (erro) {
+      if (erro.code !== 'EEXIST') throw erro;
+      let idade = 0;
+      try { idade = Date.now() - fs.statSync(trava).mtimeMs; } catch { continue; }
+      if (idade > velhaMs) { try { fs.rmSync(trava); } catch { /* outro processo já tirou */ } continue; }
+      if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
+      esperar(25);
+    }
+  }
+  try {
+    const novoGrafo = mudanca(carregar(arquivo));
+    const erros = validar(novoGrafo);
+    if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
+    salvar(arquivo, novoGrafo);
+    return novoGrafo;
+  } finally {
+    try { fs.rmSync(trava); } catch { /* já removida */ }
+  }
 }
 
 function pegar(g, id) {
@@ -114,8 +154,8 @@ function validar(g) {
   for (let i = 0; i < andando.length; i++) {
     for (let j = i + 1; j < andando.length; j++) {
       const a = andando[i].escopo.map(normaliza);
-      const comum = andando[j].escopo.map(normaliza).find((p) => a.includes(p));
-      if (comum) erros.push(`escopo sobreposto em ${comum}: ${andando[i].id} e ${andando[j].id} estão em_andamento ao mesmo tempo`);
+      const comum = andando[j].escopo.map(normaliza).find((p) => a.some((q) => sobrepoe(p, q)));
+      if (comum !== undefined) erros.push(`escopo sobreposto (${comum || 'tudo'}): ${andando[i].id} e ${andando[j].id} estão em_andamento ao mesmo tempo`);
     }
   }
   return erros;
@@ -137,23 +177,18 @@ function principal(args) {
   const virgulas = (v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : undefined);
   const [cmd, ...resto] = args;
   const g = carregar(arquivo);
-  const grava = (novoGrafo) => {
-    const erros = validar(novoGrafo);
-    if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
-    salvar(arquivo, novoGrafo);
-  };
   if (cmd === 'add') {
     const agente = opcao(resto, 'agente');
     const depende = virgulas(opcao(resto, 'depende'));
     const escopo = virgulas(opcao(resto, 'escopo'));
     const verificar = opcao(resto, 'verificar');
-    grava(adicionar(g, { id: resto[0], titulo: resto.slice(1).join(' '), agente, depende, escopo, verificar }));
+    atualizar(arquivo, (x) => adicionar(x, { id: resto[0], titulo: resto.slice(1).join(' '), agente, depende, escopo, verificar }));
   } else if (cmd === 'iniciar' && resto.length === 2) {
-    grava(iniciar(g, resto[0], resto[1]));
+    atualizar(arquivo, (x) => iniciar(x, resto[0], resto[1]));
   } else if (cmd === 'concluir' && resto.length >= 1) {
-    grava(concluir(g, resto[0], resto.slice(1).join(' ') || null));
+    atualizar(arquivo, (x) => concluir(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'falhar' && resto.length >= 1) {
-    grava(falhar(g, resto[0], resto.slice(1).join(' ') || null));
+    atualizar(arquivo, (x) => falhar(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'proximas') {
     for (const t of prontas(g)) console.log(`${t.id}  ${t.titulo}${t.agente ? `  (${t.agente})` : ''}`);
   } else if (cmd === 'status') {
@@ -167,7 +202,7 @@ function principal(args) {
   return 0;
 }
 
-module.exports = { novo, carregar, salvar, adicionar, prontas, travadas, iniciar, concluir, falhar, validar, resumo };
+module.exports = { novo, carregar, salvar, atualizar, adicionar, prontas, travadas, iniciar, concluir, falhar, validar, resumo };
 
 if (require.main === module) {
   try {

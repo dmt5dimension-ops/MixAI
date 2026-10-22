@@ -74,6 +74,51 @@ test("validar acusa dependência inexistente, ciclo e escopo sobreposto entre ta
   assert.ok(grafo.validar(d).some((e) => /escopo/.test(e)));
 });
 
+test("escopo sobreposto: pasta contra arquivo, barra final, ./, maiúsculas e curinga contam como conflito", () => {
+  const conflita = (a, b) => {
+    let g = grafo.novo();
+    g = grafo.adicionar(g, { id: "x", titulo: "x", escopo: [a] }, AGORA);
+    g = grafo.adicionar(g, { id: "y", titulo: "y", escopo: [b] }, AGORA);
+    g = grafo.iniciar(grafo.iniciar(g, "x", "codex", AGORA), "y", "claude", AGORA);
+    return grafo.validar(g).some((e) => /escopo/.test(e));
+  };
+  assert.ok(conflita("src", "src/a.js"));
+  assert.ok(conflita("src/", "src/sub/a.js"));
+  assert.ok(conflita("src/a.js", "./src/A.js"));
+  assert.ok(conflita("src\\a.js", "src/a.js"));
+  assert.ok(conflita("src/*.css", "src/a.css"));
+  assert.ok(conflita("docs/memoria/", "docs/memoria/estado.md"));
+  assert.ok(!conflita("src/a.js", "src/ab.js"));
+  assert.ok(!conflita("src", "srcx/a.js"));
+  assert.ok(!conflita("tests/", "docs/"));
+});
+
+test("atualizar trava o arquivo: duas gravações seguidas não perdem nenhuma, e trava velha é ignorada", () => {
+  const arq = tmp();
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA));
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "b", titulo: "B" }, AGORA));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a", "b"]);
+  assert.ok(!fs.existsSync(arq + ".lock"));
+  fs.writeFileSync(arq + ".lock", "99999");
+  const velho = new Date(Date.now() - 120000);
+  fs.utimesSync(arq + ".lock", velho, velho);
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "c", titulo: "C" }, AGORA));
+  assert.strictEqual(Object.keys(grafo.carregar(arq).tarefas).length, 3);
+  fs.writeFileSync(arq + ".lock", "99999");
+  assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 150 }), /travado/);
+  fs.rmSync(arq + ".lock");
+  assert.throws(() => grafo.atualizar(arq, () => { throw new Error("falhou dentro"); }), /falhou dentro/);
+  assert.ok(!fs.existsSync(arq + ".lock"), "a trava tem que ser solta mesmo com erro");
+});
+
+test("processos simultâneos na linha de comando não perdem atualização", async () => {
+  const arq = tmp();
+  const { spawn } = require("node:child_process");
+  const rodar = (id) => new Promise((ok) => spawn(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), "add", id, "Tarefa " + id, "--arquivo", arq]).on("close", ok));
+  await Promise.all(["t1", "t2", "t3", "t4", "t5", "t6"].map(rodar));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ["t1", "t2", "t3", "t4", "t5", "t6"]);
+});
+
 test("adicionar recusa dependência que criaria ciclo", () => {
   let g = exemplo();
   assert.throws(() => grafo.adicionar(g, { id: "d", titulo: "x", depende: ["d"] }, AGORA), /ciclo/);
