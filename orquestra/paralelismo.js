@@ -184,6 +184,9 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
       if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
     } catch { anterior = null; /* primeira vez */ }
     const d = decidir({ leitura: leituraAtual(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
+    // Primeira decisão com leitura assíncrona ainda não pronta: vale 1 agente, mas não grava estado nem guarda cache, para a
+    // leitura que chegar depois seguir o ramo da subida inicial (como se fosse a primeira decisão de verdade).
+    if (leitor.lerAsync && !pronta) return d.alvo;
     try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };

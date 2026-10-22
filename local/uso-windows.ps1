@@ -26,10 +26,12 @@ public static class MixaiOcioso {
 $pidsMeus = @()
 $arquivoOllama = Join-Path $env:TEMP 'mixai-ollama.pid'
 if (Test-Path $arquivoOllama) {
+  $partes = ((Get-Content $arquivoOllama -ErrorAction SilentlyContinue) -join '').Trim().Split('|')
   $raizMeu = 0
-  if ([int]::TryParse(((Get-Content $arquivoOllama -ErrorAction SilentlyContinue) -join '').Trim(), [ref]$raizMeu) -and $raizMeu -gt 0) {
+  if ($partes.Count -eq 2 -and [int]::TryParse($partes[0], [ref]$raizMeu) -and $raizMeu -gt 0) {
     $todos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-    $raizProc = $todos | Where-Object { $_.ProcessId -eq $raizMeu -and $_.Name -eq 'cmd.exe' } | Select-Object -First 1
+    # O PID e a data de criação têm que bater: PID reaproveitado por outro processo faz o arquivo valer como ausente.
+    $raizProc = $todos | Where-Object { $_.ProcessId -eq $raizMeu -and $_.Name -eq 'cmd.exe' -and $_.CreationDate -and $_.CreationDate.ToUniversalTime().ToString('o') -eq $partes[1] } | Select-Object -First 1
     if ($raizProc) {
       $pidsMeus = @($raizMeu)
       do {
@@ -88,17 +90,17 @@ if ($motores -and $motores.amostras -ge 1) {
   $somas = New-Object 'double[]' $motores.amostras
   $valido = $true
   $video = @()
-  $viuPid = $false
+  $amostrasComPid = @{}
   foreach ($l in $motores.leituras) {
-    if ($l.n -match 'pid_(\d+)_') { $viuPid = $true }
+    if ($l.n -match 'pid_(\d+)_') { $amostrasComPid[[int]$l.i] = $true }
     if ($l.n -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
       if (-not (Test-Numero $l.v)) { $valido = $false; continue }
       $somas[$l.i] += [double]$l.v
       if ($l.n -match 'video') { $video += [pscustomobject]@{ i = $l.i; n = $l.n; v = [Math]::Round([double]$l.v, 2) } }
     }
   }
-  # Amostras sem nenhum motor no formato pid_<n>_ não provam que a placa está livre: leitura indisponível ($null), nunca 0.
-  if ($valido -and $viuPid) {
+  # Qualquer amostra sem motor no formato pid_<n>_ (ou nenhuma) não prova que a placa está livre: leitura indisponível ($null), nunca 0.
+  if ($valido -and $amostrasComPid.Count -eq $motores.amostras) {
     $gpuOutros = [Math]::Round([Math]::Min(100, ($somas | Measure-Object -Average).Average), 1)
     $videoAmostras = $motores.amostras
     $videoMotores = $video

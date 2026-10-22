@@ -1044,14 +1044,12 @@ test("superior (Codex/Claude) que devolve naoConfirmado torna o lote FATAL, não
 
 test("o uso-windows.ps1 dá null (não 0) para placa sem motor no formato pid_, e só conta como 'meu' o Ollama registrado pelo MixAI", () => {
   const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
-  assert.match(uso, /\$viuPid/);
-  assert.match(uso, /if \(\$valido -and \$viuPid\)/, "sem nenhum motor pid_ a placa fica null");
+  assert.match(uso, /\$amostrasComPid/);
   assert.doesNotMatch(uso, /\$meus = @\(/, "nada de contar 'meu' pelo nome do processo");
   assert.match(uso, /mixai-ollama\.pid/);
   assert.match(uso, /ParentProcessId/, "meus = o registrado e os descendentes dele");
   const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
   assert.match(modo, /mixai-ollama\.pid/);
-  assert.match(modo, /-PassThru \| ForEach-Object \{ Set-Content \$arquivoOllama \$_\.Id \}/);
 });
 
 test("conferência lenta do job não vira 'tempo máximo' num comando que já acabou, e conferência sem resposta tem prazo próprio", async () => {
@@ -1063,4 +1061,29 @@ test("conferência lenta do job não vira 'tempo máximo' num comando que já ac
     escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: () => new Promise(() => {}), prazoDeFechamentoMs: 150 })("x"),
     (erro) => erro.naoConfirmado === true,
   );
+});
+
+test("primeira decisão sem leitura pronta não grava estado; quando a leitura chega a decisão segue o ramo da subida inicial", async () => {
+  const arquivoEstado = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json");
+  const leitor = { lerAsync: async () => ({ ...PARADO, ociosoSegundos: 900 }) };
+  const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado, relogio: () => 1e6, cacheMs: 1000, modos, config });
+  assert.strictEqual(controle({ agentesLocais: 0 }), 1, "sem leitura pronta: 1 agente");
+  assert.strictEqual(fs.existsSync(arquivoEstado), false, "nada de estado gravado sem leitura");
+  await new Promise((r) => setImmediate(r));
+  const alvo = controle({ agentesLocais: 1 }); // a mesma hora: sem cache da decisão sem leitura
+  assert.strictEqual(fs.existsSync(arquivoEstado), true, "com leitura pronta o estado é gravado");
+  const esperado = decide(PARADO, "noite", null, 1e6);
+  assert.strictEqual(alvo, decide({ ...PARADO, ociosoSegundos: 900 }, "noite", null, 1e6).alvo, `como a primeira decisão real (${esperado.alvo})`);
+});
+
+test("uso-windows.ps1: o PID do Ollama do MixAI vale só com a data de criação batendo, e qualquer amostra sem motor pid_ dá GPU null", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /Split\('\|'\)/, "arquivo tem PID|data de criação");
+  assert.match(uso, /\$_\.CreationDate\.ToUniversalTime\(\)\.ToString\('o'\) -eq \$partes\[1\]/, "compara a data de criação");
+  assert.match(uso, /\$amostrasComPid\.Count -eq \$motores\.amostras/, "todas as amostras precisam ter motor pid_");
+  assert.doesNotMatch(uso, /\$viuPid/);
+  const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
+  assert.match(modo, /function Registrar-Ollama/);
+  assert.match(modo, /CreationDate\.ToUniversalTime\(\)\.ToString\('o'\)/);
+  assert.match(modo, /-PassThru \| ForEach-Object \{ Registrar-Ollama \$_ \}/);
 });

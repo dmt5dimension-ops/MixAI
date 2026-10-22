@@ -31,7 +31,12 @@ $log = "$env:LOCALAPPDATA\Ollama\mixai-servidor.log"
 # O PID do cmd que sobe o servidor fica registrado: só esse processo e os que descendem dele são "do MixAI" para o uso-windows.ps1.
 $arquivoOllama = Join-Path $env:TEMP 'mixai-ollama.pid'
 Remove-Item $arquivoOllama -Force -ErrorAction SilentlyContinue
-Start-Process cmd -ArgumentList '/c', "`"`"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe`"", 'serve', "2> `"$log`"`"" -WindowStyle Hidden -PassThru | ForEach-Object { Set-Content $arquivoOllama $_.Id }
+# Grava "PID|data de criação": o PID sozinho pode ser reaproveitado pelo Windows; o uso-windows.ps1 compara os dois.
+function Registrar-Ollama($processo) {
+  $c = Get-CimInstance Win32_Process -Filter "ProcessId=$($processo.Id)" -ErrorAction SilentlyContinue
+  if ($c -and $c.CreationDate) { Set-Content $arquivoOllama ("{0}|{1}" -f $processo.Id, $c.CreationDate.ToUniversalTime().ToString('o')) }
+}
+Start-Process cmd -ArgumentList '/c', "`"`"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe`"", 'serve', "2> `"$log`"`"" -WindowStyle Hidden -PassThru | ForEach-Object { Registrar-Ollama $_ }
 for ($i = 0; $i -lt 30 -and -not (Get-Process ollama -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
 Start-Sleep -Seconds 3
 
