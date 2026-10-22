@@ -17,10 +17,15 @@ test("toda regra salva é bem formada e confirmada, com palavras-chave específi
   }
 });
 
-test("a regra do bloco de teste vale para tarefas de 'escreva um bloco de teste' e não para outras", () => {
+test("a regra teste-mesmo-arquivo só dispara para tarefas sobre caminhos que são o mesmo arquivo", () => {
   const regra = regras.find((r) => r.id === "teste-mesmo-arquivo");
   assert.ok(regra, "falta a regra teste-mesmo-arquivo (aprendida na rodada 2 do Qwen)");
-  const tarefaDeTeste = "Escreva UM bloco de teste no formato test(...) usando assert. Caso a cobrir: caminhos equivalentes.";
-  assert.deepStrictEqual(escolherRegras(regras, tarefaDeTeste).map((r) => r.id), ["teste-mesmo-arquivo"]);
-  assert.deepStrictEqual(escolherRegras(regras, "Converta a data 21/10/2026 para ISO."), []);
+  const ids = (tarefa) => escolherRegras(regras, tarefa).map((r) => r.id);
+  // positivos: a tarefa em que ela foi aprendida e uma variação
+  assert.deepStrictEqual(ids("Escreva UM bloco de teste. Caso: aplicarResposta aceita './src/A.js' (mesmo arquivo com ./ e maiúscula)."), ["teste-mesmo-arquivo"]);
+  assert.deepStrictEqual(ids("Teste que dois caminhos equivalentes gravam no mesmo lugar."), ["teste-mesmo-arquivo"]);
+  // negativos: tarefas de teste ou de aplicarResposta que NÃO são sobre o mesmo arquivo
+  assert.deepStrictEqual(ids("Escreva um bloco de teste para converter datas."), []);
+  assert.deepStrictEqual(ids("Implemente aplicarResposta."), []);
+  assert.deepStrictEqual(ids("Converta a data 21/10/2026 para ISO."), []);
 });

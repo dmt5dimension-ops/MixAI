@@ -4,10 +4,8 @@
     {
       "id": "teste-mesmo-arquivo",
       "palavras": [
-        "bloco de teste",
-        "aplicarResposta",
-        "conferirAlterados",
-        "mesmo arquivo"
+        "mesmo arquivo",
+        "caminhos equivalentes"
       ],
       "regra": "Use apenas as funções e módulos já disponíveis, respeitando exatamente o formato de saída pedido. Para provar que dois caminhos representam o mesmo arquivo, crie o destino esperado antes da chamada e verifique que seu conteúdo mudou e que nenhum segundo arquivo apareceu.",
       "exemplo": {
