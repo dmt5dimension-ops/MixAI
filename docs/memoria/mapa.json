@@ -1,6 +1,37 @@
 {
   "arquivos": [
     {
+      "arquivo": ".claude/hooks/canal.js",
+      "descricao": "Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:",
+      "funcoes": [
+        {
+          "nome": "ultimoAutor",
+          "linha": 11
+        },
+        {
+          "nome": "decidirParar",
+          "linha": 27
+        },
+        {
+          "nome": "fimDoCanal",
+          "linha": 36
+        },
+        {
+          "nome": "lerEntrada",
+          "linha": 40
+        },
+        {
+          "nome": "principal",
+          "linha": 44
+        }
+      ],
+      "exporta": [
+        "ultimoAutor",
+        "decidirParar",
+        "fimDoCanal"
+      ]
+    },
+    {
       "arquivo": "ferramentas/instalar.ps1",
       "descricao": "Instala as ferramentas do orquestrador no Windows 11.",
       "funcoes": [
@@ -59,6 +90,11 @@
     {
       "arquivo": "local/criar-apelido.ps1",
       "descricao": "Aponta o nome fixo \"mixai-local\" para o modelo do modo (não baixa nem copia nada).",
+      "funcoes": []
+    },
+    {
+      "arquivo": "local/iniciar-vigia.ps1",
+      "descricao": "Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.",
       "funcoes": []
     },
     {
@@ -480,6 +516,21 @@
       "exporta": []
     },
     {
+      "arquivo": "tests/hooks-canal.test.js",
+      "descricao": "Trava obrigatória do canal Claude↔Codex no Claude Code: hooks que mostram o canal ao começar a sessão",
+      "funcoes": [
+        {
+          "nome": "tmp",
+          "linha": 14
+        },
+        {
+          "nome": "doGit",
+          "linha": 80
+        }
+      ],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/instalar.test.js",
       "descricao": "Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:",
       "funcoes": [
@@ -545,6 +596,10 @@
         {
           "nome": "rodar",
           "linha": 150
+        },
+        {
+          "nome": "prepararComGhFalso",
+          "linha": 164
         }
       ],
       "exporta": []
@@ -647,6 +702,12 @@
       ]
     },
     {
+      "o_que": "O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho",
+      "testes": [
+        "tests/modelo-local.test.js"
+      ]
+    },
+    {
       "o_que": "Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js)",
       "testes": [
         "tests/papeis.test.js"
@@ -666,6 +727,18 @@
     },
     {
       "o_que": "Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`)",
+      "testes": [
+        "tests/preparar-repo.test.js"
+      ]
+    },
+    {
+      "o_que": "Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`)",
+      "testes": [
+        "tests/hooks-canal.test.js"
+      ]
+    },
+    {
+      "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
       ]

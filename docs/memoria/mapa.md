@@ -4,6 +4,12 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 
 ## Arquivos
 
+- `.claude/hooks/canal.js` — Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:
+  - `ultimoAutor` (linha 11)
+  - `decidirParar` (linha 27)
+  - `fimDoCanal` (linha 36)
+  - `lerEntrada` (linha 40)
+  - `principal` (linha 44)
 - `ferramentas/instalar.ps1` — Instala as ferramentas do orquestrador no Windows 11.
   - `Write-Passo` (linha 15)
   - `Write-Ok` (linha 16)
@@ -18,6 +24,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `Aplicar-ComandoTeste` (linha 28)
   - `Copiar-Arquivo` (linha 38)
 - `local/criar-apelido.ps1` — Aponta o nome fixo "mixai-local" para o modelo do modo (não baixa nem copia nada).
+- `local/iniciar-vigia.ps1` — Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.
 - `local/modo.ps1` — Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).
 - `local/rodar-local.js` — Porta de entrada única para o modelo local: a escada e o chamar.js passam por aqui.
   - `minimoGB` (linha 23)
@@ -110,6 +117,9 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `rodar` (linha 12)
   - `git` (linha 14)
   - `mudar` (linha 54)
+- `tests/hooks-canal.test.js` — Trava obrigatória do canal Claude↔Codex no Claude Code: hooks que mostram o canal ao começar a sessão
+  - `tmp` (linha 14)
+  - `doGit` (linha 80)
 - `tests/instalar.test.js` — Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:
   - `achar` (linha 51)
   - `rodarComFalsos` (linha 57)
@@ -124,6 +134,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `cobre` (linha 22)
   - `titulos` (linha 44)
   - `rodar` (linha 150)
+  - `prepararComGhFalso` (linha 164)
 - `tests/protecao-local.test.js` — Testa as proteções do modelo local: nunca cair para o processador, conferir a memória
   - `pastaTemporaria` (linha 16)
   - `ollamaFalso` (linha 21)
@@ -146,10 +157,13 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Trava de escopo do PR — `tests/trava-de-escopo.test.js`
 - Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows) — `tests/trava-de-escopo.test.js`
 - Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) — `tests/modelo-local.test.js`
+- O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho — `tests/modelo-local.test.js`
 - Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) — `tests/papeis.test.js`
 - Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
 - Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
 - Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) — `tests/preparar-repo.test.js`
+- Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`) — `tests/hooks-canal.test.js`
+- Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso — `tests/preparar-repo.test.js`
 - Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` — `tests/canal-coordenacao.test.js`
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
