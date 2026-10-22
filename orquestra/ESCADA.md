@@ -56,6 +56,7 @@ node orquestra/escada.js lote plano.json --paralelo 2
 - Cada falha que acabou resolvida vira um caso de regressão em `orquestra/falhas/falhas.jsonl` (resposta certa e o comando que confere). `tests/falhas-escada.test.js` confere para sempre que a resposta certa continua passando. Falha que ninguém resolveu vai para `orquestra/falhas/pendentes.jsonl`, que não entra nos testes.
 - Com `--antagonico`, a resposta só vale se outro agente grande (nunca o que produziu) não achar defeito. O modelo local nunca faz esse papel. Se nenhum outro grande puder conferir (sem cota), a resposta não vale e a tarefa fica em `pendentes.jsonl`.
 
+- **Local sem resposta (memória ou placa):** não é erro do Qwen. O loop não gasta tentativa, não grava falha de regressão e não pede reinstrução ao grande: a tarefa sobe direto para ser resolvida. Só resposta errada de verdade do Qwen conta como falha.
 ## Mapa do código e da memória (etapa 4)
 
 `node orquestra/mapa.js gerar` cria `docs/memoria/mapa.json` e `mapa.md`: cada arquivo `.js`/`.ps1` com a descrição (primeira linha de comentário), as funções com a linha, e a lista do que já funciona e qual teste trava (lida do `estado.md`).

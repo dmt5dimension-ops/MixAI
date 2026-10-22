@@ -249,7 +249,10 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
   for (let t = 1; t <= maxTentativas; t += 1) {
     const saida = await tentar(agentes.local, montarPrompt(instrucao, usadas));
     if (saida === null) {
-      erradas.push({ saida: '', porVerificador: false, motivo: 'o modelo local não respondeu' });
+      // Infraestrutura (sem memória, sem placa, processo caiu): o modelo nem respondeu, então não foi erro dele.
+      // Não gasta tentativa, não vira falha de regressão e o grande não perde tempo reinstruindo: sai do loop
+      // e a tarefa sobe direto (repetir sem memória só repetiria a recusa).
+      break;
     } else {
       const j = await julgar(saida, 'local');
       if (j.ok) return concluir(saida, 'local', t, j.antagonista);

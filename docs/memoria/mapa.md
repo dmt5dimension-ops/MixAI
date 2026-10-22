@@ -76,14 +76,14 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `julgar` (linha 225)
   - `ok` (linha 239)
   - `concluir` (linha 240)
-  - `validarPlano` (linha 286)
-  - `normaliza` (linha 300)
-  - `sobrepoe` (linha 301)
-  - `promptMicro` (linha 306)
-  - `lote` (linha 314)
-  - `exportar` (linha 341)
-  - `principal` (linha 348)
-  - `verificadorDe` (linha 360)
+  - `validarPlano` (linha 289)
+  - `normaliza` (linha 303)
+  - `sobrepoe` (linha 304)
+  - `promptMicro` (linha 309)
+  - `lote` (linha 317)
+  - `exportar` (linha 344)
+  - `principal` (linha 351)
+  - `verificadorDe` (linha 363)
 - `orquestra/mapa.js` — Mapa do código e da memória: onde fica cada função e o que já foi feito.
   - `listar` (linha 10)
   - `descricao` (linha 23)
@@ -121,6 +121,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `codex` (linha 370)
   - `local` (linha 389)
   - `local` (linha 407)
+  - `local` (linha 427)
 - `tests/falhas-escada.test.js` — Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta
   - `rodar` (linha 16)
 - `tests/guarda-testes.test.js` — Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.
@@ -181,5 +182,6 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
 - Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
+- Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto — `tests/escada.test.js`
 - Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo — `tests/aplicar.test.js`
 - Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) — `tests/mapa.test.js`
