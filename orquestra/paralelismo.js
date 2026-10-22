@@ -272,7 +272,7 @@ function inicioDoProcesso(pid) {
   } catch { return null; }
 }
 
-function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao }) {
+function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao, reintentoMs = 1000 }) {
   const id = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
   const comTrava = criarTrava(`${pasta}.trava`);
   const meu = path.join(pasta, `${id}.json`);
@@ -286,40 +286,54 @@ function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao }) {
   };
   const valida = (r) => {
     if (!r || !Number.isInteger(r.reservado) || r.reservado < 0 || !numeroValido(r.em, 0)) return false;
-    if (Array.isArray(r.retidos) && r.ate !== undefined) {
-      // Reserva retida por morte não confirmada: com Job conhecido vale até o Job estar vazio ou não existir mais (vivo ou
-      // inconclusivo NÃO expira); sem Job, até os PIDs retidos morrerem. Só quando não há nada para consultar vale até `ate`.
-      const jobs = Array.isArray(r.jobs) ? r.jobs.filter((j) => typeof j === 'string' && j) : [];
-      if (jobs.length) return jobs.some((j) => { try { return jobVivo(j) !== false; } catch { return true; } });
-      const pids = r.retidos.filter(Number.isInteger);
-      if (pids.length) return pids.some((pid, i) => donoVivo(pid, Array.isArray(r.inicios) ? r.inicios[i] : undefined));
-      return numeroValido(r.ate, 0) && relogio() <= r.ate;
+    if (Array.isArray(r.itens) && r.ate !== undefined) {
+      // Reserva retida por morte não confirmada: cada item (um processo sem morte confirmada) é avaliado pelo PRÓPRIO
+      // identificador, e a reserva só cai quando TODOS estiverem resolvidos. Item com Job vale até o Job estar vazio ou não
+      // existir (vivo ou inconclusivo NÃO expira); item só com PID, até o processo morrer (PID + data de criação); item sem
+      // identificador não tem o que consultar e vale até `ate` (RETENCAO_MS).
+      return r.itens.some((item) => {
+        if (item && typeof item.job === 'string' && item.job) { try { return jobVivo(item.job) !== false; } catch { return true; } }
+        if (item && Number.isInteger(item.pid)) return donoVivo(item.pid, item.inicio);
+        return numeroValido(r.ate, 0) && relogio() <= r.ate;
+      });
     }
     // Reserva de lote: vale enquanto o dono estiver vivo (o batimento `em` serve só para dados, nunca expira a reserva).
     return Number.isInteger(r.pid) && donoVivo(r.pid, r.inicio);
   };
-  // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade), `pids` e `jobs`, mantém essa quantidade de vagas retida:
-  // a retenção é gravada (por rename atômico sobre a própria reserva, dentro da trava) ANTES de qualquer remoção, e se a gravação
-  // falhar a reserva NÃO é apagada (continua valendo até expirar).
-  const liberar = ({ naoConfirmados = 0, pids = [], jobs = [] } = {}) => {
-    if (retido) return;
+  // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade) e `itens` ({ pid, job } de cada processo sem morte
+  // confirmada), mantém essa quantidade de vagas retida: a retenção é gravada (rename atômico sobre a própria reserva, dentro da
+  // trava) ANTES de qualquer remoção. Se a gravação falhar, a reserva NÃO é apagada, o processo continua tentando em segundo
+  // plano (o timer segura o Node vivo, então o dono não morre e a reserva comum não cai) e `liberar` lança `retencaoNaoGravada`.
+  let pendente = null;
+  const liberar = ({ naoConfirmados = 0, itens = [] } = {}) => {
+    if (retido || pendente) return;
     if (naoConfirmados > 0) {
+      const lista = (itens.length ? itens : Array.from({ length: naoConfirmados }, () => ({}))).map((i) => ({
+        ...(typeof i?.jobNome === 'string' && i.jobNome ? { job: i.jobNome } : {}),
+        ...(Number.isInteger(i?.pid) ? { pid: i.pid, inicio: inicioDoProcesso(i.pid) } : {}),
+      }));
       const gravar = () => {
         fs.mkdirSync(pasta, { recursive: true });
         const temporario = `${meu}.tmp`;
-        fs.writeFileSync(temporario, JSON.stringify({ reservado: naoConfirmados, retidos: pids.filter(Number.isInteger), inicios: pids.filter(Number.isInteger).map((x) => inicioDoProcesso(x)), jobs: jobs.filter((j) => typeof j === 'string' && j), ate: relogio() + RETENCAO_MS, em: relogio() }), { mode: 0o600 });
+        fs.writeFileSync(temporario, JSON.stringify({ reservado: naoConfirmados, itens: lista, ate: relogio() + RETENCAO_MS, em: relogio() }), { mode: 0o600 });
         fs.renameSync(temporario, meu);
         return true;
       };
-      let gravou = false;
-      try { gravou = comTrava(gravar) === true; } catch { gravou = false; }
-      if (!gravou) { try { gravou = gravar(); } catch { gravou = false; } } // sem trava: o rename continua atômico
-      retido = true; // gravada ou não, a reserva existente NUNCA é apagada aqui; a retenção/validade decide quando ela some
-      return;
+      const tentar = () => {
+        for (let i = 0; i < 3; i++) {
+          try { if (comTrava(gravar) === true) return true; } catch { /* tenta de novo */ }
+          try { if (gravar()) return true; } catch { /* sem trava e sem gravar */ }
+          esperaCurta(50);
+        }
+        return false;
+      };
+      if (tentar()) { retido = true; return; }
+      pendente = setInterval(() => { if (tentar()) { clearInterval(pendente); pendente = null; retido = true; } }, reintentoMs);
+      throw Object.assign(new Error('não consegui gravar a retenção de vagas dos processos sem morte confirmada; este processo continua tentando e não encerra até gravar (encerre os processos do modelo local à mão)'), { retencaoNaoGravada: true });
     }
     try { fs.unlinkSync(meu); } catch { /* não havia */ }
   };
-  process.once('exit', () => liberar());
+  process.once('exit', () => { if (!pendente) liberar(); });
   // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama não concede vaga nova).
   const reservar = ({ alvo, agentes, teto }) => comTrava(() => {
     fs.mkdirSync(pasta, { recursive: true });
@@ -342,9 +356,9 @@ function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao }) {
 }
 
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
-function criarControle({ jobVivo, leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, pastaLotes = `${arquivoEstado}.lotes`, modos, config, aoDecidir } = {}) {
+function criarControle({ jobVivo, reintentoRetencaoMs, leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, pastaLotes = `${arquivoEstado}.lotes`, modos, config, aoDecidir } = {}) {
   let ultimo = null;
-  const reserva = criarReserva({ pasta: pastaLotes, relogio, jobVivo });
+  const reserva = criarReserva({ pasta: pastaLotes, relogio, jobVivo, reintentoMs: reintentoRetencaoMs });
   // Leitor assíncrono: a leitura roda em segundo plano e a decisão usa a última pronta. Sem leitura recente (a primeira
   // vez, ou uma que demorou demais) vale "indisponível" = usando o PC = 1 agente.
   let pronta = null;
@@ -408,7 +422,7 @@ function criarControle({ jobVivo, leitor = leitorWindows(), modo = modoAtual(), 
   return controle;
 }
 
-module.exports = { inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
+module.exports = { jobVivoPadrao, inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
 
 // Saída manual: apaga todas as reservas e retenções de vagas (use só se tiver certeza de que nenhum lote nem agente está rodando).
 function limparReservas(pasta = `${path.join(os.tmpdir(), 'mixai-paralelismo.json')}.lotes`) {
