@@ -292,9 +292,13 @@ function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao, reintentoMs = 1
       // existir (vivo ou inconclusivo NÃO expira); item só com PID, até o processo morrer (PID + data de criação); item sem
       // identificador não tem o que consultar e vale até `ate` (RETENCAO_MS).
       return r.itens.some((item) => {
-        if (item && typeof item.job === 'string' && item.job) { try { return jobVivo(item.job) !== false; } catch { return true; } }
-        if (item && Number.isInteger(item.pid)) return donoVivo(item.pid, item.inicio);
-        return numeroValido(r.ate, 0) && relogio() <= r.ate;
+        const temJob = item && typeof item.job === 'string' && item.job;
+        const temPid = item && Number.isInteger(item.pid);
+        if (!temJob && !temPid) return numeroValido(r.ate, 0) && relogio() <= r.ate;
+        // O item só se resolve quando TODA a evidência dele resolve: o Job ainda pode não ter sido criado (FECHADO) enquanto o
+        // wrapper (PID) já está vivo, então Job inexistente sozinho não basta se o PID continua vivo.
+        if (temJob) { let vivo = true; try { vivo = jobVivo(item.job) !== false; } catch { vivo = true; } if (vivo) return true; }
+        return temPid ? donoVivo(item.pid, item.inicio) : false;
       });
     }
     // Reserva de lote: vale enquanto o dono estiver vivo (o batimento `em` serve só para dados, nunca expira a reserva).

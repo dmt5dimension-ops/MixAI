@@ -1725,3 +1725,19 @@ test("chamada ainda pendente quando o lote desiste de esperar: a retenção guar
   try { filho.kill("SIGKILL"); } catch { /* já foi */ }
   assert.ok(recebido?.itens?.some((i) => i.pid === filho.pid && /^Local\\MixAI-/.test(i.jobNome)), JSON.stringify(recebido));
 });
+
+test("item com Job E PID: Job ainda inexistente (wrapper vivo antes de criá-lo) NÃO resolve o item; só quando o PID também morreu", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "antes-job-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const grava = (pid) => fs.writeFileSync(path.join(pasta, "antes.json"), JSON.stringify({ reservado: 1, itens: [{ job: "Local\\MixAI-ainda-nao-existe", pid, inicio: pid === process.pid ? par.inicioDoProcesso(process.pid) : undefined }], ate: agora.v + 600000, em: agora.v }));
+  const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo: () => false }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
+  grava(process.pid);
+  assert.strictEqual(alvo(), teto - 1, "Job FECHADO mas o PID está vivo: segue retida");
+  assert.ok(fs.existsSync(path.join(pasta, "antes.json")));
+  grava(2147483000);
+  assert.strictEqual(alvo(), teto, "Job inexistente e PID morto: a vaga volta");
+}));
