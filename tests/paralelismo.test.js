@@ -755,7 +755,10 @@ test("o wrapper do Job Object: KILL_ON_JOB_CLOSE sem escape, entra no job ANTES 
   assert.match(ps, /LimitFlags = 0x2000/, "KILL_ON_JOB_CLOSE");
   assert.deepStrictEqual([...ps.matchAll(/LimitFlags = (0x[0-9a-f]+)/g)].map((m) => m[1]), ["0x2000"], "nenhuma outra flag: sem permissão de escapar do job");
   assert.match(ps, /AssignProcessToJobObject\(job, GetCurrentProcess\(\)\)/, "o próprio wrapper entra no job");
-  assert.ok(ps.indexOf("[MixJob]::Entrar()") < ps.indexOf("[System.Diagnostics.Process]::Start"), "entra no job antes de criar o comando");
+  const entrou = ps.search(/\[MixJob\]::Entrar\(\$env:MIXAI_JOB\)/);
+  const iniciou = ps.search(/\[System\.Diagnostics\.Process\]::Start/);
+  assert.ok(entrou >= 0 && iniciou >= 0, "as duas chamadas existem no wrapper (indexOf -1 não pode passar)");
+  assert.ok(entrou < iniciou, "entra no job antes de criar o comando");
   assert.match(ps, /CreateJobObject\(IntPtr\.Zero, nome\)/, "alça do job sem atributos de herança: o comando não herda a alça");
   assert.match(ps, /exit 125/, "falha ao criar o job: sai sem rodar o comando");
   assert.match(ps, /\$env:MIXAI_COMANDO/);
@@ -821,6 +824,23 @@ test("Windows de verdade: abortar mata o neto (o comando roda dentro do Job Obje
   let vivo = true;
   for (let i = 0; i < 100 && vivo; i++) { try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { vivo = false; } }
   assert.strictEqual(vivo, false, "o neto morreu junto com o job");
+});
+
+test("Windows de verdade: o pai SAI deixando o neto desacoplado vivo, e a conferência do job mata o neto (chamada termina normalmente)", async () => {
+  if (process.platform !== "win32") return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "job-pai-sai-"));
+  const marca = path.join(dir, "pid");
+  const netoJs = path.join(dir, "neto.js");
+  const paiJs = path.join(dir, "pai.js");
+  fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},60000);`);
+  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true }).unref(); setTimeout(()=>process.exit(0), 600);`);
+  const resposta = await chamar(`"${process.execPath}" "${paiJs}"`)("x");
+  assert.strictEqual(resposta, "");
+  assert.ok(fs.existsSync(marca), "o neto chegou a nascer");
+  const pid = Number(fs.readFileSync(marca, "utf8"));
+  let vivo = true;
+  for (let i = 0; i < 100 && vivo; i++) { try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { vivo = false; } }
+  assert.strictEqual(vivo, false, "o neto desacoplado morreu mesmo com o pai já fora");
 });
 
 // --- Contrato de parada: prazo do 'close', saída sem fim, erro depois do spawn, erro do controlador ------------------
@@ -1088,4 +1108,19 @@ test("uso-windows.ps1: o PID do Ollama do MixAI vale só com a data de criação
   assert.match(modo, /function Registrar-Ollama/);
   assert.match(modo, /CreationDate\.ToUniversalTime\(\)\.ToString\('o'\)/);
   assert.match(modo, /-PassThru \| ForEach-Object \{ Registrar-Ollama \$_ \}/);
+});
+
+test("com leitura velha (>= cacheMs) o controle nunca SOBE o número de agentes: só mantém ou reduz; com leitura recente sobe", async () => {
+  let agora = 1e6;
+  const leitor = { lerAsync: async () => ({ ...PARADO, ociosoSegundos: 900 }) };
+  const arquivoEstado = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json");
+  const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 1000, modos, config });
+  assert.strictEqual(controle({ agentesLocais: 1 }), 1, "sem leitura pronta");
+  await new Promise((r) => setImmediate(r)); // a leitura chegou em `agora`
+  agora += 1500; // a amostra tem 1500 ms: velha para subir (cacheMs = 1000), ainda válida para manter
+  assert.strictEqual(controle({ agentesLocais: 1 }), 1, "amostra velha: mantém, não sobe");
+  assert.strictEqual(fs.existsSync(arquivoEstado), false, "e não grava estado de subida");
+  await new Promise((r) => setImmediate(r)); // chegou uma leitura nova, agora com 0 ms
+  agora += 500;
+  assert.ok(controle({ agentesLocais: 1 }) > 1, "leitura recente e PC parado: sobe");
 });

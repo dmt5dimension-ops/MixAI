@@ -220,7 +220,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
       try { fs.rmSync(entrada, { force: true }); } catch {
-        if (tentativa < 5) { const t = setTimeout(() => apagarEntrada(tentativa + 1), 1000); t.unref?.(); }
+        if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
         else console.error(`não consegui apagar o arquivo temporário do prompt (apague à mão): ${entrada}`);
       }
     };

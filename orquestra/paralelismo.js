@@ -165,13 +165,15 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
   // vez, ou uma que demorou demais) vale "indisponível" = usando o PC = 1 agente.
   let pronta = null;
   let lendo = false;
+  let idadeDaLeitura = 0; // só o leitor assíncrono tem idade; a leitura síncrona é sempre do momento
   const leituraAtual = () => {
     if (!leitor.lerAsync) return leitor.ler();
     if (!lendo) {
       lendo = true;
       Promise.resolve().then(() => leitor.lerAsync()).then((l) => { pronta = { em: relogio(), leitura: l }; }, () => { pronta = { em: relogio(), leitura: null }; }).finally(() => { lendo = false; });
     }
-    return pronta && relogio() - pronta.em < 4 * cacheMs ? pronta.leitura : null;
+    idadeDaLeitura = pronta ? relogio() - pronta.em : Infinity;
+    return pronta && idadeDaLeitura < 4 * cacheMs ? pronta.leitura : null;
   };
   return ({ agentesLocais = 0 } = {}) => {
     // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente.
@@ -187,6 +189,9 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     // Primeira decisão com leitura assíncrona ainda não pronta: vale 1 agente, mas não grava estado nem guarda cache, para a
     // leitura que chegar depois seguir o ramo da subida inicial (como se fosse a primeira decisão de verdade).
     if (leitor.lerAsync && !pronta) return d.alvo;
+    // Para SUBIR o número de agentes a leitura tem que ser recente (menos de `cacheMs`); com amostra velha só mantém ou reduz
+    // (o piso de 1 agente continua valendo) e o estado de subida não é gravado.
+    if (leitor.lerAsync && idadeDaLeitura >= cacheMs && d.alvo > Math.max(agentesLocais, 1)) return Math.max(agentesLocais, 1);
     try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };
