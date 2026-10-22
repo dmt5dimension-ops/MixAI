@@ -87,6 +87,26 @@ test("o vigia corrige a prioridade do processo do modelo", () => {
   assert.match(script, /vigia-prioridade\.ps1/);
 });
 
+test("o vigia inicia quando o caminho do projeto tem espaços", async () => {
+  if (process.platform !== "win32") return;
+  const iniciar = path.join(PASTA, "iniciar-vigia.ps1");
+  const modo = fs.readFileSync(path.join(PASTA, "modo.ps1"), "utf8");
+  assert.match(modo, /iniciar-vigia\.ps1/);
+  assert.ok(fs.existsSync(iniciar), "falta o lançador usado pelo modo.ps1");
+
+  const pastaComEspacos = fs.mkdtempSync(path.join(os.tmpdir(), "mixai vigia "));
+  const falso = path.join(pastaComEspacos, "vigia-prioridade.ps1");
+  const registro = path.join(pastaComEspacos, "iniciado.txt");
+  fs.writeFileSync(falso, `param([string]$Prioridade)\n[IO.File]::WriteAllText('${registro.replaceAll("'", "''")}', $Prioridade)\n`);
+  const r = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", iniciar,
+    "-ScriptVigia", falso, "-Prioridade", "BelowNormal"], { encoding: "utf8", timeout: 10000 });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  for (let i = 0; i < 40 && !fs.existsSync(registro); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.strictEqual(fs.readFileSync(registro, "utf8"), "BelowNormal");
+});
+
 test("ao reiniciar, o script fecha também o processo do modelo", () => {
   // Bug visto: o llama-server antigo ficava vivo segurando a placa de vídeo e o modelo novo não carregava.
   const script = fs.readFileSync(path.join(PASTA, "modo.ps1"), "utf8");
