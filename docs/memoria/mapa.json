@@ -307,39 +307,39 @@
         },
         {
           "nome": "semTextos",
-          "linha": 30
+          "linha": 31
         },
         {
           "nome": "lerArquivo",
-          "linha": 37
+          "linha": 74
         },
         {
           "nome": "lerFeitos",
-          "linha": 64
-        },
-        {
-          "nome": "construir",
-          "linha": 79
-        },
-        {
-          "nome": "emTexto",
-          "linha": 83
-        },
-        {
-          "nome": "gerar",
-          "linha": 94
-        },
-        {
-          "nome": "conferir",
           "linha": 102
         },
         {
+          "nome": "construir",
+          "linha": 117
+        },
+        {
+          "nome": "emTexto",
+          "linha": 121
+        },
+        {
+          "nome": "gerar",
+          "linha": 132
+        },
+        {
+          "nome": "conferir",
+          "linha": 140
+        },
+        {
           "nome": "buscar",
-          "linha": 112
+          "linha": 150
         },
         {
           "nome": "principal",
-          "linha": 123
+          "linha": 161
         }
       ],
       "exporta": [

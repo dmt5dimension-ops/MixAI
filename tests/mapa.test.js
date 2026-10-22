@@ -81,6 +81,31 @@ test("chamada ou comentário cujo texto menciona function não vira declaração
   assert.deepStrictEqual(f.funcoes.map((x) => x.nome), ["real"]);
 });
 
+test("comentário de bloco, template de várias linhas e regex não viram função nem exports", () => {
+  const raiz = repoFalso();
+  fs.writeFileSync(path.join(raiz, "src/blocos.js"), [
+    "function real() {}",
+    "/* function falsa1() {}",
+    "   function falsa2() {} */",
+    "const t = `",
+    "function falsa3() {}",
+    "module.exports = { falso };",
+    "`;",
+    "const r = /\"function falsa4() {/;",
+    "const depois = /[/]\\//.test(t);",
+    "function outraReal() {}",
+    "/*",
+    "module.exports = { falso2 };",
+    "*/",
+    "module.exports = { real, outraReal };",
+    "grava(\"a.js\", \"function falsa5(a) {\\n}\");",
+    "",
+  ].join("\n"));
+  const f = mapa.construir(raiz).arquivos.find((a) => a.arquivo === "src/blocos.js");
+  assert.deepStrictEqual(f.funcoes.map((x) => [x.nome, x.linha]), [["real", 1], ["outraReal", 10]]);
+  assert.deepStrictEqual(f.exporta, ["real", "outraReal"]);
+});
+
 test("o mapa guarda o que já foi feito e qual teste trava cada coisa", () => {
   const m = mapa.construir(repoFalso());
   assert.deepStrictEqual(m.feitos, [

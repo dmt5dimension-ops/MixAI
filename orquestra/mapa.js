@@ -26,17 +26,56 @@ function descricao(linhas, marca) {
   return l.startsWith(marca) ? l.slice(marca.length).trim() : '';
 }
 
-// Esvazia strings e comentários da linha, para que texto dentro deles nunca pareça código.
-function semTextos(linha, js) {
-  if (!js) return linha.replace(/#.*$/, '');
-  return linha
-    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '""')
-    .replace(/\/\/.*$/, '');
+// Esvazia comentários, strings, templates (inclusive de várias linhas) e regex do arquivo inteiro,
+// mantendo as quebras de linha, para que texto dentro deles nunca pareça código.
+function semTextos(texto, js) {
+  if (!js) return texto.replace(/<#[\s\S]*?#>/g, (m) => m.replace(/[^\n]/g, ' ')).replace(/#.*$/gm, '');
+  let saida = '';
+  let ultimo = '';
+  const n = texto.length;
+  for (let i = 0; i < n;) {
+    const c = texto[i];
+    const prox = texto[i + 1];
+    if (c === '/' && prox === '/') {
+      while (i < n && texto[i] !== '\n') i++;
+    } else if (c === '/' && prox === '*') {
+      const fim = texto.indexOf('*/', i + 2);
+      const bloco = texto.slice(i, fim < 0 ? n : fim + 2);
+      saida += bloco.replace(/[^\n]/g, ' ');
+      i += bloco.length;
+    } else if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1;
+      while (j < n && texto[j] !== c && (c === '`' || texto[j] !== '\n')) j += texto[j] === '\\' ? 2 : 1;
+      const lit = texto.slice(i, j + 1);
+      saida += c + lit.slice(1, -1).replace(/[^\n]/g, ' ') + c;
+      i = j + 1;
+      ultimo = c;
+    } else if (c === '/' && (ultimo === '' || '(,=:[!&|?{};+-*%<>~^'.includes(ultimo))) {
+      let j = i + 1;
+      let classe = false;
+      while (j < n && texto[j] !== '\n' && (classe || texto[j] !== '/')) {
+        if (texto[j] === '\\') j++;
+        else if (texto[j] === '[') classe = true;
+        else if (texto[j] === ']') classe = false;
+        j++;
+      }
+      saida += '/ /';
+      i = j + 1;
+      ultimo = '/';
+    } else {
+      saida += c;
+      if (!/\s/.test(c)) ultimo = c;
+      i++;
+    }
+  }
+  return saida;
 }
 
 function lerArquivo(raiz, rel) {
-  const linhas = fs.readFileSync(path.join(raiz, rel), 'utf8').split(/\r?\n/);
+  const texto = fs.readFileSync(path.join(raiz, rel), 'utf8');
+  const linhas = texto.split(/\r?\n/);
   const js = rel.endsWith('.js');
+  const limpas = semTextos(texto, js).split(/\r?\n/);
   const palavras = 'if|for|while|switch|catch|function|return|else|do|try|with';
   const regras = js
     ? [
@@ -47,15 +86,14 @@ function lerArquivo(raiz, rel) {
     : [/^\s*function\s+([\w-]+)/i];
   const funcoes = [];
   linhas.forEach((l, i) => {
-    const limpa = semTextos(l, js);
     for (const r of regras) {
-      const m = r.exec(limpa);
+      const m = r.exec(limpas[i]);
       if (m) { funcoes.push({ nome: m[1], linha: i + 1 }); break; }
     }
   });
   const item = { arquivo: rel, descricao: descricao(linhas, js ? '//' : '#'), funcoes };
   if (js) {
-    const m = /^module\.exports\s*=\s*\{([^}]*)\}/m.exec(linhas.join('\n'));
+    const m = /^module\.exports\s*=\s*\{([^}]*)\}/m.exec(limpas.join('\n'));
     item.exporta = m ? m[1].split(',').map((s) => s.split(':')[0].trim()).filter(Boolean) : [];
   }
   return item;
