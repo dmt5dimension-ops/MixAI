@@ -252,6 +252,9 @@ function garantirPastaPrivada(pasta) {
 // Processos de comando ainda sem a morte confirmada, por sinal de aborto (o sinal é da microtarefa): quando o lote desiste de
 // esperar uma chamada pendente, ele sabe quais Jobs/PIDs reter. Saem daqui quando a chamada termina com a morte confirmada.
 const ativosPorSinal = new WeakMap();
+// Quem quiser saber quando um comando novo ganha Job (o lote atualiza a reserva dele com os nomes dos Jobs).
+const ouvintesDeJob = new Set();
+const aoNovoJob = (fn) => { ouvintesDeJob.add(fn); return () => ouvintesDeJob.delete(fn); };
 const ativosDoSinal = (signal) => (signal && ativosPorSinal.get(signal) ? [...ativosPorSinal.get(signal)].map((a) => ({ ...a })) : []);
 
 function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = null } = {}) {
@@ -291,6 +294,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     filho.jobNome = jobNome;
     const ativo = { pid: filho.pid, jobNome };
     if (signal) { if (!ativosPorSinal.has(signal)) ativosPorSinal.set(signal, new Set()); ativosPorSinal.get(signal).add(ativo); }
+    for (const ouvir of ouvintesDeJob) { try { ouvir(); } catch { /* o ouvinte não pode derrubar a chamada */ } }
     let terminou = false;
     let relogio = null;
     let estourou = false;
@@ -537,18 +541,27 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 async function lote(opcoes) {
   let retidas = {};
   let erroDoLote = null;
-  try { return await loteSemLiberar(opcoes); } catch (erro) {
+  // Os Jobs dos agentes deste lote vão para a reserva dele: se o lote morrer deixando agentes vivos, a vaga segue reservada.
+  const ponte = {};
+  const controle = opcoes?.paralelismo;
+  let soltarOuvinte = null;
+  if (typeof controle?.fornecerJobs === 'function') {
+    controle.fornecerJobs(() => ponte.jobs?.() ?? []);
+    soltarOuvinte = aoNovoJob(() => controle.atualizarJobs?.());
+  }
+  try { return await loteSemLiberar({ ...opcoes, ponte }); } catch (erro) {
     if (erro?.naoConfirmados?.length) retidas = { naoConfirmados: erro.naoConfirmados.length, itens: erro.itensNaoConfirmados ?? [] };
     erroDoLote = erro;
     throw erro;
   } finally {
+    soltarOuvinte?.();
     try { opcoes?.paralelismo?.liberar?.(retidas); } catch (e) {
       // Retenção que não pôde ser gravada: falha fechada. O erro é exposto (a reserva segue valendo e o processo tenta gravar de novo).
       if (e?.retencaoNaoGravada) throw Object.assign(new Error(`${e.message}${erroDoLote ? ` (erro do lote: ${erroDoLote.message})` : ''}`), { naoConfirmados: erroDoLote?.naoConfirmados, retencaoNaoGravada: true });
     }
   }
 }
-async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -563,6 +576,7 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
   const pendentes = [...microtarefas];
   const rodando = new Map();
   const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
+  ponte.jobs = () => [...estados.values()].flatMap((e) => ativosDoSinal(e.ctl.signal)).map((a) => a.jobNome).filter(Boolean);
   const naoConfirmados = []; // ids de microtarefas cujo processo não teve a morte confirmada
   const identificadores = new Map(); // id da microtarefa -> [{ pid, jobNome }] dos processos sem morte confirmada (quando se sabe)
   const anotar = (id, item) => { if (!identificadores.has(id)) identificadores.set(id, []); identificadores.get(id).push(item); };
@@ -807,7 +821,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, ativosDoSinal, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, ativosDoSinal, aoNovoJob, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

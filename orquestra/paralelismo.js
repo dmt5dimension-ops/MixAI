@@ -246,18 +246,6 @@ function criarTrava(base, { esperaMs = 2000 } = {}) {
     }
   };
 }
-// Windows: pergunta ao Job Object (por nome) se ainda há processo dentro. true = vivo, false = vazio/fechado, null = não deu para saber.
-function jobVivoPadrao(nome) {
-  if (process.platform !== 'win32') return null;
-  try {
-    const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'job-confirmar-windows.ps1'), '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true });
-    if (r.error || r.status !== 0) return null;
-    const resposta = String(r.stdout).trim().split(/\r?\n/).pop();
-    if (resposta === 'FECHADO' || resposta === 'VAZIO') return false;
-    return /^VIVOS \d+$/.test(resposta) ? true : null;
-  } catch { return null; }
-}
-
 // Data de criação do processo (texto), para distinguir o dono de verdade de um PID reaproveitado; null se não der para ler.
 function inicioDoProcesso(pid) {
   try {
@@ -272,20 +260,67 @@ function inicioDoProcesso(pid) {
   } catch { return null; }
 }
 
-function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao, reintentoMs = 1000 }) {
+// Versão assíncrona e com limite (20 s) da consulta ao Job: nunca segura o laço de eventos nem a trava. true/false/null como acima.
+function jobVivoAssincrono(nome) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    try {
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'job-confirmar-windows.ps1'), '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true }, (erro, stdout) => {
+        if (erro) return resolve(null);
+        const resposta = String(stdout).trim().split(/\r?\n/).pop();
+        if (resposta === 'FECHADO' || resposta === 'VAZIO') return resolve(false);
+        resolve(/^VIVOS \d+$/.test(resposta) ? true : null);
+      });
+    } catch { resolve(null); }
+  });
+}
+
+function criarReserva({ pasta, relogio, jobVivo = null, reintentoMs = 1000 }) {
   const id = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
   const comTrava = criarTrava(`${pasta}.trava`);
   const meu = path.join(pasta, `${id}.json`);
   let retido = false;
+  let jobsDoLote = () => []; // nomes dos Jobs dos agentes deste lote (fornecidos pelo lote): vão para a reserva
+  let meuInicio;
+  // Nada que gasta tempo (PowerShell, ps) roda DENTRO da trava: tudo é levantado antes, fora dela, e a decisão dentro da trava
+  // só consulta estes mapas. Job sem resposta ainda (consulta assíncrona em andamento) vale como vivo.
+  const estadoDosJobs = new Map(); // nome -> { vivo, em, emVoo }
+  const consultarJob = (nome) => {
+    if (jobVivo) { try { return jobVivo(nome); } catch { return true; } } // consulta injetada (testes): imediata
+    const e = estadoDosJobs.get(nome) ?? { vivo: undefined, em: 0, emVoo: false };
+    estadoDosJobs.set(nome, e);
+    if (!e.emVoo && relogio() - e.em >= 5000) {
+      e.emVoo = true;
+      jobVivoAssincrono(nome).then((v) => { e.vivo = v; e.em = relogio(); e.emVoo = false; }, () => { e.emVoo = false; });
+    }
+    return e.vivo === undefined ? true : e.vivo; // ainda sem resposta: na dúvida, vivo
+  };
+  const iniciosAtuais = new Map(); // pid -> data de criação atual do processo (texto) ou null
+  const levantar = () => {
+    const jobs = new Map();
+    const inicios = new Map();
+    let nomes = [];
+    try { nomes = fs.readdirSync(pasta).filter((n) => n.endsWith('.json') && n !== `${id}.json`); } catch { /* sem pasta */ }
+    for (const nome of nomes) {
+      let r = null;
+      try { r = JSON.parse(fs.readFileSync(path.join(pasta, nome), 'utf8')); } catch { continue; }
+      const nomesDeJob = [...(Array.isArray(r?.jobs) ? r.jobs : []), ...(Array.isArray(r?.itens) ? r.itens.map((i) => i?.job) : [])].filter((j) => typeof j === 'string' && j);
+      for (const j of nomesDeJob) if (!jobs.has(j)) jobs.set(j, consultarJob(j));
+      const pids = [r?.pid, ...(Array.isArray(r?.itens) ? r.itens.map((i) => i?.pid) : [])].filter(Number.isInteger);
+      for (const pid of pids) if (!inicios.has(pid)) inicios.set(pid, pidVivo(pid) ? inicioDoProcesso(pid) : null);
+    }
+    return { jobs, inicios };
+  };
   // O dono está vivo? PID existente E mesma data de criação (um PID reaproveitado por outro processo não prende a vaga).
-  const donoVivo = (pid, inicio) => {
+  const donoVivo = (pid, inicio, ctx) => {
     if (!pidVivo(pid)) return false;
     if (typeof inicio !== 'string' || !inicio) return true;
-    const atual = inicioDoProcesso(pid);
-    return atual === null || atual === inicio;
+    const atual = ctx.inicios.get(pid);
+    return atual === null || atual === undefined || atual === inicio;
   };
-  const valida = (r) => {
+  const valida = (r, ctx) => {
     if (!r || !Number.isInteger(r.reservado) || r.reservado < 0 || !numeroValido(r.em, 0)) return false;
+    const jobVivoDe = (nome) => ctx.jobs.get(nome) !== false; // sem resposta = vivo
     if (Array.isArray(r.itens) && r.ate !== undefined) {
       // Reserva retida por morte não confirmada: cada item (um processo sem morte confirmada) é avaliado pelo PRÓPRIO
       // identificador, e a reserva só cai quando TODOS estiverem resolvidos. Item com Job vale até o Job estar vazio ou não
@@ -297,12 +332,14 @@ function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao, reintentoMs = 1
         if (!temJob && !temPid) return numeroValido(r.ate, 0) && relogio() <= r.ate;
         // O item só se resolve quando TODA a evidência dele resolve: o Job ainda pode não ter sido criado (FECHADO) enquanto o
         // wrapper (PID) já está vivo, então Job inexistente sozinho não basta se o PID continua vivo.
-        if (temJob) { let vivo = true; try { vivo = jobVivo(item.job) !== false; } catch { vivo = true; } if (vivo) return true; }
-        return temPid ? donoVivo(item.pid, item.inicio) : false;
+        if (temJob && jobVivoDe(item.job)) return true;
+        return temPid ? donoVivo(item.pid, item.inicio, ctx) : false;
       });
     }
-    // Reserva de lote: vale enquanto o dono estiver vivo (o batimento `em` serve só para dados, nunca expira a reserva).
-    return Number.isInteger(r.pid) && donoVivo(r.pid, r.inicio);
+    // Reserva de lote: vale enquanto o dono estiver vivo OU algum Job dos agentes dele continuar ativo (o dono pode morrer
+    // deixando agentes vivos); o batimento `em` serve só para dados, nunca expira a reserva.
+    if (Number.isInteger(r.pid) && donoVivo(r.pid, r.inicio, ctx)) return true;
+    return Array.isArray(r.jobs) && r.jobs.some((j) => typeof j === 'string' && j && jobVivoDe(j));
   };
   // Devolve a reserva ao fim do lote. Com `naoConfirmados` (quantidade) e `itens` ({ pid, job } de cada processo sem morte
   // confirmada), mantém essa quantidade de vagas retida: a retenção é gravada (rename atômico sobre a própria reserva, dentro da
@@ -338,25 +375,46 @@ function criarReserva({ pasta, relogio, jobVivo = jobVivoPadrao, reintentoMs = 1
     try { fs.unlinkSync(meu); } catch { /* não havia */ }
   };
   process.once('exit', () => { if (!pendente) liberar(); });
-  // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama não concede vaga nova).
-  const reservar = ({ alvo, agentes, teto }) => comTrava(() => {
-    fs.mkdirSync(pasta, { recursive: true });
-    let outros = 0;
-    for (const nome of fs.readdirSync(pasta)) {
-      if (!nome.endsWith('.json') || nome === `${id}.json`) continue;
-      const arq = path.join(pasta, nome);
-      let r = null;
-      let ok = false;
-      try { r = JSON.parse(fs.readFileSync(arq, 'utf8')); ok = valida(r); } catch { ok = false; }
-      if (ok) outros += r.reservado; else { try { fs.unlinkSync(arq); } catch { /* já foi */ } }
-    }
-    const concedido = Math.max(0, Math.min(alvo, teto - outros));
+  // Grava a própria reserva (rename atômico).
+  const gravarMinha = (reservado) => {
     const temporario = `${meu}.tmp`;
-    fs.writeFileSync(temporario, JSON.stringify({ reservado: Math.max(concedido, agentes), pid: process.pid, inicio: inicioDoProcesso(process.pid), em: relogio() }), { mode: 0o600 });
+    fs.writeFileSync(temporario, JSON.stringify({ reservado, pid: process.pid, inicio: meuInicio, jobs: [...new Set(jobsDoLote())], em: relogio() }), { mode: 0o600 });
     fs.renameSync(temporario, meu);
-    return concedido;
-  });
-  return { reservar, liberar };
+  };
+  const ultimoConhecido = new Map(); // arquivo -> última quantidade lida com sucesso
+  // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama não concede vaga nova).
+  const reservar = ({ alvo, agentes, teto }) => {
+    if (meuInicio === undefined) meuInicio = inicioDoProcesso(process.pid);
+    const ctx = levantar(); // fora da trava
+    return comTrava(() => {
+      fs.mkdirSync(pasta, { recursive: true });
+      let outros = 0;
+      for (const nome of fs.readdirSync(pasta)) {
+        if (!nome.endsWith('.json') || nome === `${id}.json`) continue;
+        const arq = path.join(pasta, nome);
+        let texto;
+        try { texto = fs.readFileSync(arq, 'utf8'); } catch (e) {
+          if (e?.code === 'ENOENT') { ultimoConhecido.delete(nome); continue; } // sumiu: já foi devolvida
+          // Erro de LEITURA (EBUSY, EACCES...): não prova que a reserva é inválida. Mantém, pela última quantidade conhecida (ou o teto inteiro).
+          outros += ultimoConhecido.get(nome) ?? teto;
+          continue;
+        }
+        let r = null;
+        try { r = JSON.parse(texto); } catch { r = null; } // JSON inválido: descarta
+        if (r && valida(r, ctx)) { outros += r.reservado; ultimoConhecido.set(nome, r.reservado); } else { ultimoConhecido.delete(nome); try { fs.unlinkSync(arq); } catch { /* já foi */ } }
+      }
+      const concedido = Math.max(0, Math.min(alvo, teto - outros));
+      gravarMinha(Math.max(concedido, agentes));
+      return concedido;
+    });
+  };
+  // Atualiza só a lista de Jobs da própria reserva (um agente novo nasceu): vale também se o lote morrer logo depois.
+  const atualizar = () => {
+    if (retido || pendente) return;
+    try { comTrava(() => { try { const atual = JSON.parse(fs.readFileSync(meu, 'utf8')); if (Number.isInteger(atual?.reservado)) gravarMinha(atual.reservado); } catch { /* ainda sem reserva */ } }); } catch { /* sem trava: a próxima reserva grava */ }
+  };
+  const definirJobs = (fn) => { jobsDoLote = typeof fn === 'function' ? fn : () => []; };
+  return { reservar, liberar, atualizar, definirJobs };
 }
 
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
@@ -423,10 +481,12 @@ function criarControle({ jobVivo, reintentoRetencaoMs, leitor = leitorWindows(),
     return alvoFinal;
   };
   controle.liberar = reserva.liberar;
+  controle.fornecerJobs = reserva.definirJobs;
+  controle.atualizarJobs = reserva.atualizar;
   return controle;
 }
 
-module.exports = { jobVivoPadrao, inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
+module.exports = { jobVivoAssincrono, inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
 
 // Saída manual: apaga todas as reservas e retenções de vagas (use só se tiver certeza de que nenhum lote nem agente está rodando).
 function limparReservas(pasta = `${path.join(os.tmpdir(), 'mixai-paralelismo.json')}.lotes`) {
