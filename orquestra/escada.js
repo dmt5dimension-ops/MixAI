@@ -3,6 +3,7 @@
 // Se acertar, a regra fica salva para as próximas vezes. Todo caso resolvido é registrado para treino futuro (LoRA).
 // Quem decide se a tarefa "cabe no local" é o Claude (o 7B erra ao julgar tamanho de tarefa).
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 
@@ -167,7 +168,7 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
 // PowerShell. `null` se não deu para ler. É a única forma de saber, depois, se algum descendente ficou vivo: o
 // `taskkill /T` só acha filhos pelo pai, e um descendente cujo pai já morreu fica órfão e não é mais encontrado.
 function arvoreDe(pid, executar = spawnSync) {
-  const r = executar('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }'], { encoding: 'utf8' });
+  const r = executar('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
   if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
   const filhos = new Map();
   for (const linha of r.stdout.split(/\r?\n/)) {
@@ -179,42 +180,99 @@ function arvoreDe(pid, executar = spawnSync) {
   return todos;
 }
 
-// Mata o processo e os filhos dele. No Windows tira antes uma foto da árvore, roda `taskkill /T /F` e só dá por morta
-// quando CADA pid da foto não existe mais (o código 128 do taskkill só diz que o pid do shell sumiu, não que os
-// descendentes morreram); os que sobrarem levam `taskkill /F` um a um. Sem a foto (PowerShell falhou), só o código 0
-// vale. Se não conseguir, devolve false e NÃO mata só o processo principal. `executar` e `vivo` existem para os testes.
+// Mata o processo e os filhos dele. No Windows tira antes uma foto da árvore (com o processo principal ainda vivo),
+// roda `taskkill /T /F` e só dá por morta quando CADA pid da foto não existe mais (o código 128 e o código 0 do taskkill
+// só falam do pid do shell; descendente órfão não é achado por `/T`); os que sobrarem levam `taskkill /F` um a um.
+// Sem a foto (PowerShell falhou) não há como confirmar: devolve false. Se o processo principal já não existe na foto,
+// também não confirma (a árvore ficou sem raiz e órfãos não se acham pelo pai). Nunca mata só o processo principal.
+// `executar` e `vivo` existem para os testes.
 function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3, vivo = processoVivoNoSistema } = {}) {
   if (plataforma === 'win32') {
-    if (filho.arvore === undefined) filho.arvore = arvoreDe(filho.pid, executar);
-    for (let i = 0; i < tentativas; i++) {
-      const r = executar('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
-      if (filho.arvore) {
-        for (const p of filho.arvore.filter(vivo)) executar('taskkill', ['/pid', String(p), '/F']);
-        if (filho.arvore.every((p) => !vivo(p))) return true;
-      } else if (!r.error && r.status === 0) return true;
+    const opcoes = { timeout: 15000, windowsHide: true };
+    if (filho.arvore === undefined) {
+      filho.arvore = arvoreDe(filho.pid, executar);
+      if (filho.arvore && !vivo(filho.pid) && filho.arvore.length === 1) filho.arvore = null; // raiz sumiu e nada achado: inconclusivo
     }
-    console.error(`não consegui matar a árvore do processo ${filho.pid} (taskkill falhou ${tentativas} vezes); o lote vai parar se não conseguir`);
+    if (filho.arvore) {
+      for (let i = 0; i < tentativas; i++) {
+        executar('taskkill', ['/pid', String(filho.pid), '/T', '/F'], opcoes);
+        for (const p of filho.arvore.filter(vivo)) executar('taskkill', ['/pid', String(p), '/F'], opcoes);
+        if (filho.arvore.every((p) => !vivo(p))) return true;
+      }
+    } else {
+      executar('taskkill', ['/pid', String(filho.pid), '/T', '/F'], opcoes); // melhor esforço; sem foto não dá para confirmar
+    }
+    console.error(`não consegui confirmar a morte da árvore do processo ${filho.pid}; o lote vai parar se não conseguir`);
     return false;
   }
   try { process.kill(-filho.pid, 'SIGKILL'); } catch { try { filho.kill('SIGKILL'); } catch { /* já morreu */ } }
   return true;
 }
+
+// Depois que o shell fechou: sobrou algum descendente vivo (sem pipe, que o 'close' não enxerga)? Mata e confere.
+// Devolve a lista dos que continuam vivos (vazia = limpo). Windows: descendentes achados pelo pid do pai registrado;
+// outros sistemas: o grupo de processos do comando.
+// Há processo vivo no grupo? Zumbi (morto que ninguém recolheu) não conta; onde existe /proc lê o estado de cada um.
+function grupoTemVivos(pgid) {
+  try {
+    for (const nome of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(nome)) continue;
+      let stat;
+      try { stat = fs.readFileSync(`/proc/${nome}/stat`, 'utf8'); } catch { continue; }
+      const resto = stat.slice(stat.lastIndexOf(')') + 2).split(' '); // estado, ppid, pgrp...
+      if (Number(resto[2]) === pgid && resto[0] !== 'Z') return true;
+    }
+    return false;
+  } catch {
+    try { process.kill(-pgid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+  }
+}
+
+function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSync, vivo = processoVivoNoSistema } = {}) {
+  if (plataforma === 'win32') {
+    const arvore = arvoreDe(filho.pid, executar);
+    if (!arvore) return [];
+    const resto = arvore.slice(1).filter(vivo);
+    for (const p of resto) executar('taskkill', ['/pid', String(p), '/T', '/F'], { timeout: 15000, windowsHide: true });
+    return resto.filter(vivo);
+  }
+  const grupoVivo = () => grupoTemVivos(filho.pid);
+  if (!grupoVivo()) return [];
+  try { process.kill(-filho.pid, 'SIGKILL'); } catch { /* já foi */ }
+  const limite = Date.now() + 1000;
+  while (grupoVivo() && Date.now() < limite) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  return grupoVivo() ? [-filho.pid] : [];
+}
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
   // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
   // reduzir agentes locais quando o dono volta a usar o PC. Se a árvore não morrer (taskkill falhando), repete a
   // cada `reintentoMs`; esgotadas as tentativas, a chamada termina com erro `naoConfirmado`: o processo pode
-  // continuar vivo, e quem chamou (o lote) não deve reaproveitar a vaga nem o escopo.
+  // continuar vivo, e quem chamou (o lote) deve parar. Também termina com `naoConfirmado` se o shell fechar e sobrar
+  // descendente vivo que não morre.
   return (prompt, signal) => new Promise((resolve, reject) => {
-    const filho = spawn(comando, { shell: true, detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
+    // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
+    // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
+    const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${Math.random().toString(36).slice(2)}.txt`);
+    fs.writeFileSync(entrada, String(prompt));
+    const fdEntrada = fs.openSync(entrada, 'r');
+    let filho;
+    try {
+      filho = spawn(comando, { shell: true, stdio: [fdEntrada, 'pipe', 'pipe'], detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
+    } finally { fs.closeSync(fdEntrada); }
     let terminou = false;
     let relogio = null;
     let estourou = false;
-    const fim = (f, valor) => { if (terminou) return; terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo); f(valor); };
+    const fim = (f, valor) => {
+      if (terminou) return;
+      terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
+      try { fs.rmSync(entrada, { force: true }); } catch { /* no Windows pode estar em uso; fica no tmp */ }
+      f(valor);
+    };
     // Morte não confirmada: larga o processo (pipes fechados e sem segurar o Node), senão o comando nunca termina.
     const largar = () => {
-      for (const f of [filho.stdin, filho.stdout, filho.stderr]) {
+      for (const f of [filho.stdout, filho.stderr]) {
         if (!f) continue;
         try { f.removeAllListeners('data'); f.on('error', () => {}); f.destroy(); } catch { /* já fechado */ }
         try { f.unref?.(); } catch { /* sem efeito */ }
@@ -222,14 +280,14 @@ function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tenta
       try { filho.removeAllListeners('close'); filho.removeAllListeners('error'); filho.on('error', () => {}); } catch { /* sem efeito */ }
       try { filho.unref(); } catch { /* sem efeito */ }
     };
+    const naoConfirmado = (texto) => { fim(reject, Object.assign(new Error(texto), { naoConfirmado: true })); largar(); };
     const parar = () => {
       if (matar(filho)) return;
       let feitas = 1;
       relogio = setInterval(() => {
         if (terminou) return clearInterval(relogio);
         if (matar(filho)) return clearInterval(relogio);
-        if (++feitas >= tentativasDeMatar) fim(reject, Object.assign(new Error(`o processo ${filho.pid} não morreu (taskkill falhou ${feitas} vezes); pode continuar vivo`), { naoConfirmado: true }));
-        if (terminou) largar();
+        if (++feitas >= tentativasDeMatar) naoConfirmado(`o processo ${filho.pid} não morreu (taskkill falhou ${feitas} vezes); pode continuar vivo`);
       }, reintentoMs);
     };
     // O tempo máximo também mata a árvore pelo mesmo caminho (o `timeout` do spawn mataria só o shell).
@@ -244,9 +302,15 @@ function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tenta
     filho.stdout.on('data', (d) => { saida += d; });
     filho.stderr.on('data', (d) => { erro += d; });
     filho.on('error', (e) => fim(reject, e));
-    filho.on('close', (codigo) => (codigo === 0 ? fim(resolve, saida) : fim(reject, new Error(estourou ? `passou do tempo máximo (${tempoMaximoMs / 1000} s)` : erro || `saiu com ${codigo}`))));
-    filho.stdin.on('error', () => {});
-    filho.stdin.end(prompt);
+    filho.on('close', (codigo) => {
+      if (terminou) return;
+      // O shell fechou: se ficou descendente vivo (sem pipe), o 'close' não prova que acabou. Mata e confere.
+      let sobrou = [];
+      try { sobrou = orfaos(filho); } catch { sobrou = []; }
+      if (sobrou.length) return naoConfirmado(`o shell do processo ${filho.pid} fechou, mas ${sobrou.length} descendente(s) continuam vivos e não morreram`);
+      if (codigo === 0 && !estourou) fim(resolve, saida);
+      else fim(reject, new Error(estourou ? `passou do tempo máximo (${tempoMaximoMs / 1000} s)` : erro || `saiu com ${codigo}`));
+    });
   });
 }
 
@@ -427,7 +491,6 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
           encerrando.splice(encerrando.indexOf(morte), 1);
           // Não dá para saber se o processo (e os filhos dele) morreu: reaproveitar a vaga ou o escopo seria arriscado, e o
           // estado só existe na memória deste lote. Para o lote inteiro com erro claro.
-          if (e.preso) fatal = new Error(`o lote parou: não consegui confirmar que o processo do agente local "${alvo.id}" morreu ao ser interrompido (taskkill falhou). Veja os processos do modelo local no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
           avisarMudanca();
         }),
       };
@@ -465,7 +528,17 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
           e.fim = new Promise((fimOk) => { liberar = fimOk; });
           Promise.resolve().then(() => agentes.local(prompt, e.ctl.signal)).then(
             (r) => { e.emLocal = false; e.ocupa = false; avisarMudanca(); liberar(); if (!e.abandonada) ok(r); },
-            (erro) => { e.emLocal = false; e.ocupa = false; avisarMudanca(); if (erro?.naoConfirmado) e.preso = true; liberar(); if (!e.abandonada) no(erro); },
+            (erro) => {
+              e.emLocal = false; e.ocupa = false;
+              if (erro?.naoConfirmado) {
+                // Morte não confirmada (ao abortar, no tempo máximo ou com descendente sobrando): nunca vira erro comum
+                // que sobe para o Codex. O lote inteiro para, e esta chamada não responde mais.
+                fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do agente local "${m.id}" morreu (${erro.message}). Veja os processos do modelo local no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
+                avisarMudanca(); liberar();
+                return;
+              }
+              avisarMudanca(); liberar(); if (!e.abandonada) no(erro);
+            },
           );
           });
         },
@@ -557,7 +630,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, matarArvore, arvoreDe, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, matarArvore, orfaosVivos, arvoreDe, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

@@ -464,34 +464,62 @@ test("uma única microtarefa rodando é reavaliada: se o teto cai para 0 ela é 
   assert.deepStrictEqual(violacoes, []);
 });
 
-test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando CADA pid sumiu (128 do taskkill não prova nada), mata os que sobram um a um", () => {
+test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando CADA pid sumiu (nem 128 nem 0 do taskkill provam), mata os que sobram um a um", () => {
   const tabela = "100,1\n200,100\n300,200\n400,1\n";
-  const chamadas = [];
   const vivos = new Set([100, 200, 300]);
   const executar = (cmd, args) => {
-    chamadas.push([cmd, ...args]);
     if (cmd === "powershell") return { status: 0, stdout: tabela };
     if (args.includes("/T")) { vivos.delete(100); return { status: 128 }; } // só o shell morreu; 200 e 300 ficaram órfãos
     vivos.delete(Number(args[1]));
     return { status: 0 };
   };
-  const filho = { pid: 100 };
   assert.deepStrictEqual(escada.arvoreDe(100, executar), [100, 200, 300]);
-  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar, vivo: (p) => vivos.has(p) }), true);
+  assert.strictEqual(escada.matarArvore({ pid: 100 }, { plataforma: "win32", executar, vivo: (p) => vivos.has(p) }), true);
   assert.deepStrictEqual([...vivos], [], "os descendentes órfãos foram mortos um a um");
-  assert.ok(chamadas.some((c) => c[0] === "taskkill" && c[2] === "200" && c.includes("/F") && !c.includes("/T")));
-  // status 128 sem foto da árvore (PowerShell falhou) não vale como prova
-  const semFoto = (cmd, args) => (cmd === "powershell" ? { status: 1 } : { status: 128 });
-  assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto, vivo: () => false }), false);
-  assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 1 } : { status: 0 }), vivo: () => false }), true, "código 0 do taskkill /T vale quando não há foto");
-  // descendente que não morre: falha, avisa, e não mata só o processo principal
-  const teimoso = { pid: 100, kill: () => { teimoso.mortoSo = true; } };
-  const err = console.error; const avisos = []; console.error = (m) => avisos.push(m);
+  const err = console.error; console.error = () => {};
   try {
+    // sem foto da árvore (PowerShell falhou): nem o código 0 do taskkill /T prova a morte
+    const semFoto = (codigo) => (cmd) => (cmd === "powershell" ? { status: 1 } : { status: codigo });
+    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto(0), vivo: () => false }), false);
+    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto(128), vivo: () => false }), false);
+    // raiz já sumiu e a foto só achou a própria raiz: inconclusivo, não "árvore vazia"
+    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: "1,0\n" } : { status: 128 }), vivo: () => false }), false);
+    // descendente que não morre: falha e não mata só o processo principal
+    const teimoso = { pid: 100, kill: () => { teimoso.mortoSo = true; } };
     assert.strictEqual(escada.matarArvore(teimoso, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => p === 300, tentativas: 2 }), false);
+    assert.ok(!teimoso.mortoSo);
   } finally { console.error = err; }
-  assert.ok(!teimoso.mortoSo);
-  assert.match(avisos[0], /não consegui matar/);
+});
+
+test("orfaosVivos: depois que o shell fecha, descendente vivo é achado pelo pai registrado, morto e conferido (Windows) ou pelo grupo (outros)", () => {
+  const tabela = "100,1\n200,100\n300,200\n";
+  const vivos = new Set([200, 300]);
+  const executar = (cmd, args) => {
+    if (cmd === "powershell") return { status: 0, stdout: tabela };
+    vivos.delete(200); vivos.delete(300);
+    return { status: 0 };
+  };
+  assert.deepStrictEqual(escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar, vivo: (p) => vivos.has(p) }), []);
+  assert.strictEqual(vivos.size, 0);
+  const teimosos = escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => p === 300 });
+  assert.deepStrictEqual(teimosos, [300]);
+  assert.deepStrictEqual(escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar: () => ({ status: 1 }), vivo: () => true }), [], "sem foto: nada a conferir (o fim normal não pode quebrar sem PowerShell)");
+});
+
+test("shell que fecha deixando um descendente sem pipe vivo: o descendente é morto e a chamada ainda termina normalmente; se não morrer, naoConfirmado", async () => {
+  if (process.platform === "win32") return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orfao-"));
+  const marca = path.join(dir, "pid");
+  const orfaoJs = path.join(dir, "orfao.js");
+  fs.writeFileSync(orfaoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
+  const saida = await escada.chamarComando(`"${process.execPath}" "${orfaoJs}" >/dev/null 2>&1 & sleep 1; echo pronto`)("x");
+  assert.match(saida, /pronto/);
+  const pid = Number(fs.readFileSync(marca, "utf8"));
+  const estaVivo = () => { try { process.kill(pid, 0); } catch { return false; } try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; } };
+  assert.strictEqual(estaVivo(), false, "o descendente sem pipe foi morto ao fechar o shell");
+  // descendente que não morre: naoConfirmado
+  const chamada = escada.chamarComando(`echo oi`, { orfaos: () => [4242] })("x");
+  await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /continuam vivos/.test(erro.message));
 });
 
 test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node consegue terminar (não fica pendurado)", async () => {
@@ -502,14 +530,16 @@ test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node 
     const escada = require(${JSON.stringify(path.join(__dirname, "..", "orquestra", "escada.js"))});
     const ctl = new AbortController();
     const comando = '"' + process.execPath + '" -e "setTimeout(()=>{},20000)"';
-    escada.chamarComando(comando, { matar: () => false, reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal)
-      .catch((e) => console.log(e.naoConfirmado ? "naoConfirmado" : "outro"));
+    let pidPreso;
+    escada.chamarComando(comando, { matar: (f) => { pidPreso = f.pid; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal)
+      .catch((e) => console.log(e.naoConfirmado ? "naoConfirmado " + pidPreso : "outro"));
     setTimeout(() => ctl.abort(), 100);
   `);
   const t0 = Date.now();
   const r = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 15000 });
-  assert.strictEqual(r.stdout.trim(), "naoConfirmado");
+  assert.match(r.stdout.trim(), /^naoConfirmado \d+$/);
   assert.ok(Date.now() - t0 < 10000, `o Node terminou sozinho (${Date.now() - t0} ms)`);
+  try { process.kill(-Number(r.stdout.trim().split(" ")[1]), "SIGKILL"); } catch { /* limpeza do teste */ }
 });
 
 test("o tempo máximo mata a árvore pelo mesmo caminho (matar), não só o shell", async () => {
@@ -584,9 +614,11 @@ test("abortar mata também o processo descendente (neto), em qualquer sistema", 
 test("se não dá para confirmar a morte do processo (taskkill falhando), a chamada termina com naoConfirmado e o lote inteiro para com erro claro", async () => {
   const ctl = new AbortController();
   const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
-  const chamada = escada.chamarComando(comando, { matar: () => false, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
+  let preso;
+  const chamada = escada.chamarComando(comando, { matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /não morreu/.test(erro.message));
+  try { process.kill(-preso.pid, "SIGKILL"); } catch { /* limpeza do teste */ }
 
   // No lote: quando um processo abortado não dá para confirmar que morreu, o lote INTEIRO para com erro claro
   // (nada de bloquear vaga na memória: um lote novo não herdaria o bloqueio).
@@ -603,7 +635,7 @@ test("se não dá para confirmar a morte do processo (taskkill falhando), a cham
   setTimeout(() => { limite = 1; }, 50);
   await assert.rejects(
     escada.lote({ microtarefas: ["a", "b", "c"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }),
-    /o lote parou.*"b".*taskkill/,
+    /o lote parou.*"b"/,
   );
   assert.ok(abortados.includes("a"), "os outros agentes locais também são interrompidos (melhor esforço)");
 });
@@ -641,4 +673,23 @@ test("a memória livre que o controle recebe já vem reduzida pelos agentes que 
   const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, memoriaLivreGB: 3.5 }) }, modo: "noite", arquivoEstado: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "par-")), "e.json"), relogio: () => 0, modos, config, aoDecidir: (d) => vistos.push(d.capacidade.limites.memoria) });
   controle({ agentesLocais: 3 });
   assert.ok(vistos[0] >= 6, `o controle passa os agentes atuais (${vistos[0]})`);
+});
+
+test("o prompt chega ao comando por arquivo (stdin sem pipe) e o arquivo temporário é apagado", async () => {
+  const antes = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length;
+  const saida = await escada.chamarComando(`"${process.execPath}" -e "process.stdin.pipe(process.stdout)"`)("olá, prompt com acentuação ç ã");
+  assert.strictEqual(saida, "olá, prompt com acentuação ç ã");
+  assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length, antes);
+});
+
+test("morte não confirmada no tempo máximo também para o lote (não vira erro comum que sobe para o Codex)", async () => {
+  let codex = 0;
+  let preso;
+  const local = () => escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { tempoMaximoMs: 100, matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x");
+  await assert.rejects(
+    escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: 1, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [{ nome: "codex", chamar: () => { codex += 1; return "ok"; } }] } }),
+    /o lote parou.*"a"/,
+  );
+  assert.strictEqual(codex, 0, "não subiu para o Codex");
+  try { process.kill(-preso.pid, "SIGKILL"); } catch { /* limpeza do teste */ }
 });
