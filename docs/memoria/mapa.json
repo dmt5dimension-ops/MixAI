@@ -299,139 +299,143 @@
       "funcoes": [
         {
           "nome": "novo",
-          "linha": 10
+          "linha": 12
         },
         {
           "nome": "copia",
-          "linha": 11
-        },
-        {
-          "nome": "normaliza",
           "linha": 13
         },
         {
+          "nome": "normaliza",
+          "linha": 15
+        },
+        {
           "nome": "sobrepoe",
-          "linha": 19
+          "linha": 21
         },
         {
           "nome": "lista",
-          "linha": 20
-        },
-        {
-          "nome": "esperar",
           "linha": 22
         },
         {
+          "nome": "esperar",
+          "linha": 24
+        },
+        {
           "nome": "comRetentativa",
-          "linha": 29
+          "linha": 31
         },
         {
           "nome": "carregar",
-          "linha": 38
+          "linha": 40
         },
         {
           "nome": "salvar",
-          "linha": 50
+          "linha": 52
         },
         {
           "nome": "processoVivo",
-          "linha": 62
+          "linha": 64
         },
         {
           "nome": "atualizar",
-          "linha": 76
+          "linha": 79
         },
         {
           "nome": "nome",
-          "linha": 81
+          "linha": 84
         },
         {
           "nome": "geracoes",
-          "linha": 82
-        },
-        {
-          "nome": "idade",
           "linha": 85
         },
         {
+          "nome": "idade",
+          "linha": 88
+        },
+        {
           "nome": "ler",
-          "linha": 86
+          "linha": 90
+        },
+        {
+          "nome": "lerOuErro",
+          "linha": 91
         },
         {
           "nome": "criar",
-          "linha": 87
+          "linha": 92
         },
         {
           "nome": "solta",
-          "linha": 95
+          "linha": 100
         },
         {
           "nome": "pegar",
-          "linha": 134
-        },
-        {
-          "nome": "adicionar",
           "linha": 140
         },
         {
+          "nome": "adicionar",
+          "linha": 146
+        },
+        {
           "nome": "feita",
-          "linha": 157
-        },
-        {
-          "nome": "prontas",
-          "linha": 159
-        },
-        {
-          "nome": "travadas",
           "linha": 164
         },
         {
+          "nome": "prontas",
+          "linha": 166
+        },
+        {
+          "nome": "travadas",
+          "linha": 171
+        },
+        {
           "nome": "mudar",
-          "linha": 174
+          "linha": 181
         },
         {
           "nome": "iniciar",
-          "linha": 180
+          "linha": 187
         },
         {
           "nome": "revisar",
-          "linha": 188
-        },
-        {
-          "nome": "devolver",
           "linha": 195
         },
         {
+          "nome": "devolver",
+          "linha": 202
+        },
+        {
           "nome": "concluir",
-          "linha": 204
+          "linha": 211
         },
         {
           "nome": "falhar",
-          "linha": 210
-        },
-        {
-          "nome": "validar",
           "linha": 217
         },
         {
+          "nome": "validar",
+          "linha": 224
+        },
+        {
           "nome": "visita",
-          "linha": 223
+          "linha": 230
         },
         {
           "nome": "resumo",
-          "linha": 242
+          "linha": 249
         },
         {
           "nome": "opcao",
-          "linha": 248
+          "linha": 256
         },
         {
           "nome": "principal",
-          "linha": 253
+          "linha": 264
         },
         {
           "nome": "virgulas",
-          "linha": 255
+          "linha": 266
         }
       ],
       "exporta": [
@@ -665,15 +669,19 @@
         },
         {
           "nome": "cli",
-          "linha": 254
+          "linha": 247
+        },
+        {
+          "nome": "cli",
+          "linha": 294
         },
         {
           "nome": "erro",
-          "linha": 290
+          "linha": 330
         },
         {
           "nome": "rodar",
-          "linha": 315
+          "linha": 355
         }
       ],
       "exporta": []

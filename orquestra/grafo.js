@@ -3,7 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const padrao = path.join(__dirname, 'grafo.json');
+// Por padrão o grafo fica no repositório (cada worktree tem o seu). Para várias worktrees dividirem o mesmo grafo e a
+// mesma trava, aponte MIXAI_GRAFO para um arquivo fora delas (as travas ficam ao lado dele) ou use --arquivo.
+const padrao = process.env.MIXAI_GRAFO ? path.resolve(process.env.MIXAI_GRAFO) : path.join(__dirname, 'grafo.json');
 const agentes = ['claude', 'codex', 'local'];
 const limitePadrao = 3;
 
@@ -39,7 +41,7 @@ function carregar(arquivo = padrao) {
   if (!fs.existsSync(arquivo)) return novo();
   try {
     const g = JSON.parse(comRetentativa(() => fs.readFileSync(arquivo, 'utf8')));
-    if (g?.versao !== 1 || typeof g.tarefas !== 'object' || g.tarefas === null) throw new Error('formato');
+    if (g?.versao !== 1 || typeof g.tarefas !== 'object' || g.tarefas === null || Array.isArray(g.tarefas)) throw new Error('formato');
     return g;
   } catch (erro) {
     throw new Error(`grafo corrompido em ${arquivo} (${erro.message}); o arquivo não foi alterado`);
@@ -70,10 +72,11 @@ function processoVivo(pid) {
 // soltou escrevendo `livre`) ou o dono morreu, cria a geração seguinte; senão espera. NINGUÉM apaga nem
 // reescreve a trava de outro: a de dono morto não é removida, é superada por uma geração maior. Por isso não
 // existe "conferir que está velha e depois apagar", que era onde uma trava nova de outro dono era derrubada.
-// Dono vivo só é superado depois de `vivoMaxMs` (30 min; uma mudança leva milissegundos), por causa do número
-// de processo reaproveitado depois de uma queda. Antes de gravar, confere que a trava ainda é sua e que não
+// A trava de um dono vivo NUNCA é tomada, por mais velha que seja (tomar seria deixar dois processos gravando);
+// se o número do processo foi reaproveitado depois de uma queda, a mensagem de erro diz qual arquivo apagar à
+// mão. Se a trava não puder ser lida (erro que não seja "não existe"), conta como ocupada. Antes de gravar, confere que a trava ainda é sua e que não
 // existe geração maior; se não for, não grava. Gerações antigas (mais de 20 atrás) são apagadas.
-function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000, vivoMaxMs = 30 * 60000 } = {}) {
+function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {}) {
   const pasta = path.dirname(arquivo);
   const prefixo = `${path.basename(arquivo)}.lock.`;
   const dono = `${process.pid}:${Math.random().toString(36).slice(2)}`;
@@ -83,7 +86,9 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000, vivoMa
     .filter((f) => f.startsWith(prefixo) && /^\d+$/.test(f.slice(prefixo.length)))
     .map((f) => Number(f.slice(prefixo.length))).sort((a, b) => a - b);
   const idade = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return null; } };
-  const ler = (f) => { try { return comRetentativa(() => fs.readFileSync(f, 'utf8')); } catch { return null; } };
+  // null = o arquivo não existe; qualquer outro erro de leitura propaga e quem chama trata como trava ocupada.
+  const ler = (f) => { try { return comRetentativa(() => fs.readFileSync(f, 'utf8')); } catch (erro) { if (erro.code === 'ENOENT') return null; throw erro; } };
+  const lerOuErro = (f) => { try { return { texto: ler(f) }; } catch (erro) { return { erro }; } };
   const criar = (f) => {
     try { fs.writeFileSync(f, dono, { flag: 'wx' }); return true; } catch (erro) {
       // EEXIST: o nome já existe. EPERM/EBUSY/EACCES: no Windows, arquivo ocupado por outro processo; tenta de novo.
@@ -93,11 +98,12 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000, vivoMa
   };
   // A geração está solta (livre, ou de dono que não vai mais voltar)?
   const solta = (n) => {
-    const texto = ler(nome(n));
+    const { texto, erro } = lerOuErro(nome(n));
+    if (erro) return false;
     if (texto === null) return true;
     if (texto === 'livre') return true;
     const pid = /^(\d+):/.exec(texto);
-    if (pid) return !processoVivo(Number(pid[1])) || (idade(nome(n)) ?? 0) > vivoMaxMs;
+    if (pid) return !processoVivo(Number(pid[1]));
     // Vazio (o dono acabou de criar e ainda não escreveu) ou texto estranho: só solta se ficou assim por muito tempo.
     return (idade(nome(n)) ?? 0) > velhaMs;
   };
@@ -112,7 +118,7 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000, vivoMa
       esperar(5);
       continue; // outro criou esta geração primeiro (ou o Windows está ocupado): olha de novo
     }
-    if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${nome(maior)}); se ninguém está usando, apague esse arquivo`);
+    if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${nome(maior)}); se ninguém está usando (por exemplo, o computador caiu), apague esse arquivo`);
     esperar(25);
   }
   try {
@@ -121,13 +127,13 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000, vivoMa
     const erros = validar(novoGrafo);
     if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
     const maisNova = geracoes().some((n) => n > minha);
-    if (ler(nome(minha)) !== dono || maisNova) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a superou); nada foi gravado, tente de novo');
+    if (lerOuErro(nome(minha)).texto !== dono || maisNova) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a superou); nada foi gravado, tente de novo');
     salvar(arquivo, novoGrafo);
     return novoGrafo;
   } finally {
     // Solta escrevendo `livre` na própria geração (só se ainda for sua). Não apaga: o arquivo é o marcador de qual
     // geração veio por último.
-    if (ler(nome(minha)) === dono) { try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); } catch { /* o dono morre e a geração fica solta */ } }
+    if (lerOuErro(nome(minha)).texto === dono) { try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); } catch { /* o dono morre e a geração fica solta */ } }
   }
 }
 
@@ -143,13 +149,14 @@ function adicionar(g, dados, agora = new Date().toISOString()) {
   if (g.tarefas[id]) throw new Error(`tarefa ${id} já existe`);
   if (!dados.titulo) throw new Error(`tarefa ${id} precisa de título`);
   if (dados.agente != null && !agentes.includes(dados.agente)) throw new Error(`agente inválido: ${dados.agente} (use ${agentes.join(', ')})`);
+  if (!Array.isArray(dados.escopo) || !dados.escopo.length || dados.escopo.some((e) => typeof e !== 'string' || !e.trim())) throw new Error(`tarefa ${id} precisa de escopo (lista de arquivos ou pastas que ela pode mudar)`);
   const depende = dados.depende || [];
   if (depende.includes(id)) throw new Error(`ciclo: ${id} depende de si mesma`);
   for (const d of depende) if (!g.tarefas[d]) throw new Error(`dependência ${d} não existe`);
   const novoGrafo = copia(g);
   novoGrafo.tarefas[id] = {
     id, titulo: dados.titulo, estado: 'pendente', depende, agente: dados.agente ?? null,
-    escopo: dados.escopo || [], verificar: dados.verificar ?? null, tentativas: 0, atualizado: agora, resultado: null,
+    escopo: dados.escopo, verificar: dados.verificar ?? null, tentativas: 0, atualizado: agora, resultado: null,
   };
   return novoGrafo;
 }
@@ -245,9 +252,13 @@ function resumo(g) {
   return contagem;
 }
 
+// Tira `--nome valor` da lista. Sem valor (fim da lista ou outra opção logo depois) é erro, não silêncio.
 function opcao(args, nome) {
   const i = args.indexOf(`--${nome}`);
-  return i >= 0 ? args.splice(i, 2)[1] : undefined;
+  if (i < 0) return undefined;
+  const valor = args[i + 1];
+  if (valor === undefined || valor.startsWith('--')) throw new Error(`a opção --${nome} precisa de um valor`);
+  return args.splice(i, 2)[1];
 }
 
 function principal(args) {

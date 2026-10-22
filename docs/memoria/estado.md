@@ -53,6 +53,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
 - `tests/instalar.test.js` falha às vezes no PC do dono quando a memória está quase cheia (falhou 2 de 9 também na main). Não é falha do instalador; investigar numa tarefa própria.
+- Ligar o vigia e a `escada.js` ao grafo (`orquestra/grafo.js`): hoje só o planejador e o Codex o usam pela linha de comando. Tarefa própria, mexe em arquivos de outras etapas.
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
 - O `AGENTS.md` copiado pelo kit cita `orquestra/` e `local/`, que só existem no MixAI. No repo de outro app esses comandos não existem; falta decidir se ele chama os scripts pela pasta do MixAI ou se o kit passa a levar essas pastas.
