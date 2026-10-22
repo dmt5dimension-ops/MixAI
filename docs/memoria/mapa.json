@@ -1,37 +1,6 @@
 {
   "arquivos": [
     {
-      "arquivo": ".claude/hooks/canal.js",
-      "descricao": "Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:",
-      "funcoes": [
-        {
-          "nome": "ultimoAutor",
-          "linha": 11
-        },
-        {
-          "nome": "decidirParar",
-          "linha": 27
-        },
-        {
-          "nome": "fimDoCanal",
-          "linha": 36
-        },
-        {
-          "nome": "lerEntrada",
-          "linha": 40
-        },
-        {
-          "nome": "principal",
-          "linha": 44
-        }
-      ],
-      "exporta": [
-        "ultimoAutor",
-        "decidirParar",
-        "fimDoCanal"
-      ]
-    },
-    {
       "arquivo": "ferramentas/instalar.ps1",
       "descricao": "Instala as ferramentas do orquestrador no Windows 11.",
       "funcoes": [
@@ -516,21 +485,6 @@
       "exporta": []
     },
     {
-      "arquivo": "tests/hooks-canal.test.js",
-      "descricao": "Trava obrigatória do canal Claude↔Codex no Claude Code: hooks que mostram o canal ao começar a sessão",
-      "funcoes": [
-        {
-          "nome": "tmp",
-          "linha": 14
-        },
-        {
-          "nome": "doGit",
-          "linha": 80
-        }
-      ],
-      "exporta": []
-    },
-    {
       "arquivo": "tests/instalar.test.js",
       "descricao": "Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:",
       "funcoes": [
@@ -635,6 +589,17 @@
       "exporta": []
     },
     {
+      "arquivo": "tests/regras-locais.test.js",
+      "descricao": "Trava as regras que o modelo local (Qwen) aprendeu de verdade: orquestra/regras-locais.json.",
+      "funcoes": [
+        {
+          "nome": "ids",
+          "linha": 23
+        }
+      ],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/smoke.test.js",
       "descricao": "",
       "funcoes": [],
@@ -732,9 +697,9 @@
       ]
     },
     {
-      "o_que": "Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`)",
+      "o_que": "Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo`",
       "testes": [
-        "tests/hooks-canal.test.js"
+        "tests/regras-locais.test.js"
       ]
     },
     {
