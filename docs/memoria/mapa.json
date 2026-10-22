@@ -431,23 +431,23 @@
         },
         {
           "nome": "visita",
-          "linha": 282
+          "linha": 281
         },
         {
           "nome": "resumo",
-          "linha": 301
+          "linha": 300
         },
         {
           "nome": "opcao",
-          "linha": 308
+          "linha": 307
         },
         {
           "nome": "principal",
-          "linha": 316
+          "linha": 315
         },
         {
           "nome": "virgulas",
-          "linha": 318
+          "linha": 317
         }
       ],
       "exporta": [
@@ -795,6 +795,10 @@
         {
           "nome": "rodar",
           "linha": 150
+        },
+        {
+          "nome": "prepararComGhFalso",
+          "linha": 164
         }
       ],
       "exporta": []
@@ -916,6 +920,12 @@
     },
     {
       "o_que": "Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`)",
+      "testes": [
+        "tests/preparar-repo.test.js"
+      ]
+    },
+    {
+      "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
       ]

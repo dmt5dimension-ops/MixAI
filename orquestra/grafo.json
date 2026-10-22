@@ -49,7 +49,7 @@
     "etapa4": {
       "id": "etapa4",
       "titulo": "Mapa do código e da memória",
-      "estado": "em_revisao",
+      "estado": "feita",
       "depende": [
         "etapa2"
       ],

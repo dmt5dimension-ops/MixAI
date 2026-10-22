@@ -428,7 +428,7 @@ test("geração criada atrasada (lista velha depois da limpeza de outro processo
   assert.ok(travas(arq).some((f) => f.endsWith("0004")));
 });
 
-test("validar: tarefa ativa com dependência que não está pronta, ou sem escopo, é erro; em_revisao aceita dependência em_revisao (PR empilhado)", () => {
+test("validar: tarefa ativa com dependência que não está pronta, ou sem escopo, é erro; em_revisao também exige dependência feita (acabou o PR empilhado)", () => {
   let g = grafo.novo();
   g = grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["t/a"] }, AGORA);
   g = grafo.adicionar(g, { id: "b", titulo: "B", escopo: ["t/b"], depende: ["a"] }, AGORA);
@@ -436,7 +436,7 @@ test("validar: tarefa ativa com dependência que não está pronta, ou sem escop
   assert.deepStrictEqual(grafo.validar(com("pendente", "pendente")), []);
   assert.ok(grafo.validar(com("pendente", "em_andamento")).some((e) => /b está em_andamento.*a está pendente/.test(e)));
   assert.ok(grafo.validar(com("em_revisao", "em_andamento")).some((e) => /dependência a/.test(e)));
-  assert.deepStrictEqual(grafo.validar(com("em_revisao", "em_revisao")), [], "PR empilhado");
+  assert.ok(grafo.validar(com("em_revisao", "em_revisao")).some((e) => /dependência a/.test(e)), "sem exceção de PR empilhado");
   assert.ok(grafo.validar(com("pendente", "em_revisao")).some((e) => /dependência a/.test(e)));
   assert.deepStrictEqual(grafo.validar(com("feita", "em_andamento")), []);
   const semEscopo = com("feita", "em_andamento");

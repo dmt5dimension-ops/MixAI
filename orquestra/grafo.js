@@ -270,11 +270,10 @@ function validar(g) {
   const erros = [];
   for (const t of lista(g)) {
     for (const d of t.depende) if (!tem(g, d)) erros.push(`${t.id}: dependência ${d} não existe`);
-    // Trabalho ativo só existe com as dependências prontas. `em_revisao` aceita dependência também `em_revisao`
-    // (PR empilhado sobre outro ainda em revisão); `em_andamento` exige `feita`. O escopo de quem está ativo não pode ser vazio.
+    // Trabalho ativo (em_andamento ou em_revisao) só existe com as dependências `feita`.
+    // O escopo de quem está ativo não pode ser vazio.
     if (t.estado === 'em_andamento' || t.estado === 'em_revisao') {
-      const aceitos = t.estado === 'em_andamento' ? ['feita'] : ['feita', 'em_revisao'];
-      for (const d of t.depende) if (tem(g, d) && !aceitos.includes(g.tarefas[d].estado)) erros.push(`${t.id} está ${t.estado} mas a dependência ${d} está ${g.tarefas[d].estado}`);
+      for (const d of t.depende) if (tem(g, d) && g.tarefas[d].estado !== 'feita') erros.push(`${t.id} está ${t.estado} mas a dependência ${d} está ${g.tarefas[d].estado}`);
       if (!t.escopo.length) erros.push(`${t.id} está ${t.estado} sem escopo`);
     }
   }

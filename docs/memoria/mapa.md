@@ -103,11 +103,11 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `concluir` (linha 256)
   - `falhar` (linha 262)
   - `validar` (linha 269)
-  - `visita` (linha 282)
-  - `resumo` (linha 301)
-  - `opcao` (linha 308)
-  - `principal` (linha 316)
-  - `virgulas` (linha 318)
+  - `visita` (linha 281)
+  - `resumo` (linha 300)
+  - `opcao` (linha 307)
+  - `principal` (linha 315)
+  - `virgulas` (linha 317)
 - `orquestra/mapa.js` — Mapa do código e da memória: onde fica cada função e o que já foi feito.
   - `listar` (linha 10)
   - `descricao` (linha 23)
@@ -181,6 +181,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `cobre` (linha 22)
   - `titulos` (linha 44)
   - `rodar` (linha 150)
+  - `prepararComGhFalso` (linha 164)
 - `tests/protecao-local.test.js` — Testa as proteções do modelo local: nunca cair para o processador, conferir a memória
   - `pastaTemporaria` (linha 16)
   - `ollamaFalso` (linha 21)
@@ -207,6 +208,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
 - Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
 - Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) — `tests/preparar-repo.test.js`
+- Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso — `tests/preparar-repo.test.js`
 - Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` — `tests/canal-coordenacao.test.js`
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
