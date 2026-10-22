@@ -11,6 +11,8 @@ const ARQUIVOS = {
   regras: path.join(pasta, 'regras-locais.json'),
   casos: path.join(pasta, 'casos', 'casos.jsonl'),
   treino: path.join(pasta, 'casos', 'treino.jsonl'),
+  falhas: path.join(pasta, 'falhas', 'falhas.jsonl'),
+  pendentes: path.join(pasta, 'falhas', 'pendentes.jsonl'),
 };
 
 function lerRegras(arquivo) {
@@ -108,6 +110,19 @@ async function tentar(chamar, prompt) {
   }
 }
 
+// O grande resolveu depois de o local errar: pede a regra, deixa o local tentar de novo com ela e só salva se ele acertar.
+async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data }) {
+  const candidata = lerRegraGerada(await tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
+  if (!candidata) return { regra: null, regraSalva: null };
+  const segunda = await tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
+  const funcionou = segunda !== null && (await ok(segunda));
+  const regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
+  if (!funcionou) return { regra, regraSalva: null };
+  const nova = { ...regra, criadaEm: data, origem: nome };
+  salvarRegra(arquivos.regras, nova);
+  return { regra: nova, regraSalva: nova.id };
+}
+
 async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS }) {
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
@@ -141,18 +156,7 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   let regra = null;
   let regraSalva = null;
   if (cabeNoLocal && saidaLocal !== null) {
-    const candidata = lerRegraGerada(await tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
-    if (candidata) {
-      const segunda = await tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
-      const funcionou = segunda !== null && (await ok(segunda));
-      regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
-      if (funcionou) {
-        const nova = { ...regra, criadaEm: base.data, origem: nome };
-        salvarRegra(arquivos.regras, nova);
-        regra = nova;
-        regraSalva = nova.id;
-      }
-    }
+    ({ regra, regraSalva } = await aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data: base.data }));
   }
 
   registrarCaso(arquivos.casos, { ...base, regra, regrasUsadas: ids, saida, resolvidoPor: nome });
@@ -183,7 +187,98 @@ const COMANDOS = {
 };
 
 function verificadorPorComando(comando) {
-  return (saida) => ({ ok: spawnSync(comando, { shell: true, input: saida, encoding: 'utf8', timeout: TEMPO_MAXIMO_MS }).status === 0 });
+  return (saida) => {
+    const r = spawnSync(comando, { shell: true, input: saida, encoding: 'utf8', timeout: TEMPO_MAXIMO_MS });
+    return { ok: r.status === 0, motivo: String(r.stderr || r.stdout || '').trim().slice(0, 500) };
+  };
+}
+
+function promptReinstruir(entrada, erradas) {
+  const ultimas = erradas.slice(-2).map((e, i) => `Tentativa ${erradas.length - Math.min(2, erradas.length) + i + 1}: saída "${e.saida}" -> erro: ${e.motivo}`);
+  return [
+    'REINSTRUIR: um modelo pequeno errou esta tarefa. Leia o erro, descubra a causa (pesquise se precisar) e escreva uma instrução curta e exata para ele acertar na próxima. Responda só com a instrução, sem resolver a tarefa por ele.',
+    `Tarefa: ${entrada}`,
+    ...ultimas,
+  ].join('\n');
+}
+
+function promptAntagonista(entrada, saida) {
+  return [
+    'ANTAGONISTA: tente achar defeito nesta resposta (caso de borda, pedido não atendido, algo a mais que ninguém pediu).',
+    `Tarefa: ${entrada}`,
+    `Resposta: ${saida}`,
+    'Responda só "OK" se não achar defeito, ou "PROBLEMA: <o defeito>".',
+  ].join('\n');
+}
+
+// Loop de tentativas: o Qwen tenta; se falha, o modelo grande lê o erro e reinstrui; repete até o limite.
+// Estourou o limite, o grande resolve direto. Cada falha resolvida vira caso de regressão (tests/falhas-escada.test.js).
+// Com `antagonico`, a resposta só vale se outro agente (nunca o que produziu) não achar defeito.
+async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS }) {
+  if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
+  if (!Number.isInteger(maxTentativas) || maxTentativas < 1) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
+  const usadas = escolherRegras(lerRegras(arquivos.regras), entrada);
+  const base = { entrada, data: new Date().toISOString() };
+  const erradas = [];
+  const supers = agentes.superiores;
+
+  const julgar = async (saida, produtor) => {
+    const v = await verificar(saida);
+    if (v.ok !== true) return { ok: false, porVerificador: true, motivo: v.motivo || 'o verificador reprovou' };
+    if (!antagonico) return { ok: true, antagonista: null };
+    for (const outro of supers.filter((x) => x.nome !== produtor)) {
+      const parecer = await tentar(outro.chamar, promptAntagonista(entrada, saida));
+      if (parecer === null) continue; // este não respondeu (sem cota): tenta o próximo
+      if (/^\s*OK\s*[.!]?\s*$/i.test(parecer)) return { ok: true, antagonista: outro.nome };
+      return { ok: false, porVerificador: false, motivo: parecer };
+    }
+    return { ok: false, porVerificador: false, motivo: 'nenhum outro agente grande disponível para conferir (sem cota?); sem checagem antagônica a resposta não vale' };
+  };
+
+  // a regra aprendida passa pela MESMA checagem (verificador + antagonista) da resposta final
+  const ok = async (saida) => (await julgar(saida, 'local')).ok === true;
+  const concluir = (saida, resolvidoPor, tentativas, antagonista, regra = null, regraSalva = null) => {
+    if (erradas.length && verificarComando) {
+      registrarCaso(arquivos.falhas, { ...base, saidasErradas: erradas.filter((e) => e.porVerificador).map((e) => e.saida), rejeitadasPeloRevisor: erradas.filter((e) => !e.porVerificador && e.saida).map((e) => e.saida), motivos: erradas.map((e) => e.motivo), saidaCerta: saida, verificar: verificarComando, resolvidoPor });
+    }
+    registrarCaso(arquivos.casos, { ...base, regra: regra || usadas[0] || null, regrasUsadas: usadas.map((r) => r.id), saida, resolvidoPor });
+    return { ok: true, resolvidoPor, saida, tentativas, antagonista, regraSalva };
+  };
+
+  let instrucao = entrada;
+  for (let t = 1; t <= maxTentativas; t += 1) {
+    const saida = await tentar(agentes.local, montarPrompt(instrucao, usadas));
+    if (saida === null) {
+      erradas.push({ saida: '', porVerificador: false, motivo: 'o modelo local não respondeu' });
+    } else {
+      const j = await julgar(saida, 'local');
+      if (j.ok) return concluir(saida, 'local', t, j.antagonista);
+      erradas.push({ saida, porVerificador: j.porVerificador, motivo: j.motivo });
+    }
+    if (t === maxTentativas || supers.length === 0) continue;
+    for (let k = 0; k < supers.length; k += 1) {
+      const dica = await tentar(supers[(t - 1 + k) % supers.length].chamar, promptReinstruir(entrada, erradas));
+      if (dica) { instrucao = `${entrada}
+
+Instrução do revisor: ${dica}`; break; }
+    }
+  }
+
+  for (const s of supers) {
+    const saida = await tentar(s.chamar, montarPrompt(entrada, []));
+    if (saida === null) continue;
+    const j = await julgar(saida, s.nome);
+    if (j.ok) {
+      const ultimaDoLocal = erradas.filter((e) => e.saida).pop();
+      const aprendida = ultimaDoLocal
+        ? await aprenderRegra({ entrada, saidaLocal: ultimaDoLocal.saida, saida, nome: s.nome, chamarSuperior: s.chamar, usadas, ok, agentes, arquivos, data: base.data })
+        : { regra: null, regraSalva: null };
+      return concluir(saida, s.nome, maxTentativas, j.antagonista, aprendida.regra, aprendida.regraSalva);
+    }
+    erradas.push({ saida, porVerificador: j.porVerificador, motivo: j.motivo });
+  }
+  registrarCaso(arquivos.pendentes, { ...base, saidasErradas: erradas.map((e) => e.saida), motivos: erradas.map((e) => e.motivo), verificar: verificarComando });
+  return { ok: false, resolvidoPor: null, saida: null, tentativas: maxTentativas, antagonista: null };
 }
 
 const MAX_CONTEXTO = 1500;
@@ -216,7 +311,7 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 
 // O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
-async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, arquivos = ARQUIVOS }) {
+async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
   if (!Number.isInteger(paralelismo) || paralelismo < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
   const limite = paralelismo;
@@ -229,7 +324,11 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, arq
       const i = pendentes.findIndex((m) => ![...rodando.keys()].some((r) => sobrepoe(r.escopo, m.escopo)));
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
-      const feito = resolver({ entrada: promptMicro(m), cabeNoLocal: true, verificar: verificadorDe(m), agentes, arquivos })
+      const entrada = promptMicro(m);
+      const execucao = maxTentativas !== undefined || antagonico
+        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
+        : resolver({ entrada, cabeNoLocal: true, verificar: verificadorDe(m), agentes, arquivos });
+      const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
         .then((r) => { resultados.set(m.id, { id: m.id, ...r }); rodando.delete(m); });
       rodando.set(m, feito);
@@ -260,6 +359,8 @@ async function principal(argumentos) {
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
       paralelismo: ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
+      maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : undefined,
+      antagonico: resto.includes('--antagonico'),
       agentes: {
         local: chamarComando(COMANDOS.local),
         superiores: cfgLote.superiores.map((nome) => ({ nome, chamar: chamarComando(COMANDOS[nome]) })),
@@ -273,7 +374,7 @@ async function principal(argumentos) {
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');
@@ -300,7 +401,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

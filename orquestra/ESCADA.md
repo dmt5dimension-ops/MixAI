@@ -46,3 +46,12 @@ node orquestra/escada.js lote plano.json --paralelo 2
 - Cada agente local recebe só a sua microtarefa. Microtarefas com escopo que se sobrepõe nunca rodam juntas.
 - Uma que falha sobe a escada normal (Codex, depois Claude) e não derruba as outras.
 - Paralelismo padrão 1 (`paralelismoPadrao` em `escada.json`). Com 8 GB de placa, o `OLLAMA_NUM_PARALLEL` do modo dia está em 1, então mais agentes só enfileiram no Ollama; subir isso e ajustar pelo uso do PC é a etapa 5.
+
+## Loop de tentativas (etapa 2)
+
+`node orquestra/escada.js lote plano.json --tentativas 3 --antagonico`
+
+- O Qwen tenta. Se o verificador reprova, o modelo grande recebe a tarefa e o erro, descobre a causa e escreve uma instrução nova (alternando Codex e Claude; se um está sem cota, vai o outro). O Qwen tenta de novo com a instrução.
+- Estourou o limite de tentativas: o grande resolve direto.
+- Cada falha que acabou resolvida vira um caso de regressão em `orquestra/falhas/falhas.jsonl` (resposta certa e o comando que confere). `tests/falhas-escada.test.js` confere para sempre que a resposta certa continua passando. Falha que ninguém resolveu vai para `orquestra/falhas/pendentes.jsonl`, que não entra nos testes.
+- Com `--antagonico`, a resposta só vale se outro agente grande (nunca o que produziu) não achar defeito. O modelo local nunca faz esse papel. Se nenhum outro grande puder conferir (sem cota), a resposta não vale e a tarefa fica em `pendentes.jsonl`.
