@@ -27,53 +27,84 @@ $pidsMeus = @(Get-Process | Where-Object { $meus -contains $_.ProcessName } | Fo
 $ocioso = [MixaiOcioso]::Segundos()
 if ($ocioso -lt 0) { $ocioso = $null }
 
-# Placa e vídeo: 3 leituras com 1 s de intervalo de todos os motores da placa.
-# gpuOutrosPct = média das leituras da soma dos motores de outros programas (nenhuma leitura = $null).
+# Número válido: tem que ser mesmo um número (não $null, não NaN, não negativo). Qualquer leitura que não for
+# vira "inválida" e a medida inteira vira $null; nunca pode virar zero (= PC parado).
+function Test-Numero($v) {
+  return ($null -ne $v) -and ($v -is [ValueType]) -and ($v -isnot [bool]) -and (-not [double]::IsNaN([double]$v)) -and (-not [double]::IsInfinity([double]$v)) -and ([double]$v -ge 0)
+}
+
+# Placa e vídeo: 3 leituras de todos os motores da placa (1 s entre elas).
+# Primeiro pelo contador de desempenho (nome em inglês, que já funcionou aqui); se não vier, pela classe CIM
+# Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine, que não muda com o idioma do Windows.
+# gpuOutrosPct = média das leituras da soma dos motores de outros programas.
 # Dos motores de vídeo só entrega os números crus; orquestra/paralelismo.js decide o que é decodificação.
+function Ler-MotoresGpu {
+  $leituras = @()
+  $contador = Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 3 -ErrorAction SilentlyContinue
+  if ($contador) {
+    $i = 0
+    foreach ($amostra in $contador) {
+      foreach ($a in $amostra.CounterSamples) { $leituras += [pscustomobject]@{ i = $i; n = $a.InstanceName; v = $a.CookedValue } }
+      $i++
+    }
+    return @{ amostras = $i; leituras = $leituras }
+  }
+  $n = 0
+  for ($i = 0; $i -lt 3; $i++) {
+    $cim = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue
+    if (-not $cim) { return $null }
+    foreach ($a in $cim) { $leituras += [pscustomobject]@{ i = $i; n = $a.Name; v = $a.UtilizationPercentage } }
+    $n++
+    if ($i -lt 2) { Start-Sleep -Seconds 1 }
+  }
+  return @{ amostras = $n; leituras = $leituras }
+}
+
 $gpuOutros = $null
 $videoAmostras = 0
 $videoMotores = @()
-$serie = Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 3 -ErrorAction SilentlyContinue
-if ($serie) {
-  $i = 0
-  $somas = @()
-  foreach ($amostra in $serie) {
-    $soma = 0
-    foreach ($a in $amostra.CounterSamples) {
-      if ($a.InstanceName -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
-        $soma += $a.CookedValue
-        if ($a.InstanceName -match 'video') {
-          $videoMotores += [pscustomobject]@{ i = $i; n = $a.InstanceName; v = [Math]::Round($a.CookedValue, 2) }
-        }
-      }
+$motores = Ler-MotoresGpu
+if ($motores -and $motores.amostras -ge 1) {
+  $somas = New-Object 'double[]' $motores.amostras
+  $valido = $true
+  $video = @()
+  foreach ($l in $motores.leituras) {
+    if ($l.n -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
+      if (-not (Test-Numero $l.v)) { $valido = $false; continue }
+      $somas[$l.i] += [double]$l.v
+      if ($l.n -match 'video') { $video += [pscustomobject]@{ i = $l.i; n = $l.n; v = [Math]::Round([double]$l.v, 2) } }
     }
-    $somas += $soma
-    $i++
   }
-  $videoAmostras = $i
-  if ($somas.Count -gt 0) { $gpuOutros = [Math]::Round([Math]::Min(100, ($somas | Measure-Object -Average).Average), 1) }
+  if ($valido) {
+    $gpuOutros = [Math]::Round([Math]::Min(100, ($somas | Measure-Object -Average).Average), 1)
+    $videoAmostras = $motores.amostras
+    $videoMotores = $video
+  }
 }
 
-# Processador: total da máquina e quanto é do Ollama. Cada processo (instância do contador) entra UMA vez:
-# nada de curinga por nome, que contava o mesmo processo mais de uma vez. O contador por processo vai de 0 a
-# 100 por núcleo, então quem lê divide pelo número de núcleos.
+# Processador: pelas classes CIM Win32_PerfFormattedData_*, que têm o mesmo nome em qualquer idioma do Windows
+# (os caminhos de Get-Counter como "\Processor(_Total)" são traduzidos e falhavam em português).
+# Total da máquina e soma dos processos do Ollama, cada processo UMA vez, achado pelo número (IDProcess), nunca
+# pelo nome. O valor por processo vai de 0 a 100 por núcleo, então quem lê divide pelo número de núcleos.
 $cpuTotal = $null
 $cpuMeu = $null
-$total = (Get-Counter '\Processor(_Total)\% Processor Time' -ErrorAction SilentlyContinue).CounterSamples
-if ($total) { $cpuTotal = [Math]::Round($total[0].CookedValue, 1) }
-$porProcesso = (Get-Counter '\Process(*)\% Processor Time' -ErrorAction SilentlyContinue).CounterSamples
-if ($porProcesso) {
-  $cpuMeu = 0
-  foreach ($s in $porProcesso) {
-    $nome = $s.InstanceName -replace '#\d+$', ''
-    if ($meus -contains $nome) { $cpuMeu += $s.CookedValue }
+$cpu = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction SilentlyContinue
+if ($cpu -and (Test-Numero $cpu.PercentProcessorTime)) { $cpuTotal = [Math]::Round([double]$cpu.PercentProcessorTime, 1) }
+$processos = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue
+if ($processos) {
+  $soma = 0
+  $valido = $true
+  foreach ($p in $processos) {
+    if ($pidsMeus -contains [int]$p.IDProcess) {
+      if (Test-Numero $p.PercentProcessorTime) { $soma += [double]$p.PercentProcessorTime } else { $valido = $false }
+    }
   }
-  $cpuMeu = [Math]::Round($cpuMeu, 1)
+  if ($valido) { $cpuMeu = [Math]::Round($soma, 1) }
 }
 
 $livre = $null
 $so = Get-CimInstance Win32_OperatingSystem
-if ($so -and $so.FreePhysicalMemory) { $livre = [Math]::Round($so.FreePhysicalMemory / 1MB, 2) }
+if ($so -and (Test-Numero $so.FreePhysicalMemory) -and $so.FreePhysicalMemory -gt 0) { $livre = [Math]::Round($so.FreePhysicalMemory / 1MB, 2) }
 
 [pscustomobject]@{
   ociosoSegundos = $ocioso

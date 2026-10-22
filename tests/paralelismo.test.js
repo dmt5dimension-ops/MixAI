@@ -140,7 +140,7 @@ test("falha de leitura NUNCA vira PC parado: null, texto, negativo, NaN, fora de
   }
   assert.strictEqual(decide(PARADO, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: tudo válido e parado mantém");
   // pela saída do script: contador que falhou vem null
-  const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [{ i: 0, n: "pid_1_engtype_video codec 0", v: 0 }], memoriaLivreGB: 6 };
+  const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [0, 1, 2].map((i) => ({ i, n: "pid_1_engtype_video codec 0", v: 0 })), memoriaLivreGB: 6 };
   for (const quebra of [{ ociosoSegundos: null }, { gpuOutrosPct: null }, { cpuTotalPct: null }, { cpuMeuPct: null }, { nucleos: null }, { videoAmostras: 0 }, { videoMotores: [] }, { memoriaLivreGB: null }]) {
     const leitura = par.lerSaida(JSON.stringify({ ...base, ...quebra }));
     assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, JSON.stringify(quebra));
@@ -160,9 +160,40 @@ test("CPU de outros programas: cada processo do Ollama conta uma vez, dividido p
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 30, cpuMeuPct: 80, nucleos: 0 }), null);
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: null, cpuMeuPct: 80, nucleos: 8 }), null);
   const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
-  assert.match(uso, /\\Process\(\*\)/);
+  // Windows em português traduz os caminhos de Get-Counter (\Processor, \Process): a CPU vem das classes CIM,
+  // que têm o mesmo nome em qualquer idioma, e o processo do Ollama é achado pelo número (IDProcess), não pelo nome.
+  assert.doesNotMatch(uso, /Get-Counter\s+['"]\\Process/i);
+  assert.match(uso, /Win32_PerfFormattedData_PerfOS_Processor/);
+  assert.match(uso, /Win32_PerfFormattedData_PerfProc_Process/);
+  assert.match(uso, /IDProcess/);
   assert.doesNotMatch(uso, /\\Process\(\$/, "curinga por nome contava o mesmo processo mais de uma vez");
-  assert.match(uso, /-replace '#\\d\+\$', ''/);
+});
+
+test("leitura inválida de contador (null, NaN, negativo, fora de faixa, amostra faltando) vira indisponível, nunca zero", () => {
+  const nome = "pid_4321_luid_0x0_0x1_phys_0_eng_5_engtype_video codec 0";
+  const tres = (v) => [0, 1, 2].map((i) => ({ i, n: nome, v }));
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: tres(2) }), 2, "controle");
+  for (const ruim of [null, undefined, NaN, "3", -1, 250, Infinity]) {
+    assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: tres(ruim) }), null, String(ruim));
+    const uma = tres(2);
+    uma[1] = { ...uma[1], v: ruim };
+    assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: uma }), null, `uma leitura ${String(ruim)}`);
+  }
+  // amostra sem nenhum motor de vídeo (faltou ler) não conta como zero
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: [tres(2)[0], tres(2)[2]] }), null);
+  // índice de amostra fora do intervalo
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: [...tres(2), { i: 7, n: nome, v: 1 }] }), null);
+  // e o decisor trata isso como em uso
+  const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, memoriaLivreGB: 6 };
+  const leitura = par.lerSaida(JSON.stringify({ ...base, videoMotores: tres(null) }));
+  assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1);
+  // o script não aceita número inválido: só sai número depois de Test-Numero
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /function Test-Numero/);
+  assert.match(uso, /Test-Numero \$l\.v/);
+  assert.match(uso, /Test-Numero \$cpu\.PercentProcessorTime/);
+  assert.match(uso, /Test-Numero \$p\.PercentProcessorTime/);
+  assert.match(uso, /Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine/);
 });
 
 test("sem histórico, o tempo que o PC já está parado conta como subida (parado há horas não começa em 1); mostra o regime", () => {

@@ -101,11 +101,18 @@ const motorDeDecodificacao = /engtype_(?:video\s*decode|video\s*codec)/i;
 function videoDecodeDe({ amostras, motores }, amostrasMinimas = 3) {
   if (!Number.isInteger(amostras) || amostras < amostrasMinimas) return null;
   const lista = Array.isArray(motores) ? motores : motores ? [motores] : [];
-  if (!lista.some((m) => /video/i.test(String(m?.n)))) return null;
+  const videos = lista.filter((m) => /video/i.test(String(m?.n)));
+  if (!videos.length) return null;
+  // Toda leitura de motor de vídeo tem que ser um número válido, de uma das amostras, e cada amostra tem que
+  // ter pelo menos um motor de vídeo. Leitura inválida ou faltando não pode virar zero (= "sem vídeo").
+  const vistas = new Set();
   const soma = new Array(amostras).fill(0);
-  for (const m of lista) {
-    if (motorDeDecodificacao.test(String(m?.n)) && Number.isInteger(m.i) && m.i >= 0 && m.i < amostras && Number.isFinite(m.v)) soma[m.i] += m.v;
+  for (const m of videos) {
+    if (!Number.isInteger(m.i) || m.i < 0 || m.i >= amostras || !numeroValido(m.v, 0, 100.0001)) return null;
+    vistas.add(m.i);
+    if (motorDeDecodificacao.test(String(m.n))) soma[m.i] += m.v;
   }
+  if (vistas.size !== amostras) return null;
   return Math.round((soma.reduce((a, b) => a + b, 0) / amostras) * 100) / 100;
 }
 
