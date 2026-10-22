@@ -4,7 +4,12 @@ const path = require('node:path');
 function normalizar(caminho, permitirRaiz = false) {
   if (typeof caminho !== 'string' || !caminho.trim()) return null;
   const barras = caminho.replace(/\\/g, '/');
-  if (barras.startsWith('/') || /^[a-zA-Z]:/.test(barras)) return null;
+  if (barras.startsWith('/') || /^[a-zA-Z]:/.test(barras) || barras.includes(':') || barras.includes('\0')) return null;
+  for (const segmento of barras.split('/')) {
+    const base = segmento.split('.')[0].replace(/[ .]+$/, '');
+    if (/^(con|nul|prn|aux|com[1-9]|lpt[1-9])$/i.test(base)) return null;
+    if (segmento !== '.' && segmento !== '..' && /[ .]$/.test(segmento)) return null;
+  }
   const relativo = path.posix.normalize(barras).replace(/\/+$/, '') || '.';
   if (relativo === '..' || relativo.startsWith('../')) return null;
   if (relativo === '.' && !permitirRaiz) return null;
@@ -17,16 +22,20 @@ function entradasDoEscopo(escopo) {
     if (typeof entrada !== 'string' || entrada.replace(/\\/g, '/').split('/').includes('..')) return [];
     const nome = normalizar(entrada, true);
     if (nome === null) return [];
-    // Sem barra final, nomes sem extensão representam pastas (como "src").
-    const pasta = nome === '.' || /[\\/]$/.test(entrada) || !path.posix.extname(nome);
-    return [{ nome: nome.toLowerCase(), pasta }];
+    // Pasta exige barra final; nomes sem extensão também podem ser arquivos.
+    const pasta = nome === '.' || /[\\/]$/.test(entrada);
+    return [{ nome: comparar(nome), pasta }];
   });
+}
+
+function comparar(nome) {
+  return process.platform === 'win32' ? nome.toLowerCase() : nome;
 }
 
 function permitido(entradas, arquivo) {
   const nome = normalizar(arquivo);
   if (nome === null) return false;
-  const comparado = nome.toLowerCase();
+  const comparado = comparar(nome);
   return entradas.some((entrada) => comparado === entrada.nome ||
     (entrada.pasta && (entrada.nome === '.' || comparado.startsWith(entrada.nome + '/'))));
 }
@@ -46,7 +55,7 @@ function caminhoComCaixaExistente(raiz, segmentos) {
   for (let i = 0; i < segmentos.length; i++) {
     const segmento = segmentos[i];
     const existentes = fs.readdirSync(atual, { withFileTypes: true });
-    const iguais = existentes.filter((item) => item.name.toLowerCase() === segmento.toLowerCase());
+    const iguais = existentes.filter((item) => comparar(item.name) === comparar(segmento));
     if (iguais.length > 1) throw new Error(`Nome ambíguo: ${segmento}`);
     atual = path.join(atual, iguais.length ? iguais[0].name : segmento);
     const estado = fs.lstatSync(atual, { throwIfNoEntry: false });
