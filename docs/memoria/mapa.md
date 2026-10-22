@@ -29,15 +29,6 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `chamarOllama` (linha 71)
   - `principal` (linha 86)
 - `local/vigia-prioridade.ps1` — Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)
-- `orquestra/aplicar.js`
-  - `normalizar` (linha 4)
-  - `entradasDoEscopo` (linha 19)
-  - `comparar` (linha 31)
-  - `permitido` (linha 35)
-  - `conferirAlterados` (linha 43)
-  - `dentroDaRaiz` (linha 48)
-  - `caminhoComCaixaExistente` (linha 53)
-  - `aplicarResposta` (linha 73)
 - `orquestra/chamar.js`
   - `detectarLimite` (linha 10)
   - `limiteNaSaida` (linha 14)
@@ -92,8 +83,6 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `buscar` (linha 150)
   - `principal` (linha 161)
 - `orquestra/trocar.ps1` — Troca manualmente quem está sem cota.
-- `tests/aplicar.test.js`
-  - `emRaizTemporaria` (linha 9)
 - `tests/canal-coordenacao.test.js` — Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.
   - `ler` (linha 8)
 - `tests/escada.test.js` — Testa a escada: tarefa vai primeiro ao modelo local; se falhar sobe para Codex/Claude;
@@ -143,6 +132,8 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `rodar` (linha 35)
 - `tests/regra-modelo-local.test.js` — Trava a regra do AGENTS.md que diz quando o planejador pode mandar tarefa para o modelo local.
   - `secao` (linha 9)
+- `tests/regras-locais.test.js` — Trava as regras que o modelo local (Qwen) aprendeu de verdade: orquestra/regras-locais.json.
+  - `ids` (linha 23)
 - `tests/smoke.test.js`
 - `tests/trava-de-escopo.test.js` — Testa a trava de escopo (.github/scripts/trava_de_escopo.py) num repositório git temporário.
   - `repoCom` (linha 12)
@@ -164,10 +155,10 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
 - Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
 - Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) — `tests/preparar-repo.test.js`
+- Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo` — `tests/regras-locais.test.js`
 - Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso — `tests/preparar-repo.test.js`
 - Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` — `tests/canal-coordenacao.test.js`
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
 - Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
-- Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar — `tests/aplicar.test.js`
 - Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) — `tests/mapa.test.js`

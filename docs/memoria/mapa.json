@@ -112,48 +112,6 @@
       "funcoes": []
     },
     {
-      "arquivo": "orquestra/aplicar.js",
-      "descricao": "",
-      "funcoes": [
-        {
-          "nome": "normalizar",
-          "linha": 4
-        },
-        {
-          "nome": "entradasDoEscopo",
-          "linha": 19
-        },
-        {
-          "nome": "comparar",
-          "linha": 31
-        },
-        {
-          "nome": "permitido",
-          "linha": 35
-        },
-        {
-          "nome": "conferirAlterados",
-          "linha": 43
-        },
-        {
-          "nome": "dentroDaRaiz",
-          "linha": 48
-        },
-        {
-          "nome": "caminhoComCaixaExistente",
-          "linha": 53
-        },
-        {
-          "nome": "aplicarResposta",
-          "linha": 73
-        }
-      ],
-      "exporta": [
-        "aplicarResposta",
-        "conferirAlterados"
-      ]
-    },
-    {
       "arquivo": "orquestra/chamar.js",
       "descricao": "",
       "funcoes": [
@@ -403,17 +361,6 @@
       "funcoes": []
     },
     {
-      "arquivo": "tests/aplicar.test.js",
-      "descricao": "",
-      "funcoes": [
-        {
-          "nome": "emRaizTemporaria",
-          "linha": 9
-        }
-      ],
-      "exporta": []
-    },
-    {
       "arquivo": "tests/canal-coordenacao.test.js",
       "descricao": "Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.",
       "funcoes": [
@@ -642,6 +589,17 @@
       "exporta": []
     },
     {
+      "arquivo": "tests/regras-locais.test.js",
+      "descricao": "Trava as regras que o modelo local (Qwen) aprendeu de verdade: orquestra/regras-locais.json.",
+      "funcoes": [
+        {
+          "nome": "ids",
+          "linha": 23
+        }
+      ],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/smoke.test.js",
       "descricao": "",
       "funcoes": [],
@@ -739,6 +697,12 @@
       ]
     },
     {
+      "o_que": "Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo`",
+      "testes": [
+        "tests/regras-locais.test.js"
+      ]
+    },
+    {
       "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
@@ -767,12 +731,6 @@
       "testes": [
         "tests/escada.test.js",
         "tests/falhas-escada.test.js"
-      ]
-    },
-    {
-      "o_que": "Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar",
-      "testes": [
-        "tests/aplicar.test.js"
       ]
     },
     {

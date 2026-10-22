@@ -1,4 +1,20 @@
 {
   "aviso": "Regras que o modelo local (mixai-local) recebe junto com a tarefa. Só entra regra com status confirmada. Quem escreve é o node orquestra/escada.js, depois que o local acertou usando a regra.",
-  "regras": []
+  "regras": [
+    {
+      "id": "teste-mesmo-arquivo",
+      "palavras": [
+        "mesmo arquivo",
+        "caminhos equivalentes"
+      ],
+      "regra": "Use apenas as funções e módulos já disponíveis, respeitando exatamente o formato de saída pedido. Para provar que dois caminhos representam o mesmo arquivo, crie o destino esperado antes da chamada e verifique que seu conteúdo mudou e que nenhum segundo arquivo apareceu.",
+      "exemplo": {
+        "entrada": "Escopo ['src/a.js']; aplicarResposta recebe './src/A.js'.",
+        "saida": "Um único bloco test(...) que confirma o conteúdo de src/a.js e que a pasta src contém apenas a.js."
+      },
+      "status": "confirmada",
+      "criadaEm": "2026-10-22T00:17:44.376Z",
+      "origem": "codex"
+    }
+  ]
 }
