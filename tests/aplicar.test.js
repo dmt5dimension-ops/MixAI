@@ -24,11 +24,16 @@ test('recusa arquivo fora do escopo antes de criar pastas ou sobrescrever', () =
   assert.equal(fs.existsSync(path.join(raiz, 'src/b.js')), false);
 }));
 
-test('recusa fuga por .. mesmo se o escopo também tentar sair da raiz', () => emRaizTemporaria((raiz) => {
-  const fora = path.join(path.dirname(raiz), `fora-${path.basename(raiz)}.js`);
-  assert.throws(() => aplicarResposta({ raiz, escopo: ['../fora.js'], arquivo: '../fora.js', conteudo: 'x' }));
-  assert.equal(fs.existsSync(fora), false);
-}));
+test('recusa fuga por .. mesmo se o escopo também tentar sair da raiz', () => {
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), 'mixai-limite-'));
+  const raiz = path.join(pasta, 'raiz');
+  const fora = path.join(pasta, 'fora.js');
+  try {
+    fs.mkdirSync(raiz);
+    assert.throws(() => aplicarResposta({ raiz, escopo: ['../fora.js'], arquivo: '../fora.js', conteudo: 'x' }));
+    assert.equal(fs.existsSync(fora), false);
+  } finally { fs.rmSync(pasta, { recursive: true, force: true }); }
+});
 
 test('escopo de arquivo não libera nomes parecidos nem um filho', () => emRaizTemporaria((raiz) => {
   for (const arquivo of ['src/a.js.bak', 'src/ab.js', 'src/a.js/filho']) {
