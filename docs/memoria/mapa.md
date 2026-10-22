@@ -29,6 +29,14 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `chamarOllama` (linha 71)
   - `principal` (linha 86)
 - `local/vigia-prioridade.ps1` — Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)
+- `orquestra/aplicar.js`
+  - `normalizar` (linha 4)
+  - `entradasDoEscopo` (linha 14)
+  - `permitido` (linha 26)
+  - `conferirAlterados` (linha 34)
+  - `dentroDaRaiz` (linha 39)
+  - `caminhoComCaixaExistente` (linha 44)
+  - `aplicarResposta` (linha 64)
 - `orquestra/chamar.js`
   - `detectarLimite` (linha 10)
   - `limiteNaSaida` (linha 14)
@@ -83,6 +91,8 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `buscar` (linha 150)
   - `principal` (linha 161)
 - `orquestra/trocar.ps1` — Troca manualmente quem está sem cota.
+- `tests/aplicar.test.js`
+  - `emRaizTemporaria` (linha 9)
 - `tests/canal-coordenacao.test.js` — Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.
   - `ler` (linha 8)
 - `tests/escada.test.js` — Testa a escada: tarefa vai primeiro ao modelo local; se falhar sobe para Codex/Claude;
@@ -161,4 +171,5 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
 - Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
+- Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo — `tests/aplicar.test.js`
 - Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) — `tests/mapa.test.js`
