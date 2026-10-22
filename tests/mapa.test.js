@@ -66,6 +66,21 @@ test("o mapa acha funções com recuo, métodos, arrows aninhadas, e não confun
   assert.deepStrictEqual(f.exporta, ["externa"]);
 });
 
+test("chamada ou comentário cujo texto menciona function não vira declaração", () => {
+  const raiz = repoFalso();
+  fs.writeFileSync(path.join(raiz, "src/texto.js"), [
+    "function real() {}",
+    "grava(\"a.js\", \"function falsa1(a) {\\n}\");",
+    "grava('b.js', 'function falsa2() {}');",
+    "grava(`function falsa3() {}`);",
+    "// function falsa4() {}",
+    "const x = 1; // function falsa5() {",
+    "",
+  ].join("\n"));
+  const f = mapa.construir(raiz).arquivos.find((a) => a.arquivo === "src/texto.js");
+  assert.deepStrictEqual(f.funcoes.map((x) => x.nome), ["real"]);
+});
+
 test("o mapa guarda o que já foi feito e qual teste trava cada coisa", () => {
   const m = mapa.construir(repoFalso());
   assert.deepStrictEqual(m.feitos, [

@@ -306,36 +306,40 @@
           "linha": 23
         },
         {
+          "nome": "semTextos",
+          "linha": 30
+        },
+        {
           "nome": "lerArquivo",
-          "linha": 29
+          "linha": 37
         },
         {
           "nome": "lerFeitos",
-          "linha": 55
+          "linha": 64
         },
         {
           "nome": "construir",
-          "linha": 70
+          "linha": 79
         },
         {
           "nome": "emTexto",
-          "linha": 74
+          "linha": 83
         },
         {
           "nome": "gerar",
-          "linha": 85
+          "linha": 94
         },
         {
           "nome": "conferir",
-          "linha": 93
+          "linha": 102
         },
         {
           "nome": "buscar",
-          "linha": 103
+          "linha": 112
         },
         {
           "nome": "principal",
-          "linha": 114
+          "linha": 123
         }
       ],
       "exporta": [
@@ -501,14 +505,6 @@
         {
           "nome": "grava",
           "linha": 14
-        },
-        {
-          "nome": "grava",
-          "linha": 18
-        },
-        {
-          "nome": "grava",
-          "linha": 20
         }
       ],
       "exporta": []

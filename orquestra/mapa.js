@@ -26,6 +26,14 @@ function descricao(linhas, marca) {
   return l.startsWith(marca) ? l.slice(marca.length).trim() : '';
 }
 
+// Esvazia strings e comentários da linha, para que texto dentro deles nunca pareça código.
+function semTextos(linha, js) {
+  if (!js) return linha.replace(/#.*$/, '');
+  return linha
+    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '""')
+    .replace(/\/\/.*$/, '');
+}
+
 function lerArquivo(raiz, rel) {
   const linhas = fs.readFileSync(path.join(raiz, rel), 'utf8').split(/\r?\n/);
   const js = rel.endsWith('.js');
@@ -39,8 +47,9 @@ function lerArquivo(raiz, rel) {
     : [/^\s*function\s+([\w-]+)/i];
   const funcoes = [];
   linhas.forEach((l, i) => {
+    const limpa = semTextos(l, js);
     for (const r of regras) {
-      const m = r.exec(l);
+      const m = r.exec(limpa);
       if (m) { funcoes.push({ nome: m[1], linha: i + 1 }); break; }
     }
   });

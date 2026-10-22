@@ -72,14 +72,15 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - `orquestra/mapa.js` — Mapa do código e da memória: onde fica cada função e o que já foi feito.
   - `listar` (linha 10)
   - `descricao` (linha 23)
-  - `lerArquivo` (linha 29)
-  - `lerFeitos` (linha 55)
-  - `construir` (linha 70)
-  - `emTexto` (linha 74)
-  - `gerar` (linha 85)
-  - `conferir` (linha 93)
-  - `buscar` (linha 103)
-  - `principal` (linha 114)
+  - `semTextos` (linha 30)
+  - `lerArquivo` (linha 37)
+  - `lerFeitos` (linha 64)
+  - `construir` (linha 79)
+  - `emTexto` (linha 83)
+  - `gerar` (linha 94)
+  - `conferir` (linha 102)
+  - `buscar` (linha 112)
+  - `principal` (linha 123)
 - `orquestra/trocar.ps1` — Troca manualmente quem está sem cota.
 - `tests/canal-coordenacao.test.js` — Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.
   - `ler` (linha 8)
@@ -115,8 +116,6 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - `tests/mapa.test.js` — Testa o mapa do código e da memória (orquestra/mapa.js): índice de onde fica cada função e do que já foi feito.
   - `repoFalso` (linha 12)
   - `grava` (linha 14)
-  - `grava` (linha 18)
-  - `grava` (linha 20)
 - `tests/modelo-local.test.js` — Testa a configuração dos modos dia/noite do modelo local (local/modos.json e local/modo.ps1).
   - `criarApelidoComOllamaFalso` (linha 14)
 - `tests/papeis.test.js` — Testa a troca de papéis entre Claude, Codex e o modelo local (orquestra/).
