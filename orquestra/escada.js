@@ -277,7 +277,7 @@ function matarArvore(filho, { plataforma = process.platform, executar = spawnSyn
       const vivos = filho.arvore.filter((e) => mesmo(linhas, e)); // leitura imediatamente antes do taskkill
       if (vivos.length) executar('taskkill', ['/F', '/T', ...vivos.flatMap((e) => ['/pid', String(e.pid)])], opcoes);
       const depois = lerProcessos(executar, filho.arvore.map((e) => e.pid));
-      if (depois && !filho.arvore.some((e) => mesmo(depois, e))) return true;
+      if (depois && !filho.arvore.some((e) => mesmo(depois, e))) { filho.mortoConfirmado = true; return true; }
     }
     console.error(`não consegui confirmar a morte da árvore do processo ${filho.pid}; o lote vai parar se não conseguir`);
     return false;
@@ -419,8 +419,10 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fot
     filho.on('close', (codigo) => {
       if (terminou) return;
       // O shell fechou: se ficou descendente vivo (sem pipe), o 'close' não prova que acabou. Mata e confere.
+      // Se o aborto já confirmou a morte da árvore inteira (leitura + taskkill + conferência), repetir a conferência só
+      // gasta mais duas chamadas do PowerShell (vários segundos no Windows).
       let sobrou;
-      try { sobrou = orfaos(filho); } catch { sobrou = null; }
+      try { sobrou = filho.mortoConfirmado ? [] : orfaos(filho); } catch { sobrou = null; }
       if (sobrou === null || sobrou === undefined) return naoConfirmado(`o shell do processo ${filho.pid} fechou e não consegui conferir se sobrou descendente vivo (leitura da árvore falhou)`);
       if (sobrou.length) return naoConfirmado(`o shell do processo ${filho.pid} fechou, mas ${sobrou.length} descendente(s) continuam vivos e não morreram`);
       if (codigo === 0 && !estourou) fim(resolve, saida);

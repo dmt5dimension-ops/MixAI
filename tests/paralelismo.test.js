@@ -857,3 +857,19 @@ test("a foto periódica não bloqueia o Node: a promessa da foto lenta não impe
   assert.ok(fotoComecou);
   assert.ok(matouEm < 1000, `o aborto foi tratado em ${matouEm} ms, sem esperar a foto lenta`);
 });
+
+test("depois de um aborto com morte confirmada, o fechamento NÃO repete a conferência dos órfãos (custa duas chamadas do PowerShell)", async () => {
+  const ctl = new AbortController();
+  let conferencias = 0;
+  const chamada = escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, {
+    plataforma: "win32", fixar: (f) => { f.raiz = { pid: f.pid, criacao: "1" }; f.raizEstado = "conhecida"; }, fotoMs: 100000,
+    matar: (f) => { matarGrupo(f.pid); f.mortoConfirmado = true; return true; },
+    orfaos: () => { conferencias += 1; return []; },
+  })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 100);
+  await assert.rejects(chamada);
+  assert.strictEqual(conferencias, 0);
+  // fim normal (sem aborto): a conferência continua sendo feita
+  await escada.chamarComando("echo oi", { plataforma: "win32", fixar: (f) => { f.raizEstado = "perdida"; }, fotoMs: 100000, orfaos: () => { conferencias += 1; return []; } })("x");
+  assert.strictEqual(conferencias, 1);
+});
