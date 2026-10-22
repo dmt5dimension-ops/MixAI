@@ -318,132 +318,136 @@
           "linha": 22
         },
         {
-          "nome": "esperar",
+          "nome": "tem",
           "linha": 24
         },
         {
+          "nome": "esperar",
+          "linha": 26
+        },
+        {
           "nome": "comRetentativa",
-          "linha": 31
+          "linha": 33
         },
         {
           "nome": "listaDeTextos",
-          "linha": 41
-        },
-        {
-          "nome": "formaInvalida",
           "linha": 43
         },
         {
+          "nome": "formaInvalida",
+          "linha": 45
+        },
+        {
           "nome": "carregar",
-          "linha": 57
+          "linha": 59
         },
         {
           "nome": "salvar",
-          "linha": 71
+          "linha": 73
         },
         {
           "nome": "processoVivo",
-          "linha": 83
+          "linha": 85
         },
         {
           "nome": "atualizar",
-          "linha": 98
+          "linha": 100
         },
         {
           "nome": "nome",
-          "linha": 103
+          "linha": 105
         },
         {
           "nome": "geracoes",
-          "linha": 104
+          "linha": 106
         },
         {
           "nome": "idade",
-          "linha": 107
-        },
-        {
-          "nome": "ler",
           "linha": 109
         },
         {
-          "nome": "lerOuErro",
-          "linha": 110
-        },
-        {
-          "nome": "criar",
+          "nome": "ler",
           "linha": 111
         },
         {
+          "nome": "lerOuErro",
+          "linha": 112
+        },
+        {
+          "nome": "criar",
+          "linha": 113
+        },
+        {
           "nome": "solta",
-          "linha": 119
+          "linha": 121
         },
         {
           "nome": "pegar",
-          "linha": 165
+          "linha": 170
         },
         {
           "nome": "adicionar",
-          "linha": 171
+          "linha": 176
         },
         {
           "nome": "feita",
-          "linha": 190
+          "linha": 196
         },
         {
           "nome": "prontas",
-          "linha": 192
+          "linha": 198
         },
         {
           "nome": "travadas",
-          "linha": 197
+          "linha": 203
         },
         {
           "nome": "mudar",
-          "linha": 207
-        },
-        {
-          "nome": "iniciar",
           "linha": 213
         },
         {
+          "nome": "iniciar",
+          "linha": 219
+        },
+        {
           "nome": "revisar",
-          "linha": 221
+          "linha": 227
         },
         {
           "nome": "devolver",
-          "linha": 228
+          "linha": 234
         },
         {
           "nome": "concluir",
-          "linha": 237
-        },
-        {
-          "nome": "falhar",
           "linha": 243
         },
         {
-          "nome": "validar",
-          "linha": 250
+          "nome": "falhar",
+          "linha": 249
         },
         {
-          "nome": "visita",
+          "nome": "validar",
           "linha": 256
         },
         {
+          "nome": "visita",
+          "linha": 269
+        },
+        {
           "nome": "resumo",
-          "linha": 275
+          "linha": 288
         },
         {
           "nome": "opcao",
-          "linha": 282
+          "linha": 295
         },
         {
           "nome": "principal",
-          "linha": 290
+          "linha": 303
         },
         {
           "nome": "virgulas",
-          "linha": 292
+          "linha": 305
         }
       ],
       "exporta": [
@@ -694,6 +698,10 @@
         {
           "nome": "cli",
           "linha": 399
+        },
+        {
+          "nome": "com",
+          "linha": 440
         }
       ],
       "exporta": []

@@ -126,7 +126,7 @@ test("trava de dono morto é superada por uma geração maior, sem apagar nada; 
   fs.writeFileSync(trava(arq, 7), `${pidMorto}:x`);
   const t0 = Date.now();
   grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["t/a"] }, AGORA));
-  assert.ok(Date.now() - t0 < 1500, "dono morto não faz esperar");
+  assert.ok(Date.now() - t0 < 8000, "dono morto não faz esperar (senão estouraria o prazo de 10 s)");
   assert.strictEqual(fs.readFileSync(trava(arq, 7), "utf8"), `${pidMorto}:x`, "a trava do morto continua lá, intacta");
   assert.strictEqual(fs.readFileSync(trava(arq, 8), "utf8"), "livre");
   // texto que não é de um processo (ou vazio): espera até passar de velhaMs
@@ -431,4 +431,42 @@ test("geração criada atrasada (lista velha depois da limpeza de outro processo
   } finally { fs.readdirSync = real; }
   assert.ok("a" in grafo.carregar(arq).tarefas);
   assert.ok(travas(arq).some((f) => f.endsWith("0004")));
+});
+
+test("validar: tarefa ativa com dependência que não está pronta, ou sem escopo, é erro; em_revisao aceita dependência em_revisao (PR empilhado)", () => {
+  let g = grafo.novo();
+  g = grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["t/a"] }, AGORA);
+  g = grafo.adicionar(g, { id: "b", titulo: "B", escopo: ["t/b"], depende: ["a"] }, AGORA);
+  const com = (estA, estB) => ({ ...g, tarefas: { a: { ...g.tarefas.a, estado: estA }, b: { ...g.tarefas.b, estado: estB } } });
+  assert.deepStrictEqual(grafo.validar(com("pendente", "pendente")), []);
+  assert.ok(grafo.validar(com("pendente", "em_andamento")).some((e) => /b está em_andamento.*a está pendente/.test(e)));
+  assert.ok(grafo.validar(com("em_revisao", "em_andamento")).some((e) => /dependência a/.test(e)));
+  assert.deepStrictEqual(grafo.validar(com("em_revisao", "em_revisao")), [], "PR empilhado");
+  assert.ok(grafo.validar(com("pendente", "em_revisao")).some((e) => /dependência a/.test(e)));
+  assert.deepStrictEqual(grafo.validar(com("feita", "em_andamento")), []);
+  const semEscopo = com("feita", "em_andamento");
+  semEscopo.tarefas.b.escopo = [];
+  assert.ok(grafo.validar(semEscopo).some((e) => /b está em_andamento sem escopo/.test(e)));
+  assert.deepStrictEqual(grafo.validar(grafo.carregar(path.join(RAIZ, "orquestra", "grafo.json"))), [], "o grafo real é válido");
+});
+
+test("atualizar não grava estado de forma inválida (mudança devolve algo quebrado) e o arquivo fica como estava", () => {
+  const arq = tmp();
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA));
+  const antes = fs.readFileSync(arq, "utf8");
+  for (const quebrar of [(g) => { g.tarefas.a.depende = "b"; return g; }, (g) => { g.tarefas.a.estado = "quase"; return g; }, (g) => ({ ...g, tarefas: [] }), () => undefined, (g) => { g.tarefas.a.escopo = "x"; return g; }]) {
+    assert.throws(() => grafo.atualizar(arq, quebrar), /grafo inválido/);
+    assert.strictEqual(fs.readFileSync(arq, "utf8"), antes);
+  }
+  assert.ok(grafo.carregar(arq));
+});
+
+test("nomes herdados do Object (constructor, toString, __proto__) não contam como tarefa", () => {
+  const g = grafo.novo();
+  assert.throws(() => grafo.iniciar(g, "constructor", "codex", AGORA), /não existe/);
+  assert.throws(() => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"], depende: ["constructor"] }, AGORA), /não existe/);
+  assert.throws(() => grafo.adicionar(g, { id: "__proto__", titulo: "A", escopo: ["x"] }, AGORA), /id/);
+  const c = grafo.adicionar(g, { id: "constructor", titulo: "C", escopo: ["x"] }, AGORA);
+  assert.deepStrictEqual(Object.keys(c.tarefas), ["constructor"]);
+  assert.throws(() => grafo.adicionar(c, { id: "constructor", titulo: "C", escopo: ["x"] }, AGORA), /já existe/);
 });

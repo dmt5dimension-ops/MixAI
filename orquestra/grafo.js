@@ -1,5 +1,5 @@
 // Grafo persistente de tarefas: quem depende de quem, em que estado está cada uma e quem a executa.
-// Fica em orquestra/grafo.json (versionado no git). O supervisor e a escada leem e gravam o mesmo arquivo.
+// Fica em orquestra/grafo.json (versionado no git). Quem o usa hoje é o planejador (e o Codex), pela linha de comando; o vigia e a escada ainda não o chamam.
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -20,6 +20,8 @@ const normaliza = (p) => {
 };
 const sobrepoe = (a, b) => a === b || a === '' || b === '' || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 const lista = (g) => Object.values(g.tarefas);
+// Só propriedades próprias: `constructor`, `toString` etc. herdados do Object não são tarefas.
+const tem = (g, id) => Object.hasOwn(g.tarefas, id);
 
 function esperar(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -149,6 +151,9 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
   try {
     for (const n of geracoes()) if (n < minha - 20) { try { fs.rmSync(nome(n), { force: true }); } catch { /* fica para a próxima */ } }
     const novoGrafo = mudanca(carregar(arquivo));
+    const bruto = !novoGrafo || novoGrafo.versao !== 1 || typeof novoGrafo.tarefas !== 'object' || novoGrafo.tarefas === null || Array.isArray(novoGrafo.tarefas);
+    const forma = bruto ? 'formato do grafo' : formaInvalida(novoGrafo);
+    if (forma) throw new Error(`grafo inválido: ${forma}; nada foi gravado`);
     const erros = validar(novoGrafo);
     if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
     const maisNova = geracoes().some((n) => n > minha);
@@ -163,7 +168,7 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
 }
 
 function pegar(g, id) {
-  const t = g.tarefas[id];
+  const t = tem(g, id) ? g.tarefas[id] : null;
   if (!t) throw new Error(`tarefa ${id} não existe`);
   return t;
 }
@@ -171,14 +176,15 @@ function pegar(g, id) {
 function adicionar(g, dados, agora = new Date().toISOString()) {
   const id = dados.id;
   if (typeof id !== 'string' || !/^[\w.-]+$/.test(id)) throw new Error('a tarefa precisa de id (letras, números, ponto, hífen)');
-  if (g.tarefas[id]) throw new Error(`tarefa ${id} já existe`);
+  if (id === '__proto__') throw new Error('id inválido: __proto__');
+  if (tem(g, id)) throw new Error(`tarefa ${id} já existe`);
   if (!dados.titulo) throw new Error(`tarefa ${id} precisa de título`);
   if (dados.agente != null && !agentes.includes(dados.agente)) throw new Error(`agente inválido: ${dados.agente} (use ${agentes.join(', ')})`);
   if (!Array.isArray(dados.escopo) || !dados.escopo.length || dados.escopo.some((e) => typeof e !== 'string' || !e.trim())) throw new Error(`tarefa ${id} precisa de escopo (lista de arquivos ou pastas que ela pode mudar)`);
   if (dados.depende != null && !listaDeTextos(dados.depende)) throw new Error(`tarefa ${id}: depende precisa ser uma lista de ids`);
   const depende = dados.depende || [];
   if (depende.includes(id)) throw new Error(`ciclo: ${id} depende de si mesma`);
-  for (const d of depende) if (!g.tarefas[d]) throw new Error(`dependência ${d} não existe`);
+  for (const d of depende) if (!tem(g, d)) throw new Error(`dependência ${d} não existe`);
   const novoGrafo = copia(g);
   novoGrafo.tarefas[id] = {
     id, titulo: dados.titulo, estado: 'pendente', depende, agente: dados.agente ?? null,
@@ -187,7 +193,7 @@ function adicionar(g, dados, agora = new Date().toISOString()) {
   return novoGrafo;
 }
 
-const feita = (g, id) => g.tarefas[id]?.estado === 'feita';
+const feita = (g, id) => tem(g, id) && g.tarefas[id].estado === 'feita';
 
 function prontas(g) {
   return lista(g).filter((t) => t.estado === 'pendente' && t.depende.every((d) => feita(g, d)));
@@ -196,7 +202,7 @@ function prontas(g) {
 // Pendentes que nunca vão ficar prontas porque uma dependência (direta ou indireta) falhou de vez.
 function travadas(g) {
   const bloqueada = (t, visto = new Set()) => t.depende.some((d) => {
-    const dep = g.tarefas[d];
+    const dep = tem(g, d) ? g.tarefas[d] : null;
     if (!dep || visto.has(d)) return false;
     visto.add(d);
     return dep.estado === 'falhou' || (dep.estado === 'pendente' && bloqueada(dep, visto));
@@ -250,11 +256,18 @@ function falhar(g, id, motivo, agora = new Date().toISOString(), limite = limite
 function validar(g) {
   const erros = [];
   for (const t of lista(g)) {
-    for (const d of t.depende) if (!g.tarefas[d]) erros.push(`${t.id}: dependência ${d} não existe`);
+    for (const d of t.depende) if (!tem(g, d)) erros.push(`${t.id}: dependência ${d} não existe`);
+    // Trabalho ativo só existe com as dependências prontas. `em_revisao` aceita dependência também `em_revisao`
+    // (PR empilhado sobre outro ainda em revisão); `em_andamento` exige `feita`. O escopo de quem está ativo não pode ser vazio.
+    if (t.estado === 'em_andamento' || t.estado === 'em_revisao') {
+      const aceitos = t.estado === 'em_andamento' ? ['feita'] : ['feita', 'em_revisao'];
+      for (const d of t.depende) if (tem(g, d) && !aceitos.includes(g.tarefas[d].estado)) erros.push(`${t.id} está ${t.estado} mas a dependência ${d} está ${g.tarefas[d].estado}`);
+      if (!t.escopo.length) erros.push(`${t.id} está ${t.estado} sem escopo`);
+    }
   }
   const estado = {};
   const visita = (id, trilha) => {
-    if (estado[id] === 2 || !g.tarefas[id]) return;
+    if (estado[id] === 2 || !tem(g, id)) return;
     if (estado[id] === 1) { erros.push(`ciclo: ${[...trilha.slice(trilha.indexOf(id)), id].join(' -> ')}`); return; }
     estado[id] = 1;
     for (const d of g.tarefas[id].depende) visita(d, [...trilha, id]);
