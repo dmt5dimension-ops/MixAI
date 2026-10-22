@@ -214,6 +214,8 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
   // é conferida (`orfaos`); descendente vivo que não morre ou conferência impossível também é `naoConfirmado`.
   return (prompt, signal) => new Promise((resolve, reject) => {
     if (!lancar && plataforma !== 'win32') return reject(new Error('plataforma sem contenção garantida: o orquestrador com paralelismo só roda no Windows (Job Object); nada foi executado'));
+    // Já abortado: nem arquivo nem processo são criados (nada pode rodar nem escrever).
+    if (signal?.aborted) return reject(Object.assign(new Error('chamada abortada'), { abortada: true }));
     // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
     // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
     const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);

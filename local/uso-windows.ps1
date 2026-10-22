@@ -95,8 +95,11 @@ if ($motores -and $motores.amostras -ge 1) {
     # Qualquer motor de GPU fora do formato pid_<n>_ invalida a medida inteira (null): não dá para saber de quem ele é.
     if ($l.n -notmatch 'pid_(\d+)_') { $valido = $false; continue }
     $amostrasComPid[[int]$l.i] = $true
-    if ($l.n -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
-      if (-not (Test-Numero $l.v)) { $valido = $false; continue }
+    # Toda linha de motor tem que ter valor válido (e Status válido, já tratado na leitura), seja de quem for, inclusive do
+    # próprio Ollama: uma linha inválida invalida a medida inteira antes de qualquer filtro por dono.
+    if (-not (Test-Numero $l.v)) { $valido = $false; continue }
+    $pidDono = [int][regex]::Match($l.n, 'pid_(\d+)_').Groups[1].Value
+    if ($pidsMeus -notcontains $pidDono) {
       $somas[$l.i] += [double]$l.v
       if ($l.n -match 'video') { $video += [pscustomobject]@{ i = $l.i; n = $l.n; v = [Math]::Round([double]$l.v, 2) } }
     }

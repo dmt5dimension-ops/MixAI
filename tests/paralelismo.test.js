@@ -1152,3 +1152,29 @@ test("aborto que chega DURANTE a conferência do job conta: a chamada rejeita co
     (erro) => erro.abortada === true,
   );
 });
+
+test("sinal já abortado antes da chamada: não cria arquivo nem processo (o comando não escreve o arquivo-marca)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "abortado-antes-"));
+  const marca = path.join(dir, "rodou");
+  const ctl = new AbortController();
+  ctl.abort();
+  let lancou = 0;
+  const { spawn } = require("node:child_process");
+  const lancar = (comando, fd) => { lancou += 1; return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] }); };
+  await assert.rejects(
+    chamar(`require('fs').writeFileSync(${JSON.stringify(marca)}, 'x')`, { plataforma: "win32", lancar, orfaos: () => [] })("x", ctl.signal),
+    (erro) => erro.abortada === true,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(lancou, 0, "o processo nem foi lançado");
+  assert.strictEqual(fs.existsSync(marca), false, "o comando não escreveu nada");
+});
+
+test("uso-windows.ps1: toda linha de motor tem valor validado ANTES de filtrar por dono (linha inválida do próprio Ollama também dá null)", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  const valida = uso.search(/if \(-not \(Test-Numero \$l\.v\)\) \{ \$valido = \$false; continue \}/);
+  const filtra = uso.search(/\$pidsMeus -notcontains \$pidDono/);
+  assert.ok(valida >= 0 && filtra >= 0, "as duas linhas existem");
+  assert.ok(valida < filtra, "validação vem antes do filtro por dono");
+  assert.match(uso, /\$a\.Status -eq 0 -or \$a\.Status -eq 1/, "o Status inválido vira null na leitura");
+});
