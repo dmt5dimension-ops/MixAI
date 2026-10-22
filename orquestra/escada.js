@@ -184,8 +184,8 @@ function arvoreDe(pid, executar = spawnSync) {
   if (!linhas) return null;
   const pids = criacaoDe.has(pid) ? [pid] : [];
   for (let i = -1; i < pids.length; i++) for (const f of filhos.get(i < 0 ? pid : pids[i]) || []) if (!pids.includes(f) && f !== pid) pids.push(f);
-  // Raiz já sumida e nenhum descendente achado: inconclusivo (a árvore ficou sem raiz).
-  if (!pids.length) return null;
+  // Leitura válida sem a raiz e sem descendentes: o comando já acabou e não deixou nada (comando rápido normal). É
+  // "limpo" ([]), não inconclusivo; `null` fica só para a leitura que falhou de verdade.
   // Cada item leva o PID E a hora de criação: um PID reaproveitado por outro programa tem outra hora de criação e
   // nunca é confundido com o processo da foto.
   return pids.map((p) => ({ pid: p, criacao: criacaoDe.get(p) }));
@@ -329,7 +329,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fot
     // Windows: fotografa a árvore de tempos em tempos, para o órfão de um intermediário que morreu ainda constar da lista.
     if (plataforma === 'win32') {
       const foto = () => { try { filho.arvore = juntarPids(filho.arvore, fotografar(filho)); } catch { /* a próxima tenta */ } };
-      setTimeout(foto, 200).unref?.();
+      foto(); // logo depois do spawn, com o shell ainda vivo: um comando rápido pode fechar antes da foto periódica
       fotos = setInterval(foto, fotoMs);
       fotos.unref?.();
     }

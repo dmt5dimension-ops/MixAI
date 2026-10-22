@@ -490,8 +490,8 @@ test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando C
     const semFoto = (codigo) => (cmd) => (cmd === "powershell" ? { status: 1 } : { status: codigo });
     assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto(0), vivo: () => false }), false);
     assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto(128), vivo: () => false }), false);
-    // raiz já sumiu e a foto não achou nada dela: inconclusivo, não "árvore vazia"
-    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: T("1,0,9") } : { status: 128 }), vivo: () => false }), false);
+    // raiz já sumiu, leitura válida e nada achado: limpo (inconclusivo é só a leitura que falha)
+    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: T("1,0,9") } : { status: 128 }), vivo: () => false }), true);
     // descendente que não morre: falha e não mata só o processo principal
     const teimoso = { pid: 100, kill: () => { teimoso.mortoSo = true; } };
     assert.strictEqual(escada.matarArvore(teimoso, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => (p === 300 ? true : false), tentativas: 2 }), false);
@@ -732,7 +732,7 @@ test("morte não confirmada no tempo máximo também para o lote (não vira erro
 test("arvoreDe: saída vazia ou sem linhas válidas (consulta falhou sem erro) é inconclusiva, não 'só a raiz'", () => {
   for (const stdout of ["", "\n\n", "lixo sem numeros"]) assert.strictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout })), null, JSON.stringify(stdout));
   assert.deepStrictEqual(pidsDe(escada.arvoreDe(100, () => ({ status: 0, stdout: T("100,1,111") }))), [100]);
-  assert.strictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout: T("1,0,9") })), null, "raiz ausente e sem descendentes: inconclusivo");
+  assert.deepStrictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout: T("1,0,9") })), [], "leitura válida, raiz ausente e sem descendentes: limpo (comando rápido que já acabou)");
 });
 
 test("chamarComando (Windows simulado): fotografa a árvore durante a execução e as fotos chegam ao matar; leitura da árvore falhando depois do close vira naoConfirmado", async () => {
@@ -779,4 +779,17 @@ test("no erro fatal o lote ESPERA a morte confirmada dos outros agentes antes de
   assert.deepStrictEqual(mortes.sort(), ["a", "c"], "quando o erro chegou, os outros já tinham terminado de morrer");
   assert.match(erro.message, /o lote parou/);
   assert.match(erro.message, /Também não foi confirmada a morte de: c/);
+});
+
+test("comando rápido normal (o shell fecha antes de qualquer foto periódica) não dá naoConfirmado: leitura válida sem raiz e sem descendentes é limpa", async () => {
+  const tabelaSemRaiz = (cmd) => (cmd === "powershell" ? { status: 0, stdout: T("1,0,9", "4,1,10") } : { status: 0 });
+  let fotos = 0;
+  const saida = await escada.chamarComando(`"${process.execPath}" -e "process.stdout.write('rapido')"`, {
+    plataforma: "win32", fotografar: () => { fotos += 1; return []; }, fotoMs: 100000,
+    orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: tabelaSemRaiz, vivo: () => false }),
+  })("x");
+  assert.strictEqual(saida, "rapido");
+  assert.ok(fotos >= 1, "tirou uma foto logo depois do spawn");
+  // leitura que FALHA de verdade continua sendo inconclusiva
+  assert.strictEqual(escada.orfaosVivos({ pid: 9 }, { plataforma: "win32", executar: () => ({ status: 1 }), vivo: () => false }), null);
 });
