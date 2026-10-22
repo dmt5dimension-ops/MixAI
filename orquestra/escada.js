@@ -207,45 +207,40 @@ function lerRaiz(pid, executar = spawnSync) {
   return r.criacao ? { pid, criacao: r.criacao } : null;
 }
 
-// Árvore a partir das linhas lidas. Três situações:
-//  - raiz presente com a hora da PRIMEIRA leitura (`raizCriacao`): a árvore sai dela. Hora diferente = o pid foi
-//    reaproveitado por outro programa (nada é nosso, []); raiz sem hora na leitura de agora = inconclusivo (null).
-//  - raiz ausente mas conhecida: só vale o que já tínhamos identificado (`conhecidos`, pid + hora) e o que descende
-//    deles; um filho cujo pai tem o número da raiz antiga NÃO entra (o número pode ser de outro programa).
-//  - raiz que nunca foi lida (o shell acabou antes da primeira leitura; `inicio` = hora do spawn): valem os filhos do
-//    pid criados depois do spawn. Limite: um pid reaproveitado por outro programa dentro desses segundos seria
-//    confundido; é o único jeito de conferir descendentes sem ter lido a raiz.
+// Árvore a partir das linhas lidas, para uma raiz IDENTIFICADA (`raizCriacao` = hora da primeira leitura).
+//  - raiz presente: a árvore sai dela. Hora diferente = o pid foi reaproveitado por outro programa (nada é nosso, []);
+//    raiz sem hora na leitura de agora = inconclusivo (null).
+//  - raiz ausente (já saiu): valem o que já estava identificado nas fotos (`conhecidos`, pid + hora) e os FILHOS do pid
+//    da raiz criados depois da raiz (o Windows mantém o pai dos órfãos; com o pid livre, são órfãos dela). Limite: um
+//    programa que herdou o pid e já terminou, com filhos criados depois da raiz, seria confundido.
+// Sem raiz identificada (`raizCriacao` vazio) nada é aceito: não se mata nada por parentesco.
 // Descendente só vale se o pai bate pelo pid E o filho foi criado depois do pai. Linha sem hora na árvore: null.
-function arvoreDeLinhas(linhas, pid, raizCriacao, conhecidos = [], inicio = null) {
+function arvoreDeLinhas(linhas, pid, raizCriacao, conhecidos = []) {
+  if (!raizCriacao) return [];
   const raiz = linhas.get(pid);
   const resultado = [];
-  const pais = [];
-  if (raizCriacao) {
-    if (raiz) {
-      if (raiz.criacao === '') return null;
-      if (raiz.criacao !== String(raizCriacao)) return [];
-      resultado.push(raiz);
-      pais.push({ pid, hora: String(raizCriacao) });
-    } else {
-      for (const c of conhecidos) {
-        const l = linhas.get(c.pid);
-        if (c.pid === pid || !l) continue;
-        if (l.criacao === '') return null;
-        if (l.criacao !== c.criacao) continue;
-        resultado.push(l);
-        pais.push({ pid: l.pid, hora: l.criacao });
-      }
+  const pais = [{ pid, hora: String(raizCriacao) }];
+  if (raiz) {
+    if (raiz.criacao === '') return null;
+    if (raiz.criacao !== String(raizCriacao)) return [];
+    resultado.push(raiz);
+  } else {
+    for (const c of conhecidos) {
+      const l = linhas.get(c.pid);
+      if (c.pid === pid || !l) continue;
+      if (l.criacao === '') return null;
+      if (l.criacao !== c.criacao) continue;
+      resultado.push(l);
+      pais.push({ pid: l.pid, hora: l.criacao });
     }
-  } else if (inicio) {
-    pais.push({ pid, hora: String(inicio) });
-  } else return [];
+  }
   const filhos = new Map();
   for (const l of linhas.values()) filhos.set(l.pai, [...(filhos.get(l.pai) || []), l]);
   for (let i = 0; i < pais.length; i++) {
     for (const f of filhos.get(pais[i].pid) || []) {
       if (f.pid === pid || resultado.some((x) => x.pid === f.pid)) continue;
       if (f.criacao === '') return null;
-      if (BigInt(f.criacao) < BigInt(pais[i].hora)) continue; // mais velho que o pai: o pai é outro processo
+      if (BigInt(f.criacao) < BigInt(pais[i].hora)) continue; // mais velho que o pai: o pai é outro
       resultado.push(f);
       pais.push({ pid: f.pid, hora: f.criacao });
     }
@@ -253,8 +248,8 @@ function arvoreDeLinhas(linhas, pid, raizCriacao, conhecidos = [], inicio = null
   return resultado.map((e) => ({ pid: e.pid, criacao: e.criacao }));
 }
 
-// Árvore a partir da identidade que o `filho` já guarda (raiz, fotos e hora do spawn).
-const arvoreDoFilho = (linhas, filho) => arvoreDeLinhas(linhas, filho.pid, filho.raiz?.criacao ?? null, filho.arvore || [], filho.inicioFt ?? null);
+// Árvore a partir da identidade que o `filho` já guarda (raiz e fotos).
+const arvoreDoFilho = (linhas, filho) => arvoreDeLinhas(linhas, filho.pid, filho.raiz?.criacao ?? null, filho.arvore || []);
 
 // Versão direta (lê e monta a árvore), usada nos testes e na foto periódica.
 function arvoreDe(pid, executar = spawnSync, raizCriacao = null) {
@@ -296,7 +291,7 @@ const mesmo = (linhas, e) => linhas.get(e.pid)?.criacao === e.criacao;
 // `executar` existe para os testes.
 function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3 } = {}) {
   if (plataforma === 'win32') {
-    if (!filho.raiz && filho.raizEstado !== 'perdida') return false; // leitura da raiz falhou: nada se mata por pid, nada se confirma
+    if (!filho.raiz) return filho.raizEstado === 'perdida'; // sem raiz identificada nada se mata por pid ou parentesco; perdida (acabou antes da 1ª leitura) = nada a matar, falhou = não confirma
     const opcoes = { timeout: 15000, windowsHide: true };
     for (let i = 0; i < tentativas; i++) {
       const linhas = lerProcessos(executar);
@@ -350,7 +345,7 @@ function grupoTemVivos(pgid) {
 
 function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSync } = {}) {
   if (plataforma === 'win32') {
-    if (!filho.raiz && filho.raizEstado !== 'perdida') return null; // sem a identidade da raiz nada é morto por pid
+    if (!filho.raiz) return filho.raizEstado === 'perdida' ? [] : null; // sem a identidade da raiz nada é morto por pid ou parentesco
     const linhas = lerProcessos(executar);
     if (!linhas) return null;
     const agora = arvoreDoFilho(linhas, filho);
@@ -391,8 +386,6 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fot
         filho = spawn(comando, { shell: true, stdio: [fdEntrada, 'pipe', 'pipe'], detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { apagarEntrada(); throw e; }
-    // Hora do spawn em FILETIME (100 ns desde 1601), com 2 s de folga: limite para os filhos de uma raiz que nunca foi lida.
-    filho.inicioFt = String((BigInt(Date.now() - 2000) * 10000n) + 116444736000000000n);
     let terminou = false;
     let relogio = null;
     let estourou = false;

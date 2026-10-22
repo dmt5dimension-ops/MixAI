@@ -773,16 +773,14 @@ test("matarArvore (Windows): raiz nunca capturada não vira o pid de hoje (perdi
   const err = console.error; console.error = () => {};
   try {
     const so = fakeSO({ 100: { pai: 1, criacao: "5000" } });
-    // perdida: confere os descendentes (uma leitura), e o pid de hoje, que é de outro programa, não é tocado
+    // sem raiz identificada nada é lido nem morto: o pid de hoje não é nosso e não se mata por parentesco
     assert.strictEqual(escada.matarArvore({ pid: 100, raizEstado: "perdida" }, { plataforma: "win32", executar: so.executar }), true);
-    assert.strictEqual(killsDe(so).length, 0, "nenhum taskkill: o pid de hoje não é nosso");
     assert.strictEqual(escada.matarArvore({ pid: 100, raizEstado: "falhou" }, { plataforma: "win32", executar: so.executar }), false);
     assert.strictEqual(escada.matarArvore({ pid: 100 }, { plataforma: "win32", executar: so.executar }), false);
-    assert.strictEqual(so.chamadas.length, 1, "só a leitura da raiz perdida; falhou/desconhecida nem leem");
-    // raiz perdida mas com um descendente criado depois do spawn: é achado, morto e confirmado
-    const orf = fakeSO({ 100: { pai: 1, criacao: "5000" }, 800: { pai: 100, criacao: "9000" }, 801: { pai: 100, criacao: "10" } });
-    assert.strictEqual(escada.matarArvore({ pid: 100, raizEstado: "perdida", inicioFt: "1000" }, { plataforma: "win32", executar: orf.executar }), true);
-    assert.deepStrictEqual(Object.keys(orf.procs), ["100", "801"], "o filho criado antes do spawn não é nosso; o pid 100 de hoje também não");
+    assert.strictEqual(so.chamadas.length, 0, "nem PowerShell nem taskkill");
+    const filhoDeOutro = fakeSO({ 100: { pai: 1, criacao: "5000" }, 800: { pai: 100, criacao: "9000" } });
+    escada.matarArvore({ pid: 100, raizEstado: "perdida" }, { plataforma: "win32", executar: filhoDeOutro.executar });
+    assert.strictEqual(killsDe(filhoDeOutro).length, 0, "filho de quem herdou o pid não é morto");
     // taskkill que não funciona: confere e não confirma
     const ruim = fakeSO({ 100: { pai: 1, criacao: "1000" }, 200: { pai: 100, criacao: "1100" } }, { taskkillFunciona: false });
     assert.strictEqual(escada.matarArvore(raizDe(100, "1000"), { plataforma: "win32", executar: ruim.executar, tentativas: 2 }), false);
@@ -795,7 +793,7 @@ test("orfaosVivos (Windows): descendente vivo é achado, morto em um taskkill e 
   const so = fakeSO({ 200: { pai: 100, criacao: "1100" }, 300: { pai: 200, criacao: "1200" }, 600: { pai: 1, criacao: "1" }, 650: { pai: 100, criacao: "1300" } });
   const conhecido = raizDe(100, "1000", { arvore: [{ pid: 100, criacao: "1000" }, { pid: 200, criacao: "1100" }] });
   assert.deepStrictEqual(escada.orfaosVivos(conhecido, { plataforma: "win32", executar: so.executar }), []);
-  assert.deepStrictEqual(Object.keys(so.procs), ["600", "650"], "raiz ausente: só o que já era conhecido (e seus descendentes) morre; filho do número antigo da raiz não");
+  assert.deepStrictEqual(Object.keys(so.procs), ["600"], "raiz ausente: o conhecido, os descendentes dele e os filhos do pid da raiz criados depois dela morrem");
   assert.strictEqual(killsDe(so).length, 1);
   const teimoso = fakeSO({ 200: { pai: 100, criacao: "1100" } }, { taskkillFunciona: false });
   assert.deepStrictEqual(escada.orfaosVivos(raizDe(100, "1000", { arvore: [{ pid: 200, criacao: "1100" }] }), { plataforma: "win32", executar: teimoso.executar }), [200]);
@@ -808,13 +806,18 @@ test("orfaosVivos (Windows): descendente vivo é achado, morto em um taskkill e 
   assert.strictEqual(killsDe(reuso).length, 0);
 });
 
-test("orfaosVivos (Windows): o shell acabou antes da primeira leitura (raiz perdida): os descendentes criados depois do spawn são conferidos e mortos", () => {
-  const so = fakeSO({ 100: { pai: 1, criacao: "5000" }, 800: { pai: 100, criacao: "9000" }, 801: { pai: 100, criacao: "10" } });
-  assert.deepStrictEqual(escada.orfaosVivos({ pid: 100, raizEstado: "perdida", inicioFt: "1000" }, { plataforma: "win32", executar: so.executar }), []);
-  assert.strictEqual(killsDe(so).length, 1);
-  assert.deepStrictEqual(killsDe(so)[0], ["taskkill", "/F", "/T", "/pid", "800"], "só o descendente identificado, nunca o pid 100 de hoje");
-  const teimoso = fakeSO({ 800: { pai: 100, criacao: "9000" } }, { taskkillFunciona: false });
-  assert.deepStrictEqual(escada.orfaosVivos({ pid: 100, raizEstado: "perdida", inicioFt: "1000" }, { plataforma: "win32", executar: teimoso.executar }), [800], "que não morre é reportado");
+test("matarArvore/orfaosVivos (Windows): raiz identificada que criou um filho e saiu antes da primeira foto: o filho vivo é achado e morto", () => {
+  // 100 (raiz, hora 1000) já saiu; 800 é filho dela criado depois (1500); 801 é mais velho que a raiz (outro pai)
+  const mundo = () => fakeSO({ 800: { pai: 100, criacao: "1500" }, 801: { pai: 100, criacao: "10" }, 900: { pai: 800, criacao: "1600" } });
+  const a = mundo();
+  assert.strictEqual(escada.matarArvore(raizDe(100, "1000", { arvore: [{ pid: 100, criacao: "1000" }] }), { plataforma: "win32", executar: a.executar }), true);
+  assert.deepStrictEqual(Object.keys(a.procs), ["801"]);
+  assert.deepStrictEqual(killsDe(a)[0], ["taskkill", "/F", "/T", "/pid", "800", "/pid", "900"]);
+  const b = mundo();
+  assert.deepStrictEqual(escada.orfaosVivos(raizDe(100, "1000", { arvore: [{ pid: 100, criacao: "1000" }] }), { plataforma: "win32", executar: b.executar }), []);
+  assert.deepStrictEqual(Object.keys(b.procs), ["801"]);
+  const teimoso = fakeSO({ 800: { pai: 100, criacao: "1500" } }, { taskkillFunciona: false });
+  assert.deepStrictEqual(escada.orfaosVivos(raizDe(100, "1000", { arvore: [{ pid: 100, criacao: "1000" }] }), { plataforma: "win32", executar: teimoso.executar }), [800]);
 });
 
 test("leitura do CIM: raiz fixada na primeira leitura; saída vazia da leitura completa é falha, da filtrada é válida; filho mais velho que o pai é ignorado; linha sem hora na árvore é inconclusiva", () => {
@@ -831,11 +834,12 @@ test("leitura do CIM: raiz fixada na primeira leitura; saída vazia da leitura c
   assert.deepStrictEqual(escada.arvoreDeLinhas(L("100,1,5000", "300,100,5100"), 100, "1000"), [], "pid reaproveitado");
   assert.deepStrictEqual(escada.arvoreDeLinhas(L("400,100,500"), 100, "1000"), [], "filho mais velho que a raiz: o pai era outro");
   assert.deepStrictEqual(escada.arvoreDeLinhas(L("100,1,1000", "400,100,1200"), 100, "1000"), [{ pid: 100, criacao: "1000" }, { pid: 400, criacao: "1200" }], "filho novo da raiz presente vale");
-  assert.deepStrictEqual(escada.arvoreDeLinhas(L("400,100,1200"), 100, "1000"), [], "raiz ausente: filho do número antigo NÃO vale");
-  assert.deepStrictEqual(escada.arvoreDeLinhas(L("400,100,1200", "500,200,1300"), 100, "1000", [{ pid: 200, criacao: "1100" }, { pid: 100, criacao: "1000" }]), [], "conhecido que sumiu não traz ninguém");
-  assert.deepStrictEqual(escada.arvoreDeLinhas(L("200,1,1100", "500,200,1300", "400,100,1200"), 100, "1000", [{ pid: 200, criacao: "1100" }]), [{ pid: 200, criacao: "1100" }, { pid: 500, criacao: "1300" }], "raiz ausente: o conhecido e seus descendentes valem");
+  assert.deepStrictEqual(escada.arvoreDeLinhas(L("400,100,1200"), 100, "1000"), [{ pid: 400, criacao: "1200" }], "raiz ausente: filho do pid da raiz criado depois dela vale");
+  assert.deepStrictEqual(escada.arvoreDeLinhas(L("400,100,500"), 100, "1000"), [], "raiz ausente: filho criado ANTES da raiz não vale");
+  assert.deepStrictEqual(escada.arvoreDeLinhas(L("400,100,1200", "500,200,1300"), 100, "1000", [{ pid: 200, criacao: "1100" }, { pid: 100, criacao: "1000" }]), [{ pid: 400, criacao: "1200" }], "o conhecido que sumiu não traz ninguém, mas o filho da raiz vale");
+  assert.deepStrictEqual(escada.arvoreDeLinhas(L("200,1,1100", "500,200,1300", "400,100,1200"), 100, "1000", [{ pid: 200, criacao: "1100" }]), [{ pid: 200, criacao: "1100" }, { pid: 400, criacao: "1200" }, { pid: 500, criacao: "1300" }], "raiz ausente: o conhecido, seus descendentes e os filhos da raiz valem");
   assert.strictEqual(escada.arvoreDeLinhas(L("100,1,"), 100, "1000"), null, "raiz sem hora na leitura de agora é inconclusiva, não 'outro processo'");
-  assert.deepStrictEqual(escada.arvoreDeLinhas(L("700,100,9000", "701,100,5"), 100, null, [], "1000"), [{ pid: 700, criacao: "9000" }], "raiz nunca lida: filhos criados depois do spawn");
+  assert.deepStrictEqual(escada.arvoreDeLinhas(L("700,100,9000"), 100, null), [], "sem raiz identificada nada vale por parentesco");
   const lixo = (...l) => escada.lerProcessos(ex(T(...l) + "\nAVISO qualquer\n"));
   assert.strictEqual(lixo("100,1,1000"), null, "linha malformada torna a leitura inconclusiva");
   assert.strictEqual(escada.lerProcessos(ex("100,1,1000\nxx"), [100]), null);
