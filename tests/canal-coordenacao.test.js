@@ -29,3 +29,9 @@ test("só existe UM ponto de comunicação: o arquivo do repositório é apenas 
   assert.ok(texto.split(/\r?\n/).filter((l) => l.trim()).length <= 6, "o arquivo do repositório deve ser só um ponteiro (máx. 6 linhas), não uma segunda cópia da conversa");
   assert.ok(!/^###\s/m.test(texto), "não pode haver mensagens (### ...) no arquivo do repositório");
 });
+
+test("CLAUDE.md não manda mais olhar a cópia antiga: o ponto de comunicação é um só", () => {
+  const texto = ler("CLAUDE.md");
+  assert.ok(!/cópia antiga/i.test(texto), "CLAUDE.md ainda fala em cópia antiga");
+  assert.ok(/s[óo]mente|somente|só nele|apenas/i.test(texto), "CLAUDE.md deve dizer que se lê e escreve SÓ no canal");
+});
