@@ -46,7 +46,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
-- `local/uso-windows.ps1` (leitura de ociosidade, placa, processador e vídeo) e a mudança do `OLLAMA_NUM_PARALLEL` em `local/modo.ps1` só foram testados com leituras simuladas. Rodar no PC: `powershell -File local\uso-windows.ps1` (deve imprimir um JSON com 5 campos) e `local\modo.ps1 noite`, depois `node orquestra/paralelismo.js`. Conferir se a detecção de vídeo (`powercfg /requests`) funciona sem administrador.
+- `local/uso-windows.ps1` e o `OLLAMA_NUM_PARALLEL` pelo modo foram conferidos no PC do dono em 2026-10-22 (JSON com os campos, vídeo detectado, suíte verde). Falta conferir de novo a versão que veio depois da revisão: contadores que falham viram `null`, CPU do Ollama por processo, e o `taskkill` do `lote` ao reduzir agentes (rodar `node orquestra/paralelismo.js` e um lote com `--paralelo auto`, voltando a mexer no PC no meio).
 - O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
