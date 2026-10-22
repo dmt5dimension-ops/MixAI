@@ -1178,3 +1178,48 @@ test("uso-windows.ps1: toda linha de motor tem valor validado ANTES de filtrar p
   assert.ok(valida < filtra, "validação vem antes do filtro por dono");
   assert.match(uso, /\$a\.Status -eq 0 -or \$a\.Status -eq 1/, "o Status inválido vira null na leitura");
 });
+
+test("descida: leitura nova que indica uso reduz na hora, sem esperar o cache; leitura velha com vários agentes reduz para 1 e pede leitura nova", () => comMemoriaAsync(6, async () => {
+  let agora = 1e6;
+  let atual = { ...PARADO, ociosoSegundos: 900 };
+  let leituras = 0;
+  const leitor = { lerAsync: async () => { leituras += 1; return atual; } };
+  const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json"), relogio: () => agora, cacheMs: 1000, modos, config });
+  controle({ agentesLocais: 1 });
+  await new Promise((r) => setImmediate(r)); // chegou a leitura de PC parado
+  agora += 500;
+  const alto = controle({ agentesLocais: 1 }); // decide com leitura recente: sobe
+  assert.ok(alto > 1, `subiu (${alto})`);
+  // o dono volta: a próxima leitura (já pedida por essa decisão) vem com uso
+  atual = { ...PARADO, ociosoSegundos: 3 };
+  agora += 100;
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(controle({ agentesLocais: alto }), 1, "dentro do cache da decisão anterior, mas a leitura nova manda reduzir já");
+  // leitura velha (2 x cache) com vários agentes rodando: reduz para 1 e pede leitura nova
+  atual = { ...PARADO, ociosoSegundos: 900 };
+  await new Promise((r) => setImmediate(r));
+  agora += 2500;
+  const antes = leituras;
+  assert.strictEqual(controle({ agentesLocais: 3 }), 1, "leitura velha com 3 agentes: reduz na hora");
+  await new Promise((r) => setImmediate(r));
+  assert.ok(leituras > antes, "pediu leitura nova");
+}));
+
+test("modo.ps1 prova pelo log que o Ollama subiu com o OLLAMA_NUM_PARALLEL do modo e falha com erro explícito se não bater", () => {
+  const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
+  assert.match(modo, /OLLAMA_NUM_PARALLEL:\(\\d\+\)/, "lê o valor impresso pelo Ollama no log");
+  assert.match(modo, /\$vistoParalelo -ne \$esperadoParalelo/);
+  assert.match(modo, /throw "O Ollama subiu com OLLAMA_NUM_PARALLEL:/);
+  // a conferência vem depois de subir o servidor e antes do vigia/apelido (nada é anunciado com o valor errado)
+  assert.ok(modo.search(/\$vistoParalelo -ne/) > modo.search(/'serve'/));
+  assert.ok(modo.search(/\$vistoParalelo -ne/) < modo.search(/criar-apelido\.ps1/));
+});
+
+test("uso-windows.ps1 exige cobertura: instâncias de motor iguais em todas as amostras e erro parcial da coleta não é silenciado", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /function Conjuntos-Iguais/);
+  assert.match(uso, /-ErrorVariable errosContador/);
+  assert.match(uso, /-ErrorVariable errosCim/);
+  assert.match(uso, /@\(\$errosContador\)\.Count -gt 0\) \{ return \$null \}/);
+  assert.match(uso, /if \(-not \(Conjuntos-Iguais \$leituras\)\) \{ return \$null \}/);
+});

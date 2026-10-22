@@ -679,7 +679,7 @@ async function principal(argumentos) {
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
       paralelismo: ip >= 0 && resto[ip + 1] === 'auto'
-        ? require('./paralelismo.js').criarControle({ aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
+        ? require('./paralelismo.js').criarControle({ refrescarMs: 5000, aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
         : ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
       maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : undefined,
       antagonico: resto.includes('--antagonico'),

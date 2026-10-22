@@ -159,25 +159,35 @@ function modoAtual(env = process.env) {
 }
 
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
-function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, modos, config, aoDecidir } = {}) {
+function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, refrescarMs = 0, modos, config, aoDecidir } = {}) {
   let ultimo = null;
   // Leitor assíncrono: a leitura roda em segundo plano e a decisão usa a última pronta. Sem leitura recente (a primeira
   // vez, ou uma que demorou demais) vale "indisponível" = usando o PC = 1 agente.
   let pronta = null;
   let lendo = false;
   let idadeDaLeitura = 0; // só o leitor assíncrono tem idade; a leitura síncrona é sempre do momento
+  let ultimaChamada = null;
+  const iniciarLeitura = () => {
+    if (lendo) return;
+    lendo = true;
+    Promise.resolve().then(() => leitor.lerAsync()).then((l) => { pronta = { em: relogio(), leitura: l }; }, () => { pronta = { em: relogio(), leitura: null }; }).finally(() => {
+      lendo = false;
+      // Enquanto o lote está usando o controle, mantém a leitura fresca em segundo plano (para a descida não esperar a próxima
+      // reavaliação só para ler); o timer não segura o Node.
+      if (refrescarMs > 0 && ultimaChamada !== null && relogio() - ultimaChamada < 60000) { const t = setTimeout(iniciarLeitura, refrescarMs); t.unref?.(); }
+    });
+  };
   const leituraAtual = () => {
     if (!leitor.lerAsync) return leitor.ler();
-    if (!lendo) {
-      lendo = true;
-      Promise.resolve().then(() => leitor.lerAsync()).then((l) => { pronta = { em: relogio(), leitura: l }; }, () => { pronta = { em: relogio(), leitura: null }; }).finally(() => { lendo = false; });
-    }
+    iniciarLeitura();
     idadeDaLeitura = pronta ? relogio() - pronta.em : Infinity;
     return pronta && idadeDaLeitura < 4 * cacheMs ? pronta.leitura : null;
   };
   return ({ agentesLocais = 0 } = {}) => {
-    // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente.
-    if (ultimo && relogio() - ultimo.em < cacheMs) return ultimo.alvo;
+    ultimaChamada = relogio();
+    // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente. Mas nunca esconde
+    // uma leitura NOVA que chegou depois da última decisão: na descida (o dono voltou) o cache não vale.
+    if (ultimo && relogio() - ultimo.em < cacheMs && !(pronta && pronta.em > ultimo.em)) return ultimo.alvo;
     // O estado de uma execução antiga não vale para um lote novo: depois de `validadeEstadoSegundos` sem uso, recomeça do zero.
     let anterior = null;
     try {
@@ -192,6 +202,9 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
     // Para SUBIR o número de agentes a leitura tem que ser recente (menos de `cacheMs`); com amostra velha só mantém ou reduz
     // (o piso de 1 agente continua valendo) e o estado de subida não é gravado.
     if (leitor.lerAsync && idadeDaLeitura >= cacheMs && d.alvo > Math.max(agentesLocais, 1)) return Math.max(agentesLocais, 1);
+    // Leitura velha demais para provar que o PC continua livre (2 x cache) com vários agentes rodando: a leitura nova já foi
+    // pedida acima, e enquanto ela não chega reduz na hora para 1 (a descida nunca espera o cache).
+    if (leitor.lerAsync && idadeDaLeitura >= 2 * cacheMs && agentesLocais > 1) return 1;
     try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };

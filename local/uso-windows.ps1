@@ -56,10 +56,18 @@ function Test-Numero($v) {
 # Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine, que não muda com o idioma do Windows.
 # gpuOutrosPct = média das leituras da soma dos motores de outros programas.
 # Dos motores de vídeo só entrega os números crus; orquestra/paralelismo.js decide o que é decodificação.
+# Cobertura: o conjunto de instâncias de motor tem que ser o MESMO em todas as amostras, e erro parcial da coleta (algumas
+# instâncias leram, outras falharam) não é silenciado: qualquer um dos dois devolve $null (leitura indisponível).
+function Conjuntos-Iguais($leituras) {
+  $conjuntos = @($leituras | Group-Object i | ForEach-Object { (@($_.Group | ForEach-Object { $_.n } | Sort-Object) -join '|') })
+  return (@($conjuntos | Select-Object -Unique).Count -eq 1)
+}
+
 function Ler-MotoresGpu {
   $leituras = @()
-  $contador = Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 3 -ErrorAction SilentlyContinue
+  $contador = Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 3 -ErrorAction SilentlyContinue -ErrorVariable errosContador
   if ($contador) {
+    if (@($errosContador).Count -gt 0) { return $null }
     $i = 0
     foreach ($amostra in $contador) {
       foreach ($a in $amostra.CounterSamples) {
@@ -69,16 +77,18 @@ function Ler-MotoresGpu {
       }
       $i++
     }
+    if (-not (Conjuntos-Iguais $leituras)) { return $null }
     return @{ amostras = $i; leituras = $leituras }
   }
   $n = 0
   for ($i = 0; $i -lt 3; $i++) {
-    $cim = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue
-    if (-not $cim) { return $null }
+    $cim = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue -ErrorVariable errosCim
+    if (-not $cim -or @($errosCim).Count -gt 0) { return $null }
     foreach ($a in $cim) { $leituras += [pscustomobject]@{ i = $i; n = $a.Name; v = $a.UtilizationPercentage } }
     $n++
     if ($i -lt 2) { Start-Sleep -Seconds 1 }
   }
+  if (-not (Conjuntos-Iguais $leituras)) { return $null }
   return @{ amostras = $n; leituras = $leituras }
 }
 

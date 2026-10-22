@@ -40,6 +40,25 @@ Start-Process cmd -ArgumentList '/c', "`"`"$env:LOCALAPPDATA\Programs\Ollama\oll
 for ($i = 0; $i -lt 30 -and -not (Get-Process ollama -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
 Start-Sleep -Seconds 3
 
+# Prova automática de que o servidor subiu com o OLLAMA_NUM_PARALLEL do modo: o próprio Ollama imprime a configuração no log
+# ("OLLAMA_NUM_PARALLEL:<valor>"). Se não bater (ou não aparecer), para com erro explícito em vez de deixar o lote achar que
+# roda vários agentes em paralelo quando o servidor só atende um.
+function Ler-LogServidor {
+  try {
+    $f = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite') # o cmd ainda tem o log aberto
+    try { return (New-Object IO.StreamReader($f)).ReadToEnd() } finally { $f.Dispose() }
+  } catch { return '' }
+}
+$esperadoParalelo = "$($config.agentesMax)"
+$vistoParalelo = $null
+for ($i = 0; $i -lt 20 -and $null -eq $vistoParalelo; $i++) {
+  $m = [regex]::Match((Ler-LogServidor), 'OLLAMA_NUM_PARALLEL:(\d+)')
+  if ($m.Success) { $vistoParalelo = $m.Groups[1].Value } else { Start-Sleep -Seconds 1 }
+}
+if ($vistoParalelo -ne $esperadoParalelo) {
+  throw "O Ollama subiu com OLLAMA_NUM_PARALLEL:$vistoParalelo (vazio = não apareceu no log $log), mas o modo $Modo pede $esperadoParalelo. Feche o Ollama (inclusive o ícone da bandeja) e rode o modo.ps1 de novo."
+}
+
 # Prioridade: no modo dia o Windows dá preferência para os seus programas.
 # O Ollama sobe a prioridade do modelo a cada carga, então um vigia escondido corrige sempre.
 $arquivoVigia = Join-Path $env:TEMP 'mixai-vigia.pid'
