@@ -42,10 +42,9 @@ test("decidirParar: transcrições do Codex rodado pelo Claude contam como do Cl
   assert.strictEqual(canal.decidirParar(texto, {}), null);
 });
 
-test("decidirParar: nunca prende em laço (stop_hook_active) e não quebra sem canal", () => {
-  const texto = "### 2026-10-22 — Codex → Claude (b)\nfaça X\n";
-  assert.strictEqual(canal.decidirParar(texto, { stop_hook_active: true }), null);
+test("decidirParar: sem mensagem do Codex pendente e sem canal não prende nem quebra", () => {
   assert.strictEqual(canal.decidirParar("", {}), null);
+  assert.strictEqual(canal.decidirParar("# Canal sem seções\n", {}), null);
 });
 
 test("script de linha de comando: inicio mostra o fim do canal; parar bloqueia com JSON; sem arquivo sai em silêncio", () => {
@@ -66,4 +65,25 @@ test("regra global do Codex: o repositório guarda o texto que vai para ~/.codex
   const texto = fs.readFileSync(path.join(RAIZ, "ferramentas", "codex-agents-global.md"), "utf8");
   assert.ok(texto.includes(["D:", "MixAI-coordenacao", "coordenacao.md"].join(String.fromCharCode(92))));
   assert.match(texto, /antes e depois/i);
+});
+
+test("Codex #21: os hooks usam CLAUDE_PROJECT_DIR e funcionam a partir de uma subpasta", () => {
+  const cfg = JSON.parse(fs.readFileSync(path.join(RAIZ, ".claude", "settings.json"), "utf8"));
+  for (const evento of ["SessionStart", "Stop"]) {
+    for (const g of cfg.hooks[evento]) for (const h of g.hooks) assert.ok(h.command.includes("${CLAUDE_PROJECT_DIR}"), `${evento}: o comando precisa usar \${CLAUDE_PROJECT_DIR}`);
+  }
+  const arq = tmp("### 2026-10-22 — Codex → Claude (b)\nfaça X\n");
+  const subpasta = path.join(RAIZ, "tests");
+  const cmd = cfg.hooks.Stop[0].hooks[0].command;
+  // O Claude Code roda os hooks pelo bash (no Windows, o Git Bash), que expande ${CLAUDE_PROJECT_DIR}; o cmd.exe não expandiria.
+  const r = spawnSync("bash", ["-c", cmd], { cwd: subpasta, env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ.split(path.sep).join("/"), MIXAI_CANAL: arq }, encoding: "utf8", input: "{}" });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(JSON.parse(r.stdout).decision, "block");
+});
+
+test("Codex #21: com stop_hook_active a trava relê o canal e só libera depois da resposta do Claude", () => {
+  const semResposta = "### 2026-10-22 — Codex → Claude (b)\nfaça X\n";
+  assert.strictEqual(canal.decidirParar(semResposta, { stop_hook_active: true }).decision, "block");
+  const comResposta = semResposta + "\n### 2026-10-22 — Claude → Codex (c)\nfeito\n";
+  assert.strictEqual(canal.decidirParar(comResposta, { stop_hook_active: true }), null);
 });

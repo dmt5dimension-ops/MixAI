@@ -20,8 +20,8 @@ function ultimoAutor(texto) {
   return null;
 }
 
-function decidirParar(texto, entrada) {
-  if (entrada && entrada.stop_hook_active) return null; // nunca prende o Claude em laço
+function decidirParar(texto, _entrada) {
+  // Mesmo com stop_hook_active (o Claude tenta encerrar de novo), só libera depois de responder no canal: a leitura é refeita a cada tentativa.
   if (ultimoAutor(texto) !== 'codex') return null;
   return {
     decision: 'block',
