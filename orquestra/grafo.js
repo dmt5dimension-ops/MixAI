@@ -148,6 +148,7 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${nome(maior)}); se ninguém está usando (por exemplo, o computador caiu), apague esse arquivo`);
     esperar(25);
   }
+  let falhou = false;
   try {
     for (const n of geracoes()) if (n < minha - 20) { try { fs.rmSync(nome(n), { force: true }); } catch { /* fica para a próxima */ } }
     const novoGrafo = mudanca(carregar(arquivo));
@@ -160,10 +161,22 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     if (lerOuErro(nome(minha)).texto !== dono || maisNova) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a superou); nada foi gravado, tente de novo');
     salvar(arquivo, novoGrafo);
     return novoGrafo;
+  } catch (erro) {
+    falhou = true;
+    throw erro;
   } finally {
-    // Solta escrevendo `livre` na própria geração (só se ainda for sua). Não apaga: o arquivo é o marcador de qual
-    // geração veio por último.
-    if (lerOuErro(nome(minha)).texto === dono) { try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); } catch { /* o dono morre e a geração fica solta */ } }
+    // Solta escrevendo `livre` na própria geração (só se ainda for sua). Normalmente não apaga: o arquivo é o marcador
+    // de qual geração veio por último. Se nem escrever `livre` der, apaga a própria geração (é minha, não de outro).
+    // Se nada disso der, a trava fica presa enquanto este processo viver: avisa em vez de ignorar.
+    if (lerOuErro(nome(minha)).texto === dono) {
+      let solta = false;
+      try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); solta = true; } catch { /* tenta apagar */ }
+      if (!solta) { try { comRetentativa(() => fs.rmSync(nome(minha), { force: true })); solta = true; } catch { /* abaixo */ } }
+      if (!solta) {
+        const aviso = `não consegui soltar a trava ${nome(minha)}${falhou ? '' : ' (o grafo foi gravado)'}; apague esse arquivo se ninguém estiver usando o grafo`;
+        if (falhou) console.error(aviso); else throw new Error(aviso);
+      }
+    }
   }
 }
 

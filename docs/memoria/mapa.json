@@ -383,71 +383,71 @@
         },
         {
           "nome": "pegar",
-          "linha": 170
+          "linha": 183
         },
         {
           "nome": "adicionar",
-          "linha": 176
+          "linha": 189
         },
         {
           "nome": "feita",
-          "linha": 196
+          "linha": 209
         },
         {
           "nome": "prontas",
-          "linha": 198
+          "linha": 211
         },
         {
           "nome": "travadas",
-          "linha": 203
+          "linha": 216
         },
         {
           "nome": "mudar",
-          "linha": 213
+          "linha": 226
         },
         {
           "nome": "iniciar",
-          "linha": 219
+          "linha": 232
         },
         {
           "nome": "revisar",
-          "linha": 227
+          "linha": 240
         },
         {
           "nome": "devolver",
-          "linha": 234
+          "linha": 247
         },
         {
           "nome": "concluir",
-          "linha": 243
-        },
-        {
-          "nome": "falhar",
-          "linha": 249
-        },
-        {
-          "nome": "validar",
           "linha": 256
         },
         {
-          "nome": "visita",
+          "nome": "falhar",
+          "linha": 262
+        },
+        {
+          "nome": "validar",
           "linha": 269
         },
         {
+          "nome": "visita",
+          "linha": 282
+        },
+        {
           "nome": "resumo",
-          "linha": 288
+          "linha": 301
         },
         {
           "nome": "opcao",
-          "linha": 295
+          "linha": 308
         },
         {
           "nome": "principal",
-          "linha": 303
+          "linha": 316
         },
         {
           "nome": "virgulas",
-          "linha": 305
+          "linha": 318
         }
       ],
       "exporta": [
@@ -701,7 +701,11 @@
         },
         {
           "nome": "com",
-          "linha": 440
+          "linha": 435
+        },
+        {
+          "nome": "ehLivre",
+          "linha": 473
         }
       ],
       "exporta": []

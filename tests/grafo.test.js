@@ -409,11 +409,6 @@ test("status sai com código 1 quando a validação acusa erro, e 0 quando está
   assert.match(r.stdout, /erro: escopo sobreposto/);
 });
 
-test("etapa 4 do grafo real não está feita enquanto o PR #16 não entrou (dependentes não são liberados antes da hora)", () => {
-  const g = grafo.carregar(path.join(RAIZ, "orquestra", "grafo.json"));
-  assert.notStrictEqual(g.tarefas.etapa4.estado, "feita");
-});
-
 test("geração criada atrasada (lista velha depois da limpeza de outro processo) solta a sua e tenta de novo, sem falhar", () => {
   const arq = tmp();
   // gerações 1 e 3 existem; a 2 foi apagada: quem listou [1] cria a 2 (nasce atrasada, pois a 3 existe) e deve seguir para a 4
@@ -469,4 +464,19 @@ test("nomes herdados do Object (constructor, toString, __proto__) não contam co
   const c = grafo.adicionar(g, { id: "constructor", titulo: "C", escopo: ["x"] }, AGORA);
   assert.deepStrictEqual(Object.keys(c.tarefas), ["constructor"]);
   assert.throws(() => grafo.adicionar(c, { id: "constructor", titulo: "C", escopo: ["x"] }, AGORA), /já existe/);
+});
+
+test("soltar a trava: se escrever 'livre' falha, apaga a própria geração; se nada funciona, avisa (não ignora em silêncio)", () => {
+  const arq = tmp();
+  const escrever = fs.writeFileSync;
+  const apagar = fs.rmSync;
+  const ehLivre = (f, d) => String(f).includes(".lock.") && d === "livre";
+  try {
+    fs.writeFileSync = (f, d, ...r) => { if (ehLivre(f, d)) throw Object.assign(new Error("disco"), { code: "EIO" }); return escrever(f, d, ...r); };
+    grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA));
+    assert.deepStrictEqual(travas(arq), [], "a própria geração foi apagada");
+    fs.rmSync = (f, ...r) => { if (String(f).includes(".lock.")) throw Object.assign(new Error("disco"), { code: "EIO" }); return apagar(f, ...r); };
+    assert.throws(() => grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "b", titulo: "B", escopo: ["y"] }, AGORA)), /não consegui soltar a trava.*grafo foi gravado/);
+  } finally { fs.writeFileSync = escrever; fs.rmSync = apagar; }
+  assert.ok("b" in grafo.carregar(arq).tarefas, "a gravação aconteceu");
 });
