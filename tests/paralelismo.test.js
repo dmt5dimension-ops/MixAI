@@ -97,6 +97,33 @@ test("a saída do uso-windows.ps1 vira leitura: JSON na última linha, vídeo me
   assert.strictEqual(par.lerSaida("123"), null);
 });
 
+test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode', NVIDIA 'VideoDecode'), ignora jpeg/enhance, tira a média de 3 leituras e usa limiar >= 1%", () => {
+  const nome = (motor) => `pid_4321_luid_0x00000000_0x0000F0D3_phys_0_eng_5_engtype_${motor}`;
+  const leituras = (porAmostra) => porAmostra.flatMap((motores, i) => Object.entries(motores).map(([motor, v]) => ({ i, n: nome(motor), v })));
+  // AMD tocando vídeo: o uso aparece em "video codec 0" (0 a 4%), "video decode" fica em 0.
+  const amd = leituras([{ "video decode": 0, "video codec 0": 4, "video jpeg": 0, "video enhance": 0 }, { "video decode": 0, "video codec 0": 0, "video jpeg": 0, "video enhance": 0 }, { "video decode": 0, "video codec 0": 2, "video jpeg": 0, "video enhance": 0 }]);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: amd }), 2);
+  // jpeg e enhance sozinhos não contam como vídeo tocando
+  const so = leituras([{ "video jpeg": 50, "video enhance": 60 }, { "video jpeg": 50, "video enhance": 60 }, { "video jpeg": 50, "video enhance": 60 }]);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: so }), 0);
+  // NVIDIA/Intel
+  const nv = leituras([{ VideoDecode: 9 }, { VideoDecode: 6 }, { VideoDecode: 3 }]);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: nv }), 6);
+  // menos de 3 leituras, ou nenhum motor de vídeo: indisponível
+  assert.strictEqual(par.videoDecodeDe({ amostras: 2, motores: nv }), null);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: [] }), null);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: { i: 0, n: nome("3D"), v: 5 } }), null);
+  // um pico isolado diluído nas 3 leituras (0,0,2 => 0,67%) não conta; média de 1% ou mais conta
+  const pico = leituras([{ "video codec 0": 0 }, { "video codec 0": 0 }, { "video codec 0": 2 }]);
+  assert.ok(par.videoDecodeDe({ amostras: 3, motores: pico }) < config.ocupado.videoDecodeAcimaDePct);
+  const limite = leituras([{ "video codec 0": 1 }, { "video codec 0": 1 }, { "video codec 0": 1 }]);
+  const base = { ociosoSegundos: 700, gpuOutrosPct: 1, cpuOutrosPct: 2, memoriaLivreGB: 6 };
+  const bruta = (motores) => JSON.stringify({ ...base, videoAmostras: 3, videoMotores: motores });
+  assert.match(decide(par.lerSaida(bruta(limite)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /vídeo tocando/);
+  assert.strictEqual(decide(par.lerSaida(bruta(pico)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
+  assert.match(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/);
+});
+
 test("o controle lê o PC, guarda o estado em arquivo, reaproveita leitura recente e avisa só quando muda", () => {
   const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "par-")), "estado.json");
   let agora = 0;
@@ -156,8 +183,8 @@ test("o modo.ps1 liga o paralelismo do Ollama pelo modo e guarda o modo ligado; 
   assert.ok(modo.indexOf("mixai-modo.txt") > modo.indexOf("criar-apelido.ps1"), "só guarda o modo depois de criar o mixai-local");
   for (const m of Object.values(modos)) assert.ok(Number.isInteger(m.agentesMax) && m.agentesMax >= 1);
   const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
-  for (const campo of ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoDecodePct", "memoriaLivreGB"]) assert.ok(uso.includes(campo), campo);
-  assert.match(uso, /VideoDecode/);
+  for (const campo of ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoMotores", "videoAmostras", "memoriaLivreGB"]) assert.ok(uso.includes(campo), campo);
+  assert.match(uso, /MaxSamples 3/);
   assert.doesNotMatch(uso, /powercfg/, "powercfg /requests exige administrador");
   assert.match(uso, /ConvertTo-Json/);
 });

@@ -1,5 +1,5 @@
 # Lê o uso do Windows e imprime um JSON: tempo sem mexer no PC, uso de placa e processador por outros programas,
-# uso do decodificador de vídeo da placa (vídeo tocando) e memória livre. Quem chama é orquestra/paralelismo.js; os testes usam leituras simuladas.
+# motores de vídeo da placa (para saber se há vídeo tocando) e memória livre. Quem chama é orquestra/paralelismo.js; os testes usam leituras simuladas.
 # Uso: powershell -NoProfile -ExecutionPolicy Bypass -File local\uso-windows.ps1
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -37,18 +37,24 @@ foreach ($p in (Get-Process | Where-Object { $pidsMeus -contains $_.Id })) {
 }
 $cpuOutros = [Math]::Max(0, $cpuTotal - ($cpuMeu / [Environment]::ProcessorCount))
 
-# Vídeo tocando: uso do decodificador de vídeo da placa por outros programas (funciona sem administrador).
-# Fica $null se o contador não existe ou falha; quem lê trata isso como "em uso", o lado seguro.
-$videoDecode = $null
-$contador = (Get-Counter '\GPU Engine(*engtype_VideoDecode)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples
-if ($contador) {
-  $videoDecode = 0
-  foreach ($a in $contador) {
-    if ($a.InstanceName -match 'pid_(\d+)_') {
-      if ($pidsMeus -notcontains [int]$Matches[1]) { $videoDecode += $a.CookedValue }
+# Vídeo tocando: motores de vídeo da placa usados por outros programas, 3 leituras com 1 s de intervalo.
+# Só entrega os números crus (nome do motor e uso); orquestra/paralelismo.js decide o que é decodificação
+# e tira a média. Não precisa de administrador. Sem nenhum motor de vídeo a lista vai vazia, e quem lê
+# trata isso como "leitura indisponível" (na dúvida, usando o PC).
+$videoAmostras = 0
+$videoMotores = @()
+$serie = Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 3 -ErrorAction SilentlyContinue
+if ($serie) {
+  $i = 0
+  foreach ($amostra in $serie) {
+    foreach ($a in $amostra.CounterSamples) {
+      if ($a.InstanceName -match 'video' -and $a.InstanceName -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
+        $videoMotores += [pscustomobject]@{ i = $i; n = $a.InstanceName; v = [Math]::Round($a.CookedValue, 2) }
+      }
     }
+    $i++
   }
-  $videoDecode = [Math]::Round([Math]::Min(100, $videoDecode), 1)
+  $videoAmostras = $i
 }
 
 $livre = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
@@ -57,6 +63,7 @@ $livre = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
   ociosoSegundos = [int][MixaiOcioso]::Segundos()
   gpuOutrosPct   = [Math]::Round([Math]::Min(100, $gpuOutros), 1)
   cpuOutrosPct   = [Math]::Round([Math]::Min(100, $cpuOutros), 1)
-  videoDecodePct = $videoDecode
+  videoAmostras  = $videoAmostras
+  videoMotores   = @($videoMotores)
   memoriaLivreGB = [Math]::Round($livre, 2)
-} | ConvertTo-Json -Compress
+} | ConvertTo-Json -Compress -Depth 4

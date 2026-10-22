@@ -38,7 +38,7 @@ function motivosDeUso(leitura, config) {
   if (leitura.ociosoSegundos < o.ociosoAbaixoDeSegundos) motivos.push(`mexeu no PC há ${leitura.ociosoSegundos}s`);
   if (leitura.gpuOutrosPct > o.gpuOutrosAcimaDePct) motivos.push(`outro programa usa ${leitura.gpuOutrosPct}% da placa`);
   if (leitura.cpuOutrosPct > o.cpuOutrosAcimaDePct) motivos.push(`outros programas usam ${leitura.cpuOutrosPct}% do processador`);
-  if (leitura.videoDecodePct > o.videoDecodeAcimaDePct) motivos.push(`vídeo tocando (decodificador em ${leitura.videoDecodePct}%)`);
+  if (leitura.videoDecodePct >= o.videoDecodeAcimaDePct) motivos.push(`vídeo tocando (decodificador em ${leitura.videoDecodePct}%)`);
   return motivos;
 }
 
@@ -71,12 +71,29 @@ function leitorWindows() {
   };
 }
 
+// Uso médio dos motores de DECODIFICAÇÃO de vídeo da placa, a partir das leituras cruas do uso-windows.ps1.
+// Os nomes mudam por fabricante: "VideoDecode" (NVIDIA/Intel), "video decode" e "video codec 0" (AMD, este é
+// o que mexe quando um vídeo toca). "video jpeg" e "video enhance" ficam de fora. Precisa de pelo menos
+// `amostrasMinimas` leituras e de pelo menos um motor de vídeo; senão devolve null (leitura indisponível).
+const motorDeDecodificacao = /engtype_(?:video\s*decode|video\s*codec)/i;
+function videoDecodeDe({ amostras, motores }, amostrasMinimas = 3) {
+  if (!Number.isInteger(amostras) || amostras < amostrasMinimas) return null;
+  const lista = Array.isArray(motores) ? motores : motores ? [motores] : [];
+  if (!lista.some((m) => /video/i.test(String(m?.n)))) return null;
+  const soma = new Array(amostras).fill(0);
+  for (const m of lista) {
+    if (motorDeDecodificacao.test(String(m?.n)) && Number.isInteger(m.i) && m.i >= 0 && m.i < amostras && Number.isFinite(m.v)) soma[m.i] += m.v;
+  }
+  return Math.round((soma.reduce((a, b) => a + b, 0) / amostras) * 100) / 100;
+}
+
 // Interpreta o que o uso-windows.ps1 imprimiu (a última linha é o JSON). Texto estranho vira null.
 function lerSaida(texto) {
-  try {
-    const l = JSON.parse(String(texto).trim().split(/\r?\n/).pop());
-    return l && typeof l === 'object' ? l : null;
-  } catch { return null; }
+  let l;
+  try { l = JSON.parse(String(texto).trim().split(/\r?\n/).pop()); } catch { return null; }
+  if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+  const { videoAmostras, videoMotores, ...resto } = l;
+  return { ...resto, videoDecodePct: resto.videoDecodePct ?? videoDecodeDe({ amostras: videoAmostras, motores: videoMotores }) };
 }
 
 // Leitor para testes: devolve as leituras da lista, na ordem (a última se repete).
@@ -108,7 +125,7 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
   };
 }
 
-module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, leitorSimulado, modoAtual, criarControle };
+module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, leitorSimulado, modoAtual, criarControle };
 
 if (require.main === module) {
   const i = process.argv.indexOf('--modo');
