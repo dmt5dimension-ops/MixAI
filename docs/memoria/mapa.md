@@ -4,6 +4,12 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 
 ## Arquivos
 
+- `.claude/hooks/canal.js` — Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:
+  - `ultimoAutor` (linha 11)
+  - `decidirParar` (linha 27)
+  - `fimDoCanal` (linha 36)
+  - `lerEntrada` (linha 40)
+  - `principal` (linha 44)
 - `ferramentas/instalar.ps1` — Instala as ferramentas do orquestrador no Windows 11.
   - `Write-Passo` (linha 15)
   - `Write-Ok` (linha 16)
@@ -121,6 +127,9 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `rodar` (linha 12)
   - `git` (linha 14)
   - `mudar` (linha 54)
+- `tests/hooks-canal.test.js` — Trava obrigatória do canal Claude↔Codex no Claude Code: hooks que mostram o canal ao começar a sessão
+  - `tmp` (linha 14)
+  - `doGit` (linha 80)
 - `tests/instalar.test.js` — Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:
   - `achar` (linha 51)
   - `rodarComFalsos` (linha 57)
@@ -165,9 +174,10 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
 - Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
 - Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) — `tests/preparar-repo.test.js`
+- Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`) — `tests/hooks-canal.test.js`
+- Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único) — `tests/canal-coordenacao.test.js`
 - Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo` — `tests/regras-locais.test.js`
 - Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso — `tests/preparar-repo.test.js`
-- Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` — `tests/canal-coordenacao.test.js`
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
 - Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
