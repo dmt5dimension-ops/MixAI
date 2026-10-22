@@ -15,3 +15,23 @@ test("AGENTS.md e CODEX.md mandam usar o mesmo canal fora do git, antes e depois
   }
   assert.ok(/antes e depois/i.test(ler("AGENTS.md")));
 });
+
+test("CLAUDE.md obriga o Claude a ler e escrever no canal antes e depois de cada passo, e antes de terminar o turno", () => {
+  const texto = ler("CLAUDE.md");
+  assert.ok(texto.includes(CANAL), "CLAUDE.md não cita o canal");
+  assert.ok(/antes e depois de cada passo/i.test(texto), "falta 'antes e depois de cada passo'");
+  assert.ok(/nunca (termine|terminar) (um|o) turno/i.test(texto), "falta a regra de nunca terminar o turno sem checar o canal");
+});
+
+test("só existe UM ponto de comunicação: o arquivo do repositório é apenas um ponteiro para o canal fixo", () => {
+  const texto = ler(path.join("docs", "memoria", "coordenacao.md"));
+  assert.ok(texto.includes(CANAL), "o ponteiro não cita o caminho fixo do canal");
+  assert.ok(texto.split(/\r?\n/).filter((l) => l.trim()).length <= 6, "o arquivo do repositório deve ser só um ponteiro (máx. 6 linhas), não uma segunda cópia da conversa");
+  assert.ok(!/^###\s/m.test(texto), "não pode haver mensagens (### ...) no arquivo do repositório");
+});
+
+test("CLAUDE.md não manda mais olhar a cópia antiga: o ponto de comunicação é um só", () => {
+  const texto = ler("CLAUDE.md");
+  assert.ok(!/cópia antiga/i.test(texto), "CLAUDE.md ainda fala em cópia antiga");
+  assert.ok(/s[óo]mente|somente|só nele|apenas/i.test(texto), "CLAUDE.md deve dizer que se lê e escreve SÓ no canal");
+});

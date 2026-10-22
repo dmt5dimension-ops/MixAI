@@ -1,6 +1,37 @@
 {
   "arquivos": [
     {
+      "arquivo": ".claude/hooks/canal.js",
+      "descricao": "Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:",
+      "funcoes": [
+        {
+          "nome": "ultimoAutor",
+          "linha": 11
+        },
+        {
+          "nome": "decidirParar",
+          "linha": 27
+        },
+        {
+          "nome": "fimDoCanal",
+          "linha": 36
+        },
+        {
+          "nome": "lerEntrada",
+          "linha": 40
+        },
+        {
+          "nome": "principal",
+          "linha": 44
+        }
+      ],
+      "exporta": [
+        "ultimoAutor",
+        "decidirParar",
+        "fimDoCanal"
+      ]
+    },
+    {
       "arquivo": "ferramentas/instalar.ps1",
       "descricao": "Instala as ferramentas do orquestrador no Windows 11.",
       "funcoes": [
@@ -110,6 +141,44 @@
       "arquivo": "local/vigia-prioridade.ps1",
       "descricao": "Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)",
       "funcoes": []
+    },
+    {
+      "arquivo": "orquestra/aplicar.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "normalizar",
+          "linha": 4
+        },
+        {
+          "nome": "entradasDoEscopo",
+          "linha": 14
+        },
+        {
+          "nome": "permitido",
+          "linha": 26
+        },
+        {
+          "nome": "conferirAlterados",
+          "linha": 34
+        },
+        {
+          "nome": "dentroDaRaiz",
+          "linha": 39
+        },
+        {
+          "nome": "caminhoComCaixaExistente",
+          "linha": 44
+        },
+        {
+          "nome": "aplicarResposta",
+          "linha": 64
+        }
+      ],
+      "exporta": [
+        "aplicarResposta",
+        "conferirAlterados"
+      ]
     },
     {
       "arquivo": "orquestra/chamar.js",
@@ -361,6 +430,17 @@
       "funcoes": []
     },
     {
+      "arquivo": "tests/aplicar.test.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "emRaizTemporaria",
+          "linha": 9
+        }
+      ],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/canal-coordenacao.test.js",
       "descricao": "Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.",
       "funcoes": [
@@ -484,6 +564,21 @@
         {
           "nome": "mudar",
           "linha": 54
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/hooks-canal.test.js",
+      "descricao": "Trava obrigatória do canal Claude↔Codex no Claude Code: hooks que mostram o canal ao começar a sessão",
+      "funcoes": [
+        {
+          "nome": "tmp",
+          "linha": 14
+        },
+        {
+          "nome": "doGit",
+          "linha": 80
         }
       ],
       "exporta": []
@@ -701,6 +796,18 @@
       ]
     },
     {
+      "o_que": "Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`)",
+      "testes": [
+        "tests/hooks-canal.test.js"
+      ]
+    },
+    {
+      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único)",
+      "testes": [
+        "tests/canal-coordenacao.test.js"
+      ]
+    },
+    {
       "o_que": "Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo`",
       "testes": [
         "tests/regras-locais.test.js"
@@ -710,12 +817,6 @@
       "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
-      ]
-    },
-    {
-      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md`",
-      "testes": [
-        "tests/canal-coordenacao.test.js"
       ]
     },
     {
@@ -741,6 +842,12 @@
       "o_que": "Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto",
       "testes": [
         "tests/escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo",
+      "testes": [
+        "tests/aplicar.test.js"
       ]
     },
     {
