@@ -155,7 +155,9 @@ test("CPU de outros programas: cada processo do Ollama conta uma vez, dividido p
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 30, cpuMeuPct: 100, nucleos: 8 }), 17.5);
   // nunca negativo nem acima de 100
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 20, nucleos: 8 }), 2.5);
-  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 9000, nucleos: 8 }), 0);
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 100, nucleos: 8 }), 0, "o Ollama a 100% de um núcleo num total baixo: folga de medição, vira 0");
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 9000, nucleos: 8 }), null, "9000% por processo é impossível: leitura quebrada, não 0%");
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 250, cpuMeuPct: 10, nucleos: 8 }), null, "total acima de 100% é impossível");
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 100, cpuMeuPct: 0, nucleos: 8 }), 100);
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 30, cpuMeuPct: 80, nucleos: 0 }), null);
   assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: null, cpuMeuPct: 80, nucleos: 8 }), null);
@@ -411,4 +413,80 @@ test("o modo.ps1 liga o paralelismo do Ollama pelo modo e guarda o modo ligado; 
 
 test("escada.js aceita --paralelo auto", () => {
   assert.match(fs.readFileSync(path.join(RAIZ, "orquestra", "escada.js"), "utf8"), /=== 'auto'/);
+});
+
+test("abortar a SEGUNDA chamada ao local também espera aquele processo morrer (o fim da 1ª chamada não vale)", async () => {
+  let limite = 2;
+  let vivos = 0;
+  const violacoes = [];
+  const chamadas = { a: 0, b: 0 };
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    const id = prompt.includes("contexto de a") ? "a" : "b";
+    chamadas[id] += 1;
+    const n = chamadas[id];
+    vivos += 1;
+    if (limite === 1 && vivos > 1) violacoes.push(`${id} nasceu com ${vivos} vivos`);
+    const morrer = (f) => { vivos -= 1; f(); };
+    if (n === 1) return setTimeout(() => morrer(() => ok("ruim")), 5);
+    if (id === "a" && n === 2) return setTimeout(() => morrer(() => ok("ok")), 150);
+    if (id === "b" && n === 2) { signal.addEventListener("abort", () => setTimeout(() => morrer(() => no(new Error("abortado"))), 200)); return; }
+    return setTimeout(() => morrer(() => ok("ok")), 10);
+  });
+  setTimeout(() => { limite = 1; }, 50);
+  const r = await escada.lote({
+    microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 5, maxTentativas: 2, arquivos: arquivosTemp(),
+    agentes: { local, superiores: [] },
+  });
+  assert.ok(r.every((x) => x.ok), JSON.stringify(r));
+  assert.deepStrictEqual(violacoes, []);
+});
+
+test("uma única microtarefa rodando é reavaliada: se o teto cai para 0 ela é tirada, e volta quando abre vaga", async () => {
+  let limite = 1;
+  let vivos = 0;
+  let abortada = 0;
+  const violacoes = [];
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    vivos += 1;
+    if (limite === 0) violacoes.push("nasceu com limite 0");
+    const fim = setTimeout(() => { vivos -= 1; ok("ok"); }, 150);
+    signal.addEventListener("abort", () => { clearTimeout(fim); abortada += 1; setTimeout(() => { vivos -= 1; no(new Error("abortado")); }, 10); });
+  });
+  setTimeout(() => { limite = 0; }, 40);
+  setTimeout(() => { limite = 1; }, 200);
+  const r = await escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } });
+  assert.ok(r[0].ok);
+  assert.strictEqual(abortada, 1);
+  assert.deepStrictEqual(violacoes, []);
+});
+
+test("matarArvore no Windows repete o taskkill, aceita 'já não existe' e, se falhar, avisa e devolve false (a vaga segue ocupada até o processo fechar)", () => {
+  const filho = { pid: 123, kill: () => { filho.mortoSo = true; } };
+  const chamadas = [];
+  const seguidos = (...status) => (cmd, args) => { chamadas.push([cmd, ...args]); return { status: status[Math.min(chamadas.length - 1, status.length - 1)] }; };
+  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: seguidos(1, 1, 0) }), true);
+  assert.strictEqual(chamadas.length, 3);
+  assert.deepStrictEqual(chamadas[0], ["taskkill", "/pid", "123", "/T", "/F"]);
+  chamadas.length = 0;
+  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: seguidos(128) }), true, "128 = já não existe");
+  chamadas.length = 0;
+  const err = console.error; const avisos = []; console.error = (m) => avisos.push(m);
+  try {
+    assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: () => ({ status: 1 }) }), false);
+  } finally { console.error = err; }
+  assert.ok(filho.mortoSo, "ao menos o processo principal");
+  assert.match(avisos[0], /não consegui matar/);
+  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: () => ({ error: new Error("sem taskkill") }), tentativas: 1 }), false);
+});
+
+test("estado salvo de uma execução antiga expira: um lote novo não herda o alvo antigo", () => {
+  const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "par-")), "estado.json");
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: 0, gravadoEm: 0 }));
+  const agora = 10 * 3600 * 1000;
+  const controle = par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
+  assert.strictEqual(controle(), 1, "estado de 10 h atrás é ignorado");
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora - 1000, gravadoEm: agora - 1000 }));
+  assert.strictEqual(par.criarControle({ leitor: { ler: () => PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 3, "estado recente vale");
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora }));
+  assert.strictEqual(par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 1, "sem data de gravação: ignorado");
 });

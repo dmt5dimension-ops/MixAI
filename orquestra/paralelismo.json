@@ -5,6 +5,7 @@
     "cpuOutrosAcimaDePct": 60,
     "videoDecodeAcimaDePct": 1
   },
+  "validadeEstadoSegundos": 300,
   "subidaMinSegundos": 60,
   "maximoAbsoluto": 4,
   "placa": {

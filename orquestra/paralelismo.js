@@ -54,7 +54,9 @@ function motivosDeUso(leitura, config) {
 // CPU de outros programas: total da máquina menos a parte do Ollama. O contador por processo vai de 0 a 100 POR
 // NÚCLEO, então a parte do Ollama é dividida pelo número de núcleos. Falta de qualquer número vira null.
 function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
-  if (!numeroValido(cpuTotalPct, 0) || !numeroValido(cpuMeuPct, 0) || !Number.isInteger(nucleos) || nucleos < 1) return null;
+  if (!Number.isInteger(nucleos) || nucleos < 1) return null;
+  // Impossível (total acima de 100% ou Ollama acima de 100% por núcleo) é leitura quebrada, não "zero": vira null.
+  if (!numeroValido(cpuTotalPct, 0, 100.0001) || !numeroValido(cpuMeuPct, 0, 100.0001 * nucleos)) return null;
   return Math.round(Math.min(100, Math.max(0, cpuTotalPct - cpuMeuPct / nucleos)) * 10) / 10;
 }
 
@@ -150,10 +152,15 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
   return () => {
     // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente.
     if (ultimo && relogio() - ultimo.em < cacheMs) return ultimo.alvo;
+    // O estado de uma execução antiga não vale para um lote novo: depois de `validadeEstadoSegundos` sem uso, recomeça do zero.
     let anterior = null;
-    try { anterior = lerJson(arquivoEstado); } catch { /* primeira vez */ }
+    try {
+      anterior = lerJson(arquivoEstado);
+      const validade = (config ?? configPadrao()).validadeEstadoSegundos ?? 300;
+      if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
+    } catch { anterior = null; /* primeira vez */ }
     const d = decidir({ leitura: leitor.ler(), modo, anterior, agora: relogio(), modos, config });
-    try { fs.writeFileSync(arquivoEstado, JSON.stringify(d.estado)); } catch { /* sem estado, só não sobe devagar */ }
+    try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };
     return d.alvo;

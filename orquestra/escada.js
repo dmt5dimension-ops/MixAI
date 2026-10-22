@@ -163,19 +163,29 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   return { ok: true, resolvidoPor: nome, saida, regrasUsadas: ids, regraSalva };
 }
 
+// Mata o processo e os filhos dele. No Windows usa `taskkill /T /F`, repetido se falhar (código 128 = já não existe);
+// se não conseguir, avisa e mata ao menos o processo principal. Nunca declara que morreu: quem espera é o 'close'
+// do processo, então a vaga só é liberada quando ele realmente terminou. `executar` existe para os testes.
+function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3 } = {}) {
+  if (plataforma === 'win32') {
+    for (let i = 0; i < tentativas; i++) {
+      const r = executar('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
+      if (!r.error && (r.status === 0 || r.status === 128)) return true;
+    }
+    console.error(`não consegui matar a árvore do processo ${filho.pid} (taskkill falhou ${tentativas} vezes); a vaga continua ocupada até ele terminar`);
+    try { filho.kill(); } catch { /* já morreu */ }
+    return false;
+  }
+  try { process.kill(-filho.pid, 'SIGKILL'); } catch { try { filho.kill('SIGKILL'); } catch { /* já morreu */ } }
+  return true;
+}
+
 function chamarComando(comando) {
   // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
   // reduzir agentes locais quando o dono volta a usar o PC.
   return (prompt, signal) => new Promise((resolve, reject) => {
     const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS, detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
-    const parar = () => {
-      if (process.platform === 'win32') {
-        const r = spawnSync('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
-        if (r.error || r.status !== 0) filho.kill(); // taskkill não funcionou: pelo menos o processo principal
-      } else {
-        try { process.kill(-filho.pid, 'SIGKILL'); } catch { filho.kill('SIGKILL'); }
-      }
-    };
+    const parar = () => matarArvore(filho);
     if (signal) {
       if (signal.aborted) parar();
       else signal.addEventListener('abort', parar, { once: true });
@@ -366,14 +376,16 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
       const e = { ctl: new AbortController(), abandonada: false, emLocal: false, fim: null };
-      let liberar;
-      e.fim = new Promise((ok) => { liberar = ok; });
       estados.set(m, e);
       const agentesDaMicro = {
         ...agentes,
         local: (prompt) => new Promise((ok, no) => {
           if (e.abandonada) return;
           e.emLocal = true;
+          // Cada chamada ao local (1ª tentativa, 2ª, correção...) tem o seu próprio fim: abortar a segunda não pode
+          // olhar o fim da primeira, que já passou.
+          let liberar;
+          e.fim = new Promise((fimOk) => { liberar = fimOk; });
           Promise.resolve().then(() => agentes.local(prompt, e.ctl.signal)).then(
             (r) => { e.emLocal = false; liberar(); if (!e.abandonada) ok(r); },
             (erro) => { e.emLocal = false; liberar(); if (!e.abandonada) no(erro); },
@@ -395,7 +407,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
     // Com limite dinâmico, acorda de tempos em tempos: para abrir vaga quando o PC ficar parado
     // e para tirar agentes quando o dono voltar.
     let relogio;
-    const acordar = dinamico && (pendentes.length || rodando.size > 1) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
+    const acordar = dinamico && (pendentes.length || rodando.size || encerrando.length) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
     await Promise.race([...rodando.values(), ...encerrando.map((x) => x.fim), ...acordar]);
     clearTimeout(relogio);
   }
@@ -467,7 +479,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, matarArvore, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
