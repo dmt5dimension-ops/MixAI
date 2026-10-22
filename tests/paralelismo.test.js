@@ -194,6 +194,15 @@ test("leitura inválida de contador (null, NaN, negativo, fora de faixa, amostra
   assert.match(uso, /Test-Numero \$cpu\.PercentProcessorTime/);
   assert.match(uso, /Test-Numero \$p\.PercentProcessorTime/);
   assert.match(uso, /Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine/);
+  // cada amostra do contador da placa só vale com Status válido (0 ou 1); senão vira $null, mesmo que o valor seja 0
+  assert.match(uso, /\$a\.Status -eq 0 -or \$a\.Status -eq 1/);
+  assert.match(uso, /\} else \{ \$null \}|else \{ \$null \}/);
+  // e uma amostra inválida (null) no meio invalida a medida inteira, tanto de vídeo quanto de placa
+  const nomeMotor = "pid_4321_luid_0x0_0x1_phys_0_eng_5_engtype_video decode";
+  const motores = [0, 1, 2].map((i) => ({ i, n: nomeMotor, v: i === 1 ? null : 0 }));
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores }), null, "amostra inválida com valor zero não pode virar 'sem vídeo'");
+  const leitura = par.lerSaida(JSON.stringify({ ociosoSegundos: 900, gpuOutrosPct: null, cpuTotalPct: 5, cpuMeuPct: 1, nucleos: 8, videoAmostras: 0, videoMotores: [], memoriaLivreGB: 6 }));
+  assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1);
 });
 
 test("sem histórico, o tempo que o PC já está parado conta como subida (parado há horas não começa em 1); mostra o regime", () => {

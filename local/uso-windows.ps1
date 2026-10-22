@@ -44,7 +44,11 @@ function Ler-MotoresGpu {
   if ($contador) {
     $i = 0
     foreach ($amostra in $contador) {
-      foreach ($a in $amostra.CounterSamples) { $leituras += [pscustomobject]@{ i = $i; n = $a.InstanceName; v = $a.CookedValue } }
+      foreach ($a in $amostra.CounterSamples) {
+        # Status 0 (dado válido) e 1 (dado novo) valem; qualquer outro, mesmo com valor 0, é amostra inválida ($null).
+        $valor = if ($a.Status -eq 0 -or $a.Status -eq 1) { $a.CookedValue } else { $null }
+        $leituras += [pscustomobject]@{ i = $i; n = $a.InstanceName; v = $valor }
+      }
       $i++
     }
     return @{ amostras = $i; leituras = $leituras }
