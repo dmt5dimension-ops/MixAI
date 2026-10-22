@@ -11,15 +11,23 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Trava de escopo do PR | `tests/trava-de-escopo.test.js` |
 | Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows) | `tests/trava-de-escopo.test.js` |
 | Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) | `tests/modelo-local.test.js` |
+| O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho | `tests/modelo-local.test.js` |
 | Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) | tests/papeis.test.js |
 | Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
 | Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor | `tests/protecao-local.test.js` |
 | Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) | `tests/preparar-repo.test.js` |
-| Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` | `tests/canal-coordenacao.test.js` |
+| Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`) | `tests/hooks-canal.test.js` |
+| Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único) | `tests/canal-coordenacao.test.js` |
+| Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo` | `tests/regras-locais.test.js` |
+| Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso | `tests/preparar-repo.test.js` |
 | Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) | `tests/escada.test.js` |
 | Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) | `tests/escada.test.js` |
 | Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) | `tests/escada.test.js` e `tests/falhas-escada.test.js` |
 | Paralelismo pelo uso do PC (etapa 5): 1 agente usando o PC, sobe um por vez parado até o teto (modo, placa 8 GB, memória), `--paralelo auto`, vaga só reaproveitada com o processo abortado morto, limite 0 aceito, `OLLAMA_NUM_PARALLEL` pelo modo (`orquestra/paralelismo.js`, `local/uso-windows.ps1`) | `tests/paralelismo.test.js` (leituras simuladas) |
+| Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar | `tests/aplicar.test.js` |
+| Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto | `tests/escada.test.js` |
+| Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo | `tests/aplicar.test.js` |
+| Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (inclui conferir que o mapa real está em dia) |
 
 ## Em andamento
 
@@ -47,6 +55,8 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
 - `local/uso-windows.ps1` e o `OLLAMA_NUM_PARALLEL` pelo modo foram conferidos no PC do dono em 2026-10-22 (JSON com os campos, vídeo detectado, suíte verde). Falta conferir de novo a versão que veio depois da revisão: contadores que falham viram `null`, CPU do Ollama por processo, e o `taskkill` do `lote` ao reduzir agentes (rodar `node orquestra/paralelismo.js` e um lote com `--paralelo auto`, voltando a mexer no PC no meio).
+- Na nuvem (sem PowerShell) 3 testes ficam vermelhos por falta de `pwsh`: `modelo-local.test.js` (2 do `modo.ps1`) e `protecao-local.test.js` (num_gpu 99). Passam no PC do dono; na nuvem, comparar só com a `main`.
+- Depois de mudar código ou o `estado.md`, rodar `node orquestra/mapa.js gerar`; senão `tests/mapa.test.js` fica vermelho de propósito.
 - O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
