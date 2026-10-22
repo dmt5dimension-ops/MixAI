@@ -4,6 +4,7 @@
   "private": true,
   "description": "Projeto orquestrado por Claude Code e Codex",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "pretest": "node orquestra/mapa.js gerar"
   }
 }

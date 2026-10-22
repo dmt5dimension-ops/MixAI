@@ -1,3 +1,5 @@
 node_modules/
 .env
 orquestra/sem-cota.json
+docs/memoria/mapa.json
+docs/memoria/mapa.md
