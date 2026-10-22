@@ -516,3 +516,29 @@ test("escopo: caminho absoluto dentro do repositório e o relativo são o mesmo 
   g = grafo.iniciar(g, "b", "claude", AGORA);
   assert.ok(grafo.validar(g).some((e) => /escopo sobreposto/.test(e)), "a validação (que `atualizar` aplica antes de gravar) recusa os dois em_andamento");
 });
+
+test("soltar a trava: se LER a própria geração falha depois de gravar, a trava é solta do mesmo jeito (não fica presa sem aviso)", () => {
+  const arq = tmp();
+  const ler = fs.readFileSync;
+  const renomear = fs.renameSync;
+  let gravou = false;
+  try {
+    fs.renameSync = (...a) => { const r = renomear(...a); gravou = true; return r; };
+    fs.readFileSync = (f, ...r) => { if (gravou && String(f).includes(".lock.")) throw Object.assign(new Error("disco"), { code: "EIO" }); return ler(f, ...r); };
+    grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA));
+  } finally { fs.readFileSync = ler; fs.renameSync = renomear; }
+  assert.ok("a" in grafo.carregar(arq).tarefas);
+  const nomes = travas(arq);
+  assert.strictEqual(nomes.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(arq), nomes[0]), "utf8"), "livre", "a trava foi solta apesar da falha de leitura");
+  // e se soltar também falhar, avisa em vez de calar
+  const arq2 = tmp();
+  const escrever = fs.writeFileSync;
+  gravou = false;
+  try {
+    fs.renameSync = (...a) => { const r = renomear(...a); gravou = true; return r; };
+    fs.readFileSync = (f, ...r) => { if (gravou && String(f).includes(".lock.")) throw Object.assign(new Error("disco"), { code: "EIO" }); return ler(f, ...r); };
+    fs.writeFileSync = (f, d, ...r) => { if (String(f).includes(".lock.") && d === "livre") throw Object.assign(new Error("disco"), { code: "EIO" }); return escrever(f, d, ...r); };
+    assert.throws(() => grafo.atualizar(arq2, (g) => grafo.adicionar(g, { id: "b", titulo: "B", escopo: ["y"] }, AGORA)), /não consegui soltar a trava.*grafo foi gravado/);
+  } finally { fs.readFileSync = ler; fs.renameSync = renomear; fs.writeFileSync = escrever; }
+});

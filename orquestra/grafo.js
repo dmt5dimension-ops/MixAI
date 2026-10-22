@@ -180,7 +180,10 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     // maior geração voltar a ser uma antiga e solta, e dois processos poderiam passar juntos pela checagem "não há
     // geração maior" e gravar ao mesmo tempo (uma atualização perdida). Se `livre` não puder ser escrito, a trava fica
     // presa enquanto este processo viver (depois vira solta, porque o dono morreu): avisa em vez de ignorar.
-    if (lerOuErro(nome(minha)).texto === dono) {
+    // Se nem LER a própria geração der certo (erro de disco), não dá para conferir o dono, mas o nome só foi criado por
+    // este processo (`wx`) e ninguém reescreve a geração de outro: tenta soltar do mesmo jeito e avisa se não conseguir.
+    const atual = lerOuErro(nome(minha));
+    if (atual.erro || atual.texto === dono) {
       let solta = false;
       try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); solta = true; } catch { /* abaixo */ }
       if (!solta) {
