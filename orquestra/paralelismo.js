@@ -13,7 +13,7 @@ const modosPadrao = () => lerJson(path.join(raiz, 'local', 'modos.json'));
 const minimoMemoriaGB = () => lerJson(path.join(raiz, 'local', 'protecao.json')).memoriaLivreMinimaGB;
 
 // Quantos agentes cabem agora, e o que limita (o menor dos limites vale).
-function capacidade({ modo, memoriaLivreGB, modos = modosPadrao(), config = configPadrao(), memoriaMinimaGB = minimoMemoriaGB() }) {
+function capacidade({ modo, memoriaLivreGB, agentesAtuais = 0, modos = modosPadrao(), config = configPadrao(), memoriaMinimaGB = minimoMemoriaGB() }) {
   const m = modos[modo];
   if (!m) throw new Error(`modo desconhecido: ${modo} (use ${Object.keys(modos).join(' ou ')})`);
   const kvGB = (config.placa.kvMBPorMilTokens * (m.contexto / 1000)) / 1024;
@@ -21,7 +21,9 @@ function capacidade({ modo, memoriaLivreGB, modos = modosPadrao(), config = conf
   const limites = {
     modo: m.agentesMax,
     placa: Math.floor(sobraPlacaGB / kvGB),
-    memoria: Math.floor((memoriaLivreGB - memoriaMinimaGB) / config.ramPorAgenteGB),
+    // A memória livre já está reduzida pelos agentes que rodam agora: soma de volta a parte deles, senão o teto cai a cada
+    // agente aberto e o lote aborta e reinicia em loop perto do mínimo.
+    memoria: Math.floor((memoriaLivreGB + agentesAtuais * config.ramPorAgenteGB - memoriaMinimaGB) / config.ramPorAgenteGB),
     absoluto: config.maximoAbsoluto,
   };
   // Zero é resposta válida: sem espaço na memória ou na placa, nenhum agente local agora (o lote espera abrir vaga).
@@ -62,9 +64,9 @@ function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
 
 // Decide o alvo agora. `anterior` é { alvo, subiuEm } da última decisão (ou null). Sobe no máximo um por vez.
 // `regime` é onde o alvo chega se o PC continuar parado (o teto), para quem só quer olhar.
-function decidir({ leitura, modo, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
+function decidir({ leitura, modo, agentesAtuais = 0, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
   const motivos = motivosDeUso(leitura, config);
-  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, modos, config, memoriaMinimaGB });
+  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, agentesAtuais, modos, config, memoriaMinimaGB });
   const antes = Number.isInteger(anterior?.alvo) && anterior.alvo >= 0 ? anterior.alvo : 1;
   if (motivos.length) {
     const alvo = Math.min(1, cap.max);
@@ -106,15 +108,15 @@ function videoDecodeDe({ amostras, motores }, amostrasMinimas = 3) {
   if (!Number.isInteger(amostras) || amostras < amostrasMinimas) return null;
   const lista = Array.isArray(motores) ? motores : motores ? [motores] : [];
   const videos = lista.filter((m) => /video/i.test(String(m?.n)));
-  if (!videos.length) return null;
+  // Só jpeg/enhance não mede vídeo tocando: é leitura indisponível, não "0%".
+  if (!videos.some((m) => motorDeDecodificacao.test(String(m?.n)))) return null;
   // Toda leitura de motor de vídeo tem que ser um número válido, de uma das amostras, e cada amostra tem que
   // ter pelo menos um motor de vídeo. Leitura inválida ou faltando não pode virar zero (= "sem vídeo").
-  const vistas = new Set();
+  const vistas = new Set(); // amostras que tiveram motor de DECODIFICAÇÃO
   const soma = new Array(amostras).fill(0);
   for (const m of videos) {
     if (!Number.isInteger(m.i) || m.i < 0 || m.i >= amostras || !numeroValido(m.v, 0, 100.0001)) return null;
-    vistas.add(m.i);
-    if (motorDeDecodificacao.test(String(m.n))) soma[m.i] += m.v;
+    if (motorDeDecodificacao.test(String(m.n))) { vistas.add(m.i); soma[m.i] += m.v; }
   }
   if (vistas.size !== amostras) return null;
   return Math.round((soma.reduce((a, b) => a + b, 0) / amostras) * 100) / 100;
@@ -149,7 +151,7 @@ function modoAtual(env = process.env) {
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
 function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, modos, config, aoDecidir } = {}) {
   let ultimo = null;
-  return () => {
+  return ({ agentesLocais = 0 } = {}) => {
     // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente.
     if (ultimo && relogio() - ultimo.em < cacheMs) return ultimo.alvo;
     // O estado de uma execução antiga não vale para um lote novo: depois de `validadeEstadoSegundos` sem uso, recomeça do zero.
@@ -159,7 +161,7 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
       const validade = (config ?? configPadrao()).validadeEstadoSegundos ?? 300;
       if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
     } catch { anterior = null; /* primeira vez */ }
-    const d = decidir({ leitura: leitor.ler(), modo, anterior, agora: relogio(), modos, config });
+    const d = decidir({ leitura: leitor.ler(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
     try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };

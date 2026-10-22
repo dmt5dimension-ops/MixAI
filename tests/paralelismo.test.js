@@ -104,9 +104,12 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   // AMD tocando vídeo: o uso aparece em "video codec 0" (0 a 4%), "video decode" fica em 0.
   const amd = leituras([{ "video decode": 0, "video codec 0": 4, "video jpeg": 0, "video enhance": 0 }, { "video decode": 0, "video codec 0": 0, "video jpeg": 0, "video enhance": 0 }, { "video decode": 0, "video codec 0": 2, "video jpeg": 0, "video enhance": 0 }]);
   assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: amd }), 2);
-  // jpeg e enhance sozinhos não contam como vídeo tocando
+  // jpeg e enhance sozinhos não medem vídeo tocando: leitura indisponível (= usando o PC), nunca 0%
   const so = leituras([{ "video jpeg": 50, "video enhance": 60 }, { "video jpeg": 50, "video enhance": 60 }, { "video jpeg": 50, "video enhance": 60 }]);
-  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: so }), 0);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: so }), null);
+  // uma amostra só com jpeg no meio de amostras com decodificador também é indisponível
+  const faltaUma = leituras([{ "video codec 0": 0 }, { "video jpeg": 5 }, { "video codec 0": 0 }]);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: faltaUma }), null);
   // NVIDIA/Intel
   const nv = leituras([{ VideoDecode: 9 }, { VideoDecode: 6 }, { VideoDecode: 3 }]);
   assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: nv }), 6);
@@ -507,15 +510,18 @@ test("quem subiu para o Codex/Claude não ocupa vaga de agente local: com limite
   assert.ok(eventos.indexOf("local b") < eventos.indexOf("codex termina"), eventos.join(" | "));
 });
 
-test("abortar mata também o processo descendente (neto do shell), não só o shell", async () => {
-  if (process.platform === "win32") return;
-  const marca = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "neto-")), "pid");
-  const neto = `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000)`;
-  const comando = `"${process.execPath}" -e "${neto.replace(/"/g, '\\"')}" & wait`;
+test("abortar mata também o processo descendente (neto), em qualquer sistema", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "neto-"));
+  const marca = path.join(dir, "pid");
+  const netoJs = path.join(dir, "neto.js");
+  const paiJs = path.join(dir, "pai.js");
+  fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
+  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'inherit' }); setTimeout(()=>{},30000);`);
   const ctl = new AbortController();
-  const chamada = escada.chamarComando(comando)("x", ctl.signal);
-  for (let i = 0; i < 100 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 20));
+  const chamada = escada.chamarComando(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
+  for (let i = 0; i < 150 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 20));
   assert.ok(fs.existsSync(marca), "o neto começou");
+  await new Promise((r) => setTimeout(r, 50));
   const pid = Number(fs.readFileSync(marca, "utf8"));
   const inicio = Date.now();
   ctl.abort();
@@ -526,4 +532,64 @@ test("abortar mata também o processo descendente (neto do shell), não só o sh
   let vivo = true;
   for (let i = 0; i < 50 && vivo; i++) { vivo = estaVivo(); if (vivo) await new Promise((r) => setTimeout(r, 20)); }
   assert.strictEqual(vivo, false, "o processo descendente morreu");
+});
+
+test("se não dá para confirmar a morte do processo (taskkill falhando), a chamada termina com naoConfirmado e o lote bloqueia vaga e escopo em vez de reaproveitar", async () => {
+  const ctl = new AbortController();
+  const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
+  const chamada = escada.chamarComando(comando, { matar: () => false, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 100);
+  await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /não morreu/.test(erro.message));
+
+  let limite = 2;
+  let vivos = 0;
+  const violacoes = [];
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    const id = prompt.includes("contexto de a") ? "a" : "b";
+    vivos += 1;
+    if (limite === 1 && vivos > 2) violacoes.push(`${id}: ${vivos} vivos`);
+    if (id === "a") return setTimeout(() => { vivos -= 1; ok("ok"); }, 200);
+    signal.addEventListener("abort", () => setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 20));
+  });
+  setTimeout(() => { limite = 1; }, 50);
+  const r = await escada.lote({ microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } });
+  assert.strictEqual(r[0].ok, true);
+  assert.strictEqual(r[1].ok, false);
+  assert.match(r[1].erro, /não morreu/);
+  assert.deepStrictEqual(violacoes, []);
+});
+
+test("voltando do Codex para o local, a microtarefa espera haver vaga dentro do limite (não fura o limite)", async () => {
+  let vivos = 0;
+  let pico = 0;
+  const chamadas = { a: 0, b: 0 };
+  const local = (prompt) => {
+    const id = prompt.includes("contexto de a") ? "a" : "b";
+    chamadas[id] += 1;
+    vivos += 1;
+    pico = Math.max(pico, vivos);
+    return new Promise((ok) => setTimeout(() => { vivos -= 1; ok(id === "a" && chamadas.a === 1 ? "ruim" : "ok"); }, id === "b" ? 200 : 10));
+  };
+  // a: local ruim -> Codex (dica) -> volta ao local; enquanto isso b ocupa a única vaga
+  const codex = () => "dica";
+  const r = await escada.lote({
+    microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: 1, maxTentativas: 2, arquivos: arquivosTemp(),
+    agentes: { local, superiores: [{ nome: "codex", chamar: codex }] },
+  });
+  assert.ok(r.every((x) => x.ok), JSON.stringify(r));
+  assert.strictEqual(pico, 1, "nunca mais de 1 agente local ao mesmo tempo");
+});
+
+test("a memória livre que o controle recebe já vem reduzida pelos agentes que rodam: o teto soma de volta a parte deles (sem aborto em loop)", () => {
+  // 5 GB livres, mínimo 2: sem agentes cabem 6 (0,5 GB cada); com 3 rodando a memória livre cai 1,5 GB (3,5) e o teto continua o mesmo
+  const sem = par.capacidade({ modo: "noite", memoriaLivreGB: 5, modos: { noite: { ...modos.noite, agentesMax: 99, contexto: 1024 } }, config: { ...config, maximoAbsoluto: 99 }, memoriaMinimaGB: 2 });
+  const com = par.capacidade({ modo: "noite", memoriaLivreGB: 3.5, agentesAtuais: 3, modos: { noite: { ...modos.noite, agentesMax: 99, contexto: 1024 } }, config: { ...config, maximoAbsoluto: 99 }, memoriaMinimaGB: 2 });
+  assert.strictEqual(sem.limites.memoria, 6);
+  assert.strictEqual(com.limites.memoria, 6);
+  // sem a correção o teto cairia para 3 com 3 rodando: o lote abortaria um e o liberaria memória, reabrindo a vaga em loop
+  assert.strictEqual(par.capacidade({ modo: "noite", memoriaLivreGB: 3.5, modos: { noite: { ...modos.noite, agentesMax: 99, contexto: 1024 } }, config: { ...config, maximoAbsoluto: 99 }, memoriaMinimaGB: 2 }).limites.memoria, 3);
+  const vistos = [];
+  const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, memoriaLivreGB: 3.5 }) }, modo: "noite", arquivoEstado: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "par-")), "e.json"), relogio: () => 0, modos, config, aoDecidir: (d) => vistos.push(d.capacidade.limites.memoria) });
+  controle({ agentesLocais: 3 });
+  assert.ok(vistos[0] >= 6, `o controle passa os agentes atuais (${vistos[0]})`);
 });
