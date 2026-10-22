@@ -38,11 +38,12 @@
       "escopo": [
         "orquestra/escada.js",
         "tests/escada.test.js",
-        "orquestra/ESCADA.md"
+        "orquestra/ESCADA.md",
+        "docs/memoria/"
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T00:50:42.341Z",
+      "atualizado": "2026-10-22T05:40:00.000Z",
       "resultado": null
     },
     "etapa4": {
@@ -56,17 +57,18 @@
       "escopo": [
         "orquestra/mapa.js",
         "tests/mapa.test.js",
+        "orquestra/ESCADA.md",
         "docs/memoria/"
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:20:00.000Z",
+      "atualizado": "2026-10-22T05:40:00.000Z",
       "resultado": "PR #16 aprovado pelo Codex, aguardando merge"
     },
     "etapa5": {
       "id": "etapa5",
       "titulo": "Ajustar paralelismo pelo uso do PC",
-      "estado": "em_andamento",
+      "estado": "em_revisao",
       "depende": [
         "etapa2"
       ],
@@ -74,20 +76,23 @@
       "escopo": [
         "orquestra/paralelismo.js",
         "orquestra/paralelismo.json",
-        "local/uso-windows.ps1",
-        "local/modo.ps1",
+        "orquestra/escada.js",
+        "orquestra/ESCADA.md",
         "local/modos.json",
-        "tests/paralelismo.test.js"
+        "local/modo.ps1",
+        "local/uso-windows.ps1",
+        "tests/paralelismo.test.js",
+        "docs/memoria/"
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:20:00.000Z",
-      "resultado": "PR #19 em revisão (também toca orquestra/escada.js, que a etapa 3 usa)"
+      "atualizado": "2026-10-22T05:40:00.000Z",
+      "resultado": "PR #19 em revisão do Codex"
     },
     "etapa6": {
       "id": "etapa6",
       "titulo": "Grafo persistente de tarefas",
-      "estado": "em_andamento",
+      "estado": "em_revisao",
       "depende": [
         "etapa4"
       ],
@@ -95,12 +100,14 @@
       "escopo": [
         "orquestra/grafo.js",
         "orquestra/grafo.json",
-        "tests/grafo.test.js"
+        "orquestra/ESCADA.md",
+        "tests/grafo.test.js",
+        "docs/memoria/"
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:20:00.000Z",
-      "resultado": "PR #18 em revisão"
+      "atualizado": "2026-10-22T05:40:00.000Z",
+      "resultado": "PR #18 em revisão do Codex"
     }
   }
 }

@@ -318,104 +318,120 @@
           "linha": 20
         },
         {
-          "nome": "carregar",
+          "nome": "esperar",
           "linha": 22
         },
         {
-          "nome": "salvar",
-          "linha": 34
+          "nome": "comRetentativa",
+          "linha": 29
         },
         {
-          "nome": "esperar",
-          "linha": 41
+          "nome": "carregar",
+          "linha": 38
+        },
+        {
+          "nome": "salvar",
+          "linha": 50
         },
         {
           "nome": "processoVivo",
-          "linha": 45
-        },
-        {
-          "nome": "atualizar",
-          "linha": 56
-        },
-        {
-          "nome": "idade",
           "linha": 62
         },
         {
-          "nome": "ler",
-          "linha": 63
+          "nome": "atualizar",
+          "linha": 76
         },
         {
-          "nome": "criar",
-          "linha": 64
-        },
-        {
-          "nome": "velha",
-          "linha": 70
-        },
-        {
-          "nome": "tirarSeVelha",
+          "nome": "nome",
           "linha": 81
         },
         {
+          "nome": "geracoes",
+          "linha": 82
+        },
+        {
+          "nome": "idade",
+          "linha": 85
+        },
+        {
+          "nome": "ler",
+          "linha": 86
+        },
+        {
+          "nome": "criar",
+          "linha": 87
+        },
+        {
+          "nome": "solta",
+          "linha": 95
+        },
+        {
           "nome": "pegar",
-          "linha": 122
+          "linha": 134
         },
         {
           "nome": "adicionar",
-          "linha": 128
+          "linha": 140
         },
         {
           "nome": "feita",
-          "linha": 145
+          "linha": 157
         },
         {
           "nome": "prontas",
-          "linha": 147
+          "linha": 159
         },
         {
           "nome": "travadas",
-          "linha": 152
+          "linha": 164
         },
         {
           "nome": "mudar",
-          "linha": 162
+          "linha": 174
         },
         {
           "nome": "iniciar",
-          "linha": 168
+          "linha": 180
         },
         {
-          "nome": "concluir",
-          "linha": 175
-        },
-        {
-          "nome": "falhar",
-          "linha": 181
-        },
-        {
-          "nome": "validar",
+          "nome": "revisar",
           "linha": 188
         },
         {
+          "nome": "devolver",
+          "linha": 195
+        },
+        {
+          "nome": "concluir",
+          "linha": 204
+        },
+        {
+          "nome": "falhar",
+          "linha": 210
+        },
+        {
+          "nome": "validar",
+          "linha": 217
+        },
+        {
           "nome": "visita",
-          "linha": 194
+          "linha": 223
         },
         {
           "nome": "resumo",
-          "linha": 213
+          "linha": 242
         },
         {
           "nome": "opcao",
-          "linha": 219
+          "linha": 248
         },
         {
           "nome": "principal",
-          "linha": 224
+          "linha": 253
         },
         {
           "nome": "virgulas",
-          "linha": 226
+          "linha": 255
         }
       ],
       "exporta": [
@@ -423,10 +439,13 @@
         "carregar",
         "salvar",
         "atualizar",
+        "comRetentativa",
         "adicionar",
         "prontas",
         "travadas",
         "iniciar",
+        "revisar",
+        "devolver",
         "concluir",
         "falhar",
         "validar",
@@ -605,36 +624,56 @@
       "descricao": "Testa o grafo persistente de tarefas (orquestra/grafo.js): dependências, estado e gravação segura.",
       "funcoes": [
         {
-          "nome": "tmp",
-          "linha": 13
+          "nome": "trava",
+          "linha": 14
         },
         {
-          "nome": "exemplo",
+          "nome": "travas",
           "linha": 15
         },
         {
+          "nome": "soGrafo",
+          "linha": 16
+        },
+        {
+          "nome": "tmp",
+          "linha": 17
+        },
+        {
+          "nome": "exemplo",
+          "linha": 19
+        },
+        {
           "nome": "conflita",
-          "linha": 78
+          "linha": 82
         },
         {
           "nome": "rodar",
-          "linha": 117
+          "linha": 103
         },
         {
           "nome": "rodar",
-          "linha": 129
+          "linha": 149
         },
         {
           "nome": "script",
-          "linha": 162
+          "linha": 186
         },
         {
           "nome": "rodar",
-          "linha": 194
+          "linha": 210
         },
         {
           "nome": "cli",
-          "linha": 235
+          "linha": 254
+        },
+        {
+          "nome": "erro",
+          "linha": 290
+        },
+        {
+          "nome": "rodar",
+          "linha": 315
         }
       ],
       "exporta": []

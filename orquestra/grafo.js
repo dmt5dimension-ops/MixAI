@@ -19,10 +19,26 @@ const normaliza = (p) => {
 const sobrepoe = (a, b) => a === b || a === '' || b === '' || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 const lista = (g) => Object.values(g.tarefas);
 
+function esperar(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// No Windows, trocar de nome, apagar ou abrir um arquivo que outro processo está lendo no mesmo instante falha
+// com EPERM/EBUSY/EACCES e passa um instante depois. Repete com espera crescente (10 ms, 20 ms... até 100 ms).
+const transitorios = new Set(['EPERM', 'EBUSY', 'EACCES']);
+function comRetentativa(fn, tentativas = 40) {
+  for (let i = 0; ; i++) {
+    try { return fn(); } catch (erro) {
+      if (!transitorios.has(erro.code) || i >= tentativas) throw erro;
+      esperar(Math.min(100, 10 * (i + 1)));
+    }
+  }
+}
+
 function carregar(arquivo = padrao) {
   if (!fs.existsSync(arquivo)) return novo();
   try {
-    const g = JSON.parse(fs.readFileSync(arquivo, 'utf8'));
+    const g = JSON.parse(comRetentativa(() => fs.readFileSync(arquivo, 'utf8')));
     if (g?.versao !== 1 || typeof g.tarefas !== 'object' || g.tarefas === null) throw new Error('formato');
     return g;
   } catch (erro) {
@@ -35,11 +51,12 @@ function salvar(arquivo, g) {
   fs.mkdirSync(path.dirname(arquivo), { recursive: true });
   const temp = `${arquivo}.${process.pid}.tmp`;
   fs.writeFileSync(temp, JSON.stringify(g, null, 2) + '\n');
-  fs.renameSync(temp, arquivo);
-}
-
-function esperar(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  try {
+    comRetentativa(() => fs.renameSync(temp, arquivo));
+  } catch (erro) {
+    fs.rmSync(temp, { force: true });
+    throw erro;
+  }
 }
 
 function processoVivo(pid) {
@@ -47,75 +64,70 @@ function processoVivo(pid) {
 }
 
 // Lê, muda e grava o grafo com o arquivo trancado, para o supervisor e a escada não se atropelarem.
-// A trava é um arquivo `.lock` criado com 'wx' (só um processo consegue), com `pid:código` dentro.
-// Trava de dono VIVO nunca é tirada, por mais tempo que demore (a mudança é feita sem pausa e não dá para
-// "renovar" no meio dela); só cai a trava de dono que morreu, ou, se o conteúdo não for de um processo,
-// a que passou de `velhaMs`. Quem remove a trava velha segura a `.limpeza`, então só um processo por vez
-// mexe nela, e o dono morto não pode soltá-la nem recriá-la no meio da conferência.
-// Antes de gravar, confere que a trava ainda é sua; se não for, não grava.
-function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {}) {
-  const trava = `${arquivo}.lock`;
-  const limpeza = `${arquivo}.limpeza`;
+//
+// A trava são arquivos numerados `<grafo>.lock.<geração>`, criados com 'wx' (só um processo consegue criar
+// cada nome) e com `pid:código` dentro. Quem quer a trava olha a MAIOR geração: se ela está "livre" (o dono a
+// soltou escrevendo `livre`) ou o dono morreu, cria a geração seguinte; senão espera. NINGUÉM apaga nem
+// reescreve a trava de outro: a de dono morto não é removida, é superada por uma geração maior. Por isso não
+// existe "conferir que está velha e depois apagar", que era onde uma trava nova de outro dono era derrubada.
+// Dono vivo só é superado depois de `vivoMaxMs` (30 min; uma mudança leva milissegundos), por causa do número
+// de processo reaproveitado depois de uma queda. Antes de gravar, confere que a trava ainda é sua e que não
+// existe geração maior; se não for, não grava. Gerações antigas (mais de 20 atrás) são apagadas.
+function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000, vivoMaxMs = 30 * 60000 } = {}) {
+  const pasta = path.dirname(arquivo);
+  const prefixo = `${path.basename(arquivo)}.lock.`;
   const dono = `${process.pid}:${Math.random().toString(36).slice(2)}`;
-  fs.mkdirSync(path.dirname(arquivo), { recursive: true });
-  const limite = Date.now() + esperaMs;
+  fs.mkdirSync(pasta, { recursive: true });
+  const nome = (n) => path.join(pasta, `${prefixo}${String(n).padStart(8, '0')}`);
+  const geracoes = () => comRetentativa(() => fs.readdirSync(pasta))
+    .filter((f) => f.startsWith(prefixo) && /^\d+$/.test(f.slice(prefixo.length)))
+    .map((f) => Number(f.slice(prefixo.length))).sort((a, b) => a - b);
   const idade = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return null; } };
-  const ler = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+  const ler = (f) => { try { return comRetentativa(() => fs.readFileSync(f, 'utf8')); } catch { return null; } };
   const criar = (f) => {
     try { fs.writeFileSync(f, dono, { flag: 'wx' }); return true; } catch (erro) {
-      if (erro.code === 'EEXIST') return false;
+      // EEXIST: o nome já existe. EPERM/EBUSY/EACCES: no Windows, arquivo ocupado por outro processo; tenta de novo.
+      if (erro.code === 'EEXIST' || transitorios.has(erro.code)) return false;
       throw erro;
     }
   };
-  const velha = (f) => {
-    const texto = ler(f);
-    if (texto === null) return false;
+  // A geração está solta (livre, ou de dono que não vai mais voltar)?
+  const solta = (n) => {
+    const texto = ler(nome(n));
+    if (texto === null) return true;
+    if (texto === 'livre') return true;
     const pid = /^(\d+):/.exec(texto);
-    if (pid) return !processoVivo(Number(pid[1]));
-    const i = idade(f);
-    return i !== null && i > velhaMs;
+    if (pid) return !processoVivo(Number(pid[1])) || (idade(nome(n)) ?? 0) > vivoMaxMs;
+    // Vazio (o dono acabou de criar e ainda não escreveu) ou texto estranho: só solta se ficou assim por muito tempo.
+    return (idade(nome(n)) ?? 0) > velhaMs;
   };
-  // Tira o arquivo só se o dono dele está morto (ou o conteúdo não é de um processo e passou de `velhaMs`).
-  // Sai por troca de nome (só um processo consegue) e confere que levou o que tinha visto; se levou outro
-  // (alguém criou um novo no meio), devolve na hora. Dono vivo nunca é tirado.
-  const tirarSeVelha = (f) => {
-    const vista = ler(f);
-    if (vista === null || !velha(f)) return false;
-    const levada = `${f}.${dono.replace(/[^\w]/g, '')}.velha`;
-    try { fs.renameSync(f, levada); } catch { return false; }
-    if (ler(levada) !== vista) {
-      try { fs.linkSync(levada, f); } catch { /* já existe outro */ }
-      fs.rmSync(levada, { force: true });
-      return false;
+  const limite = Date.now() + esperaMs;
+  let minha = 0;
+  for (;;) {
+    const todas = geracoes();
+    const maior = todas.length ? todas[todas.length - 1] : 0;
+    if (maior === 0 || solta(maior)) {
+      if (criar(nome(maior + 1))) { minha = maior + 1; break; }
+      if (Date.now() > limite) throw new Error(`grafo travado: não consegui criar ${nome(maior + 1)}`);
+      esperar(5);
+      continue; // outro criou esta geração primeiro (ou o Windows está ocupado): olha de novo
     }
-    fs.rmSync(levada, { force: true });
-    return true;
-  };
-  while (!criar(trava)) {
-    if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
-    if (velha(trava)) {
-      // Trava de limpeza de dono vivo nunca é tirada; a de dono morto também só sai por `tirarSeVelha`.
-      tirarSeVelha(limpeza);
-      if (criar(limpeza)) {
-        try {
-          tirarSeVelha(trava);
-        } finally {
-          if (ler(limpeza) === dono) fs.rmSync(limpeza, { force: true });
-        }
-        continue;
-      }
-    }
+    if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${nome(maior)}); se ninguém está usando, apague esse arquivo`);
     esperar(25);
   }
   try {
+    for (const n of geracoes()) if (n < minha - 20) { try { fs.rmSync(nome(n), { force: true }); } catch { /* fica para a próxima */ } }
     const novoGrafo = mudanca(carregar(arquivo));
     const erros = validar(novoGrafo);
     if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
-    if (ler(trava) !== dono) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a removeu); nada foi gravado, tente de novo');
+    const maisNova = geracoes().some((n) => n > minha);
+    if (ler(nome(minha)) !== dono || maisNova) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a superou); nada foi gravado, tente de novo');
     salvar(arquivo, novoGrafo);
     return novoGrafo;
   } finally {
-    if (ler(trava) === dono) fs.rmSync(trava, { force: true });
+    // Solta escrevendo `livre` na própria geração (só se ainda for sua). Não apaga: o arquivo é o marcador de qual
+    // geração veio por último.
+    if (ler(nome(minha)) === dono) { try { comRetentativa(() => fs.writeFileSync(nome(minha), 'livre')); } catch { /* o dono morre e a geração fica solta */ } }
   }
 }
 
@@ -172,9 +184,26 @@ function iniciar(g, id, agente, agora = new Date().toISOString()) {
   return mudar(g, id, { estado: 'em_andamento', agente }, agora);
 }
 
-function concluir(g, id, resultado = null, agora = new Date().toISOString()) {
+// Trabalho pronto, esperando revisão (PR aberto): não mexe mais nos arquivos, então não entra na conta de escopo.
+function revisar(g, id, resultado = null, agora = new Date().toISOString()) {
   const t = pegar(g, id);
   if (t.estado !== 'em_andamento') throw new Error(`tarefa ${id} precisa estar em_andamento (está ${t.estado})`);
+  return mudar(g, id, { estado: 'em_revisao', resultado }, agora);
+}
+
+// A revisão pediu mudança: volta a mexer nos arquivos (e a contar no escopo).
+function devolver(g, id, motivo = null, agora = new Date().toISOString()) {
+  const t = pegar(g, id);
+  if (t.estado !== 'em_revisao') throw new Error(`tarefa ${id} precisa estar em_revisao (está ${t.estado})`);
+  const em_andamento = lista(g).filter((x) => x.estado === 'em_andamento');
+  const conflito = em_andamento.find((x) => t.escopo.map(normaliza).some((p) => x.escopo.map(normaliza).some((q) => sobrepoe(p, q))));
+  if (conflito) throw new Error(`tarefa ${id} não pode voltar a em_andamento: o escopo dela se sobrepõe ao de ${conflito.id}, que está em_andamento`);
+  return mudar(g, id, { estado: 'em_andamento', resultado: motivo }, agora);
+}
+
+function concluir(g, id, resultado = null, agora = new Date().toISOString()) {
+  const t = pegar(g, id);
+  if (t.estado !== 'em_andamento' && t.estado !== 'em_revisao') throw new Error(`tarefa ${id} precisa estar em_andamento ou em_revisao (está ${t.estado})`);
   return mudar(g, id, { estado: 'feita', resultado }, agora);
 }
 
@@ -234,6 +263,10 @@ function principal(args) {
     atualizar(arquivo, (x) => adicionar(x, { id: resto[0], titulo: resto.slice(1).join(' '), agente, depende, escopo, verificar }));
   } else if (cmd === 'iniciar' && resto.length === 2) {
     atualizar(arquivo, (x) => iniciar(x, resto[0], resto[1]));
+  } else if (cmd === 'revisar' && resto.length >= 1) {
+    atualizar(arquivo, (x) => revisar(x, resto[0], resto.slice(1).join(' ') || null));
+  } else if (cmd === 'devolver' && resto.length >= 1) {
+    atualizar(arquivo, (x) => devolver(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'concluir' && resto.length >= 1) {
     atualizar(arquivo, (x) => concluir(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'falhar' && resto.length >= 1) {
@@ -245,13 +278,13 @@ function principal(args) {
     for (const t of travadas(g)) console.log(`travada: ${t.id}`);
     for (const e of validar(g)) console.log(`erro: ${e}`);
   } else {
-    console.error('Uso: node orquestra/grafo.js add <id> <título> [--agente a] [--depende x,y] [--escopo f,g] [--verificar cmd] | iniciar <id> <agente> | concluir <id> [resultado] | falhar <id> [motivo] | proximas | status [--arquivo f]');
+    console.error('Uso: node orquestra/grafo.js add <id> <título> [--agente a] [--depende x,y] [--escopo f,g] [--verificar cmd] | iniciar <id> <agente> | revisar <id> [resultado] | devolver <id> [motivo] | concluir <id> [resultado] | falhar <id> [motivo] | proximas | status [--arquivo f]');
     return 1;
   }
   return 0;
 }
 
-module.exports = { novo, carregar, salvar, atualizar, adicionar, prontas, travadas, iniciar, concluir, falhar, validar, resumo };
+module.exports = { novo, carregar, salvar, atualizar, comRetentativa, adicionar, prontas, travadas, iniciar, revisar, devolver, concluir, falhar, validar, resumo };
 
 if (require.main === module) {
   try {

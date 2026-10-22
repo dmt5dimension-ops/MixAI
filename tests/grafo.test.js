@@ -10,6 +10,10 @@ const RAIZ = path.resolve(__dirname, "..");
 const grafo = require(path.join(RAIZ, "orquestra", "grafo.js"));
 
 const AGORA = "2026-10-22T12:00:00.000Z";
+// As travas são arquivos numerados ao lado do grafo: <grafo>.lock.00000001, 00000002...
+const trava = (arq, n) => `${arq}.lock.${String(n).padStart(8, "0")}`;
+const travas = (arq) => fs.readdirSync(path.dirname(arq)).filter((f) => f.startsWith(path.basename(arq) + ".lock.")).sort();
+const soGrafo = (arq) => fs.readdirSync(path.dirname(arq)).filter((f) => !f.startsWith(path.basename(arq) + ".lock."));
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "grafo-")), "grafo.json");
 
 function exemplo() {
@@ -93,24 +97,6 @@ test("escopo sobreposto: pasta contra arquivo, barra final, ./, maiúsculas e cu
   assert.ok(!conflita("tests/", "docs/"));
 });
 
-test("atualizar trava o arquivo: duas gravações seguidas não perdem nenhuma, e trava velha é ignorada", () => {
-  const arq = tmp();
-  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA));
-  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "b", titulo: "B" }, AGORA));
-  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a", "b"]);
-  assert.ok(!fs.existsSync(arq + ".lock"));
-  fs.writeFileSync(arq + ".lock", "99999");
-  const velho = new Date(Date.now() - 120000);
-  fs.utimesSync(arq + ".lock", velho, velho);
-  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "c", titulo: "C" }, AGORA));
-  assert.strictEqual(Object.keys(grafo.carregar(arq).tarefas).length, 3);
-  fs.writeFileSync(arq + ".lock", "99999");
-  assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 150 }), /travado/);
-  fs.rmSync(arq + ".lock");
-  assert.throws(() => grafo.atualizar(arq, () => { throw new Error("falhou dentro"); }), /falhou dentro/);
-  assert.ok(!fs.existsSync(arq + ".lock"), "a trava tem que ser solta mesmo com erro");
-});
-
 test("processos simultâneos na linha de comando não perdem atualização", async () => {
   const arq = tmp();
   const { spawn } = require("node:child_process");
@@ -119,44 +105,82 @@ test("processos simultâneos na linha de comando não perdem atualização", asy
   assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ["t1", "t2", "t3", "t4", "t5", "t6"]);
 });
 
-test("vários processos partindo de uma trava velha não perdem atualização nem apagam a trava um do outro", async () => {
+test("atualizar trava o arquivo: gravações seguidas não perdem nenhuma, a trava é solta, e geração velha é apagada", () => {
   const arq = tmp();
-  fs.writeFileSync(arq + ".lock", "morto");
-  const velho = new Date(Date.now() - 120000);
-  fs.utimesSync(arq + ".lock", velho, velho);
-  const { spawn } = require("node:child_process");
-  const ids = Array.from({ length: 8 }, (_, i) => "p" + i);
-  const rodar = (id) => new Promise((ok) => {
-    const f = spawn(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), "add", id, "T " + id, "--arquivo", arq]);
-    f.on("close", (codigo) => ok(codigo));
-  });
-  const codigos = await Promise.all(ids.map(rodar));
-  assert.deepStrictEqual(codigos, ids.map(() => 0));
-  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ids);
-  assert.ok(!fs.existsSync(arq + ".lock") && !fs.existsSync(arq + ".limpeza"));
+  for (const id of ["a", "b", "c"]) grafo.atualizar(arq, (g) => grafo.adicionar(g, { id, titulo: id }, AGORA));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a", "b", "c"]);
+  assert.deepStrictEqual(travas(arq), ["grafo.json.lock.00000001", "grafo.json.lock.00000002", "grafo.json.lock.00000003"]);
+  for (const f of travas(arq)) assert.strictEqual(fs.readFileSync(path.join(path.dirname(arq), f), "utf8"), "livre");
+  for (let i = 0; i < 30; i++) grafo.atualizar(arq, (g) => g);
+  assert.ok(travas(arq).length <= 22, `gerações antigas são apagadas (${travas(arq).length})`);
+  assert.ok(travas(arq).includes("grafo.json.lock.00000033"));
+  assert.throws(() => grafo.atualizar(arq, () => { throw new Error("falhou dentro"); }), /falhou dentro/);
+  const ultima = travas(arq).pop();
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(arq), ultima), "utf8"), "livre", "solta mesmo com erro");
 });
 
-test("quem perdeu a trava no meio da operação não grava por cima", () => {
+test("trava de dono morto é superada por uma geração maior, sem apagar nada; texto estranho só depois de velhaMs", () => {
+  const { spawnSync } = require("node:child_process");
+  const arq = tmp();
+  const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+  fs.writeFileSync(trava(arq, 7), `${pidMorto}:x`);
+  const t0 = Date.now();
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA));
+  assert.ok(Date.now() - t0 < 1500, "dono morto não faz esperar");
+  assert.strictEqual(fs.readFileSync(trava(arq, 7), "utf8"), `${pidMorto}:x`, "a trava do morto continua lá, intacta");
+  assert.strictEqual(fs.readFileSync(trava(arq, 8), "utf8"), "livre");
+  // texto que não é de um processo (ou vazio): espera até passar de velhaMs
+  fs.writeFileSync(trava(arq, 9), "99999");
+  assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 150 }), /travado/);
+  const velho = new Date(Date.now() - 120000);
+  fs.utimesSync(trava(arq, 9), velho, velho);
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "b", titulo: "B" }, AGORA));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a", "b"]);
+  fs.writeFileSync(trava(arq, 20), "");
+  assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 150 }), /travado/, "vazio e recente = dono acabou de criar");
+});
+
+test("vários processos partindo de uma trava morta não perdem atualização", async () => {
+  const { spawnSync, spawn } = require("node:child_process");
+  const arq = tmp();
+  const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+  fs.writeFileSync(trava(arq, 1), `${pidMorto}:x`);
+  const ids = Array.from({ length: 8 }, (_, i) => "p" + i);
+  const rodar = (id) => new Promise((ok) => spawn(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), "add", id, "T " + id, "--arquivo", arq]).on("close", ok));
+  assert.deepStrictEqual(await Promise.all(ids.map(rodar)), ids.map(() => 0));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ids);
+  assert.deepStrictEqual(soGrafo(arq), ["grafo.json"]);
+});
+
+test("quem perdeu a trava no meio da operação não grava por cima nem mexe na trava do outro", () => {
   const arq = tmp();
   grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA));
+  // outro processo supera a minha geração (aqui simulado criando uma maior) no meio da mudança
   assert.throws(() => grafo.atualizar(arq, (g) => {
-    fs.rmSync(arq + ".lock");
-    fs.writeFileSync(arq + ".lock", "outro-dono");
+    fs.writeFileSync(trava(arq, 50), "123456789:outro");
     return grafo.adicionar(g, { id: "b", titulo: "B" }, AGORA);
   }), /perdeu a trava/);
   assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a"]);
-  assert.strictEqual(fs.readFileSync(arq + ".lock", "utf8"), "outro-dono", "não pode apagar a trava do outro dono");
+  assert.strictEqual(fs.readFileSync(trava(arq, 50), "utf8"), "123456789:outro");
+  // e a trava do dono sobrescrita no meio também impede a gravação
+  const arq2 = tmp();
+  assert.throws(() => grafo.atualizar(arq2, (g) => {
+    fs.writeFileSync(trava(arq2, 1), "outro-dono");
+    return grafo.adicionar(g, { id: "c", titulo: "C" }, AGORA);
+  }), /perdeu a trava/);
+  assert.strictEqual(fs.readFileSync(trava(arq2, 1), "utf8"), "outro-dono", "não solta a trava que já não é dela");
+  assert.ok(!fs.existsSync(arq2), "nada foi gravado");
 });
 
-test("o tempo de espera vale mesmo com a trava sumindo e voltando", () => {
+test("o tempo de espera vale mesmo com a trava ocupada", () => {
   const arq = tmp();
-  fs.writeFileSync(arq + ".lock", "vivo");
+  fs.writeFileSync(trava(arq, 1), `${process.pid}:vivo`);
   const t0 = Date.now();
   assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 200 }), /travado/);
   assert.ok(Date.now() - t0 < 3000);
 });
 
-test("trava de dono vivo nunca é tirada, mesmo velha; a de dono morto cai na hora", () => {
+test("trava de dono vivo nunca é superada, mesmo com velhaMs minúsculo; o dono morrendo libera na hora", () => {
   const { spawnSync, spawn } = require("node:child_process");
   const arq = tmp();
   const script = (espera) => `const g=require(${JSON.stringify(path.join(RAIZ, "orquestra", "grafo.js"))});g.atualizar(${JSON.stringify(arq)},(x)=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,${espera});return g.adicionar(x,{id:"lento",titulo:"L"})});`;
@@ -164,52 +188,47 @@ test("trava de dono vivo nunca é tirada, mesmo velha; a de dono morto cai na ho
     const filho = spawn(process.execPath, ["-e", script(2000)]);
     const t0 = Date.now();
     const espera = setInterval(() => {
-      if (!fs.existsSync(arq + ".lock") && Date.now() - t0 < 5000) return;
+      if (!travas(arq).length && Date.now() - t0 < 5000) return;
       clearInterval(espera);
       try {
-        // trava do filho (vivo) é considerada velha demais (1 ms), e mesmo assim não pode ser tirada
         grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "pai", titulo: "P" }, AGORA), { velhaMs: 1, esperaMs: 8000 });
         assert.ok(Date.now() - t0 >= 1500, "esperou o dono vivo terminar");
         assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ["lento", "pai"]);
-        // dono morto: o pid de um processo que já terminou
-        const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
-        fs.writeFileSync(arq + ".lock", `${pidMorto}:abc`);
-        const t1 = Date.now();
-        grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "depois", titulo: "D" }, AGORA), { esperaMs: 3000 });
-        assert.ok(Date.now() - t1 < 2000, "trava de dono morto cai na hora, sem esperar a idade");
-        assert.ok("depois" in grafo.carregar(arq).tarefas);
         ok();
       } catch (erro) { falha(erro); }
     }, 20);
   });
 });
 
-test("trava de limpeza abandonada (dono morto) é recuperada por vários processos sem perder atualização", async () => {
-  const { spawnSync, spawn } = require("node:child_process");
+test("exclusão mútua provada: 8 processos fazem ler-esperar-gravar no mesmo contador e nenhum incremento se perde", async () => {
   const arq = tmp();
-  const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
-  fs.writeFileSync(arq + ".lock", `${pidMorto}:a`);
-  fs.writeFileSync(arq + ".limpeza", `${pidMorto}:b`);
-  const ids = Array.from({ length: 6 }, (_, i) => "q" + i);
-  const rodar = (id) => new Promise((ok) => spawn(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), "add", id, "T " + id, "--arquivo", arq]).on("close", ok));
-  assert.deepStrictEqual(await Promise.all(ids.map(rodar)), ids.map(() => 0));
-  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ids);
-  assert.deepStrictEqual(fs.readdirSync(path.dirname(arq)), ["grafo.json"]);
+  const { spawn } = require("node:child_process");
+  const alvo = JSON.stringify(arq);
+  const mod = JSON.stringify(path.join(RAIZ, "orquestra", "grafo.js"));
+  // Cada incremento dentro da trava lê o contador, espera um tempo aleatório (abre a janela da corrida) e grava.
+  const codigo = `const g=require(${mod});for(let i=0;i<6;i++)g.atualizar(${alvo},(x)=>{const n=(x.contador||0);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Math.floor(Math.random()*4));return {...x,contador:n+1}});`;
+  const rodar = () => new Promise((ok) => {
+    const f = spawn(process.execPath, ["-e", codigo]);
+    let erro = "";
+    f.stderr.on("data", (d) => { erro += d; });
+    f.on("close", (c) => ok({ c, erro }));
+  });
+  const r = await Promise.all(Array.from({ length: 8 }, rodar));
+  assert.deepStrictEqual(r.filter((x) => x.c !== 0), []);
+  assert.strictEqual(grafo.carregar(arq).contador, 48);
 });
 
-test("trava de limpeza de dono vivo nunca é tirada, mesmo com a trava principal de dono morto", () => {
-  const { spawnSync, spawn } = require("node:child_process");
+test("pid reaproveitado depois de uma queda: trava de dono 'vivo' mais velha que vivoMaxMs é superada; mais nova, não", () => {
+  const { spawn } = require("node:child_process");
   const arq = tmp();
-  const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
   const vivo = spawn(process.execPath, ["-e", "setTimeout(()=>{},5000)"]);
   try {
-    fs.writeFileSync(arq + ".lock", `${pidMorto}:a`);
-    fs.writeFileSync(arq + ".limpeza", `${vivo.pid}:b`);
-    const velho = new Date(Date.now() - 600000);
-    fs.utimesSync(arq + ".limpeza", velho, velho);
-    assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 300 }), /travado/);
-    assert.strictEqual(fs.readFileSync(arq + ".limpeza", "utf8"), `${vivo.pid}:b`, "limpeza de dono vivo foi mantida");
-    assert.strictEqual(fs.readFileSync(arq + ".lock", "utf8"), `${pidMorto}:a`, "e a trava morta não foi mexida por quem não tinha a limpeza");
+    fs.writeFileSync(trava(arq, 1), `${vivo.pid}:x`);
+    assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 200 }), /travado/, "dono vivo e recente: espera");
+    const velha = new Date(Date.now() - 3600000);
+    fs.utimesSync(trava(arq, 1), velha, velha);
+    grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA), { esperaMs: 2000 });
+    assert.ok("a" in grafo.carregar(arq).tarefas);
   } finally { vivo.kill(); }
 });
 
@@ -224,7 +243,7 @@ test("salvar é atômico e carregar devolve o mesmo grafo; arquivo corrompido d�
   const g = exemplo();
   grafo.salvar(arq, g);
   assert.deepStrictEqual(grafo.carregar(arq), g);
-  assert.deepStrictEqual(fs.readdirSync(path.dirname(arq)), ["grafo.json"]);
+  assert.deepStrictEqual(soGrafo(arq), ["grafo.json"]);
   fs.writeFileSync(arq, "{quebrado");
   assert.throws(() => grafo.carregar(arq), /corrompido/);
   assert.strictEqual(fs.readFileSync(arq, "utf8"), "{quebrado");
@@ -244,8 +263,73 @@ test("linha de comando: add, proximas, iniciar, concluir e status persistem no a
   assert.notStrictEqual(cli("iniciar", "b", "codex").status, 0);
 });
 
+test("em_revisao: trabalho pronto esperando revisão não conta no escopo; devolver volta a contar e recusa conflito", () => {
+  let g = grafo.novo();
+  g = grafo.adicionar(g, { id: "x", titulo: "x", escopo: ["src/a.js"] }, AGORA);
+  g = grafo.adicionar(g, { id: "y", titulo: "y", escopo: ["src/"] }, AGORA);
+  g = grafo.iniciar(g, "x", "codex", AGORA);
+  g = grafo.revisar(g, "x", "PR #1", AGORA);
+  assert.strictEqual(g.tarefas.x.estado, "em_revisao");
+  g = grafo.iniciar(g, "y", "claude", AGORA);
+  assert.deepStrictEqual(grafo.validar(g), [], "x está em revisão, não conta");
+  assert.throws(() => grafo.devolver(g, "x", "ajustar", AGORA), /se sobrepõe ao de y/);
+  assert.throws(() => grafo.revisar(grafo.novo(), "z", null, AGORA), /não existe/);
+  assert.throws(() => grafo.devolver(g, "y", null, AGORA), /em_revisao/);
+  const livre = grafo.revisar(g, "y", "PR #2", AGORA);
+  const volta = grafo.devolver(livre, "x", "ajustar", AGORA);
+  assert.strictEqual(volta.tarefas.x.estado, "em_andamento");
+  assert.strictEqual(grafo.concluir(livre, "x", "merge", AGORA).tarefas.x.estado, "feita");
+  assert.strictEqual(grafo.concluir(grafo.concluir(livre, "x", null, AGORA), "y", null, AGORA).tarefas.y.estado, "feita");
+});
+
+test("erros transitórios do Windows (EPERM/EBUSY/EACCES) ao criar a trava, ler e trocar de nome o arquivo são repetidos; outros erros não", () => {
+  const arq = tmp();
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA));
+  const originais = { rename: fs.renameSync, rm: fs.rmSync, write: fs.writeFileSync, read: fs.readFileSync };
+  const falhas = { rename: 3, write: 3, read: 3 };
+  const erro = (code) => Object.assign(new Error(code), { code });
+  fs.renameSync = (...a) => { if (falhas.rename-- > 0) throw erro("EPERM"); return originais.rename(...a); };
+  fs.writeFileSync = (...a) => { if (/\.lock\.\d+$/.test(String(a[0])) && falhas.write-- > 0) throw erro("EACCES"); return originais.write(...a); };
+  fs.readFileSync = (...a) => { if (String(a[0]).endsWith(arq) && falhas.read-- > 0) throw erro("EPERM"); return originais.read(...a); };
+  try {
+    grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "b", titulo: "B" }, AGORA));
+  } finally {
+    Object.assign(fs, { renameSync: originais.rename, writeFileSync: originais.write, readFileSync: originais.read });
+  }
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a", "b"]);
+  assert.deepStrictEqual(soGrafo(arq), ["grafo.json"], "sem temporário sobrando");
+  assert.ok(Object.values(falhas).every((n) => n < 0), `cada erro injetado foi encontrado e repetido: ${JSON.stringify(falhas)}`);
+  // erro que não é transitório sobe na hora, sem repetir
+  let chamadas = 0;
+  assert.throws(() => grafo.comRetentativa(() => { chamadas += 1; throw erro("ENOSPC"); }), /ENOSPC/);
+  assert.strictEqual(chamadas, 1);
+  // transitório que nunca passa: desiste depois de repetir
+  chamadas = 0;
+  assert.throws(() => grafo.comRetentativa(() => { chamadas += 1; throw erro("EPERM"); }, 3), /EPERM/);
+  assert.strictEqual(chamadas, 4);
+});
+
+test("estresse: 10 processos, 3 tarefas cada, todos ao mesmo tempo, nenhuma se perde", async () => {
+  const arq = tmp();
+  const { spawn } = require("node:child_process");
+  const rodar = (n) => new Promise((ok) => {
+    const filho = spawn(process.execPath, ["-e", `const g=require(${JSON.stringify(path.join(RAIZ, "orquestra", "grafo.js"))});for(let i=0;i<3;i++)g.atualizar(${JSON.stringify(arq)},(x)=>g.adicionar(x,{id:"p${n}_"+i,titulo:"T"}));`]);
+    let erro = "";
+    filho.stderr.on("data", (d) => { erro += d; });
+    filho.on("close", (codigo) => ok({ codigo, erro }));
+  });
+  const r = await Promise.all(Array.from({ length: 10 }, (_, n) => rodar(n)));
+  assert.deepStrictEqual(r.filter((x) => x.codigo !== 0), []);
+  assert.strictEqual(Object.keys(grafo.carregar(arq).tarefas).length, 30);
+  assert.deepStrictEqual(soGrafo(arq), ["grafo.json"]);
+});
+
 test("o grafo do repositório existe, é válido e está versionado", () => {
   const real = grafo.carregar(path.join(RAIZ, "orquestra", "grafo.json"));
   assert.strictEqual(real.versao, 1);
   assert.deepStrictEqual(grafo.validar(real), []);
+  // tarefa que ainda não terminou precisa declarar o escopo inteiro, senão o conflito de escopo não enxerga
+  for (const t of Object.values(real.tarefas)) {
+    if (t.estado === "em_andamento" || t.estado === "em_revisao") assert.ok(t.escopo.length > 0, `${t.id} sem escopo`);
+  }
 });
