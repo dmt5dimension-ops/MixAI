@@ -901,3 +901,25 @@ test("depois de um aborto com morte confirmada, o fechamento NÃO repete a confe
   await escada.chamarComando("echo oi", { plataforma: "win32", fixar: (f) => { f.raizEstado = "perdida"; }, fotoMs: 100000, orfaos: () => { conferencias += 1; return []; } })("x");
   assert.strictEqual(conferencias, 1);
 });
+
+test("aborto e tempo máximo ao mesmo tempo usam UMA rotina de parada: um só temporizador, termina com naoConfirmado e sem segurar o Node", async () => {
+  const ctl = new AbortController();
+  let chamadas = 0;
+  setTimeout(() => ctl.abort(), 20);
+  const t0 = Date.now();
+  await assert.rejects(
+    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, {
+      matar: () => { chamadas++; return false; }, orfaos: () => [], reintentoMs: 20, tentativasDeMatar: 3, tempoMaximoMs: 90,
+    })("x", ctl.signal),
+    (erro) => erro.naoConfirmado === true,
+  );
+  assert.ok(chamadas <= 3, `a parada repetiu demais (${chamadas} chamadas): havia duas rotinas`);
+  assert.ok(Date.now() - t0 < 2000);
+});
+
+test("a leitura do CIM falha de vez (ErrorAction Stop) em vez de devolver só parte dos processos com status 0", () => {
+  const so = fakeSO({ 100: { pai: 1, criacao: "1000" } });
+  escada.lerProcessos(so.executar);
+  escada.lerProcessos(so.executar, [100]);
+  for (const c of so.chamadas) assert.match(c.join(" "), /-ErrorAction Stop/);
+});

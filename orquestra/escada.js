@@ -170,7 +170,7 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
 // pid e hora batendo.
 const CAMPOS_CIM = '-Property ProcessId,ParentProcessId,CreationDate';
 const FORMATO_CIM = 'ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$($_.CreationDate.ToFileTimeUtc())" }';
-const comandoCim = (pids) => `Get-CimInstance Win32_Process ${CAMPOS_CIM}${pids ? ` -Filter "${pids.map((p) => `ProcessId=${Number(p)}`).join(' OR ')}"` : ''} | ${FORMATO_CIM}`;
+const comandoCim = (pids) => `Get-CimInstance Win32_Process -ErrorAction Stop ${CAMPOS_CIM}${pids ? ` -Filter "${pids.map((p) => `ProcessId=${Number(p)}`).join(' OR ')}"` : ''} | ${FORMATO_CIM}`;
 const argsPowerShell = (pids) => ['-NoProfile', '-NonInteractive', '-Command', comandoCim(pids)];
 const OPCOES_PS = { encoding: 'utf8', timeout: 20000, windowsHide: true };
 
@@ -408,7 +408,10 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fot
       try { filho.unref(); } catch { /* sem efeito */ }
     };
     const naoConfirmado = (texto) => { fim(reject, Object.assign(new Error(texto), { naoConfirmado: true })); largar(); };
+    let parando = false;
     const parar = () => {
+      if (parando) return; // aborto e tempo máximo juntos: uma única rotina de parada (e um único temporizador)
+      parando = true;
       if (matar(filho)) return;
       let feitas = 1;
       relogio = setInterval(() => {
