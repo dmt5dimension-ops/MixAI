@@ -7,6 +7,10 @@ const os = require("node:os");
 const path = require("node:path");
 
 const RAIZ = path.resolve(__dirname, "..");
+const matarGrupo = (pid) => {
+  if (process.platform === "win32") require("node:child_process").spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+  else { try { process.kill(-pid, "SIGKILL"); } catch { /* limpeza do teste */ } }
+};
 const matarReal = (f) => escada.matarArvore(f);
 const par = require(path.join(RAIZ, "orquestra", "paralelismo.js"));
 const escada = require(path.join(RAIZ, "orquestra", "escada.js"));
@@ -464,8 +468,12 @@ test("uma única microtarefa rodando é reavaliada: se o teto cai para 0 ela é 
   assert.deepStrictEqual(violacoes, []);
 });
 
-test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando CADA pid sumiu (nem 128 nem 0 do taskkill provam), mata os que sobram um a um", () => {
-  const tabela = "100,1\n200,100\n300,200\n400,1\n";
+// Linhas "pid,pid do pai,hora de criação" como o PowerShell as imprime
+const T = (...linhas) => linhas.join("\n") + "\n";
+const pidsDe = (arvore) => arvore.map((e) => e.pid);
+
+test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando CADA processo sumiu (nem 128 nem 0 do taskkill provam), mata os que sobram um a um", () => {
+  const tabela = T("100,1,111", "200,100,222", "300,200,333", "400,1,444");
   const vivos = new Set([100, 200, 300]);
   const executar = (cmd, args) => {
     if (cmd === "powershell") return { status: 0, stdout: tabela };
@@ -473,7 +481,7 @@ test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando C
     vivos.delete(Number(args[1]));
     return { status: 0 };
   };
-  assert.deepStrictEqual(escada.arvoreDe(100, executar), [100, 200, 300]);
+  assert.deepStrictEqual(escada.arvoreDe(100, executar), [{ pid: 100, criacao: "111" }, { pid: 200, criacao: "222" }, { pid: 300, criacao: "333" }]);
   assert.strictEqual(escada.matarArvore({ pid: 100 }, { plataforma: "win32", executar, vivo: (p) => vivos.has(p) }), true);
   assert.deepStrictEqual([...vivos], [], "os descendentes órfãos foram mortos um a um");
   const err = console.error; console.error = () => {};
@@ -482,19 +490,39 @@ test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando C
     const semFoto = (codigo) => (cmd) => (cmd === "powershell" ? { status: 1 } : { status: codigo });
     assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto(0), vivo: () => false }), false);
     assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto(128), vivo: () => false }), false);
-    // raiz já sumiu e a foto só achou a própria raiz: inconclusivo, não "árvore vazia"
-    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: "1,0\n" } : { status: 128 }), vivo: () => false }), false);
+    // raiz já sumiu e a foto não achou nada dela: inconclusivo, não "árvore vazia"
+    assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: T("1,0,9") } : { status: 128 }), vivo: () => false }), false);
     // descendente que não morre: falha e não mata só o processo principal
     const teimoso = { pid: 100, kill: () => { teimoso.mortoSo = true; } };
-    assert.strictEqual(escada.matarArvore(teimoso, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => p === 300, tentativas: 2 }), false);
+    assert.strictEqual(escada.matarArvore(teimoso, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => (p === 300 ? true : false), tentativas: 2 }), false);
     assert.ok(!teimoso.mortoSo);
+    // não deu para saber se existe (null): não conta como morto
+    assert.strictEqual(escada.matarArvore({ pid: 100 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: () => null, tentativas: 1 }), false);
   } finally { console.error = err; }
 });
 
+test("PID reaproveitado: só mata quando o PID E a hora de criação batem (a hora diferente = outro programa, nunca é morto)", () => {
+  const mortos = [];
+  const tabela = T("100,1,111", "200,100,222");
+  // 200 morreu e o Windows deu o pid 200 a outro programa (criado em 999)
+  const atual = { 100: "111", 200: "999" };
+  const executar = (cmd, args) => { if (cmd === "taskkill") { mortos.push(Number(args[1])); delete atual[Number(args[1])]; } return cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }; };
+  const vivo = (pid, criacao) => (atual[pid] === undefined ? false : atual[pid] === criacao);
+  assert.strictEqual(escada.matarArvore({ pid: 100 }, { plataforma: "win32", executar, vivo, tentativas: 1 }), true);
+  assert.ok(mortos.includes(100));
+  assert.ok(!mortos.includes(200), "o programa que herdou o pid 200 não foi morto");
+  // o vivo() padrão compara a hora de criação lida do CIM: true = mesma hora, false = outra hora ou sumiu, null = não deu para ler
+  const lendo = (stdout, status = 0) => escada.processoVivoComCriacao(() => ({ status, stdout }), "win32");
+  assert.strictEqual(lendo("222\n")(200, "222"), true);
+  assert.strictEqual(lendo("999\n")(200, "222"), false, "pid reaproveitado: outra hora de criação");
+  assert.strictEqual(lendo("")(200, "222"), false, "processo não existe mais");
+  assert.strictEqual(lendo("", 1)(200, "222"), null, "consulta falhou: não se sabe");
+});
+
 test("orfaosVivos: depois que o shell fecha, descendente vivo é achado pelo pai registrado, morto e conferido (Windows) ou pelo grupo (outros)", () => {
-  const tabela = "100,1\n200,100\n300,200\n";
+  const tabela = T("100,1,111", "200,100,222", "300,200,333");
   const vivos = new Set([200, 300]);
-  const executar = (cmd, args) => {
+  const executar = (cmd) => {
     if (cmd === "powershell") return { status: 0, stdout: tabela };
     vivos.delete(200); vivos.delete(300);
     return { status: 0 };
@@ -505,10 +533,9 @@ test("orfaosVivos: depois que o shell fecha, descendente vivo é achado pelo pai
   assert.deepStrictEqual(teimosos, [300]);
   assert.strictEqual(escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar: () => ({ status: 1 }), vivo: () => true }), null, "sem leitura da árvore: inconclusivo, não 'limpo'");
   // as fotos periódicas guardam o órfão cujo intermediário já morreu (a foto de agora só vê a raiz)
-  const ex = (cmd) => (cmd === "powershell" ? { status: 0, stdout: "100,1\n" } : { status: 0 });
-  const filho = { pid: 100, arvore: [100, 200, 300] };
+  const filho = { pid: 100, arvore: [{ pid: 100, criacao: "111" }, { pid: 200, criacao: "222" }, { pid: 300, criacao: "333" }] };
   const vivosAgora = new Set([300]);
-  const sobrou = escada.orfaosVivos(filho, { plataforma: "win32", executar: (cmd, args) => { if (cmd === "taskkill") vivosAgora.delete(300); return ex(cmd); }, vivo: (p) => vivosAgora.has(p) });
+  const sobrou = escada.orfaosVivos(filho, { plataforma: "win32", executar: (cmd, args) => { if (cmd === "taskkill") vivosAgora.delete(300); return cmd === "powershell" ? { status: 0, stdout: T("100,1,111") } : { status: 0 }; }, vivo: (p) => vivosAgora.has(p) });
   assert.deepStrictEqual(sobrou, []);
   assert.strictEqual(vivosAgora.size, 0, "o órfão da foto antiga foi morto");
 });
@@ -546,7 +573,7 @@ test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node 
   const r = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 15000 });
   assert.match(r.stdout.trim(), /^naoConfirmado \d+$/);
   assert.ok(Date.now() - t0 < 10000, `o Node terminou sozinho (${Date.now() - t0} ms)`);
-  try { process.kill(-Number(r.stdout.trim().split(" ")[1]), "SIGKILL"); } catch { /* limpeza do teste */ }
+  matarGrupo(Number(r.stdout.trim().split(" ")[1]));
 });
 
 test("o tempo máximo mata a árvore pelo mesmo caminho (matar), não só o shell", async () => {
@@ -625,7 +652,7 @@ test("se não dá para confirmar a morte do processo (taskkill falhando), a cham
   const chamada = escada.chamarComando(comando, { matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /não morreu/.test(erro.message));
-  try { process.kill(-preso.pid, "SIGKILL"); } catch { /* limpeza do teste */ }
+  matarGrupo(preso.pid);
 
   // No lote: quando um processo abortado não dá para confirmar que morreu, o lote INTEIRO para com erro claro
   // (nada de bloquear vaga na memória: um lote novo não herdaria o bloqueio).
@@ -636,6 +663,7 @@ test("se não dá para confirmar a morte do processo (taskkill falhando), a cham
     signal.addEventListener("abort", () => {
       abortados.push(id);
       if (id === "b") setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 20);
+      else setTimeout(() => no(new Error("abortado")), 30); // os outros morrem e o lote espera essa confirmação
     });
     if (id === "c") setTimeout(() => ok("ok"), 10);
   });
@@ -644,7 +672,7 @@ test("se não dá para confirmar a morte do processo (taskkill falhando), a cham
     escada.lote({ microtarefas: ["a", "b", "c"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }),
     /o lote parou.*"b"/,
   );
-  assert.ok(abortados.includes("a"), "os outros agentes locais também são interrompidos (melhor esforço)");
+  assert.ok(abortados.includes("a"), "os outros agentes locais também são interrompidos");
 });
 
 test("voltando do Codex para o local, a microtarefa espera haver vaga dentro do limite (não fura o limite)", async () => {
@@ -698,12 +726,13 @@ test("morte não confirmada no tempo máximo também para o lote (não vira erro
     /o lote parou.*"a"/,
   );
   assert.strictEqual(codex, 0, "não subiu para o Codex");
-  try { process.kill(-preso.pid, "SIGKILL"); } catch { /* limpeza do teste */ }
+  matarGrupo(preso.pid);
 });
 
 test("arvoreDe: saída vazia ou sem linhas válidas (consulta falhou sem erro) é inconclusiva, não 'só a raiz'", () => {
   for (const stdout of ["", "\n\n", "lixo sem numeros"]) assert.strictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout })), null, JSON.stringify(stdout));
-  assert.deepStrictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout: "100,1\n" })), [100]);
+  assert.deepStrictEqual(pidsDe(escada.arvoreDe(100, () => ({ status: 0, stdout: T("100,1,111") }))), [100]);
+  assert.strictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout: T("1,0,9") })), null, "raiz ausente e sem descendentes: inconclusivo");
 });
 
 test("chamarComando (Windows simulado): fotografa a árvore durante a execução e as fotos chegam ao matar; leitura da árvore falhando depois do close vira naoConfirmado", async () => {
@@ -711,20 +740,43 @@ test("chamarComando (Windows simulado): fotografa a árvore durante a execução
   let vistoPeloMatar;
   const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
   const chamada = escada.chamarComando(comando, {
-    plataforma: "win32", fotografar: (f) => [f.pid, 999], fotoMs: 20,
-    matar: (f) => { vistoPeloMatar = f.arvore; try { process.kill(-f.pid, "SIGKILL"); } catch { /* já */ } return true; },
+    plataforma: "win32", fotografar: (f) => [{ pid: f.pid, criacao: "1" }, { pid: 999, criacao: "2" }], fotoMs: 20,
+    matar: (f) => { vistoPeloMatar = f.arvore; matarGrupo(f.pid); return true; },
     orfaos: () => [],
   })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 150);
   await assert.rejects(chamada);
-  assert.ok(vistoPeloMatar.includes(999), "a foto periódica estava registrada quando o matar rodou");
+  assert.ok(vistoPeloMatar.some((e) => e.pid === 999), "a foto periódica estava registrada quando o matar rodou");
   await assert.rejects(escada.chamarComando("echo oi", { orfaos: () => null })("x"), (erro) => erro.naoConfirmado === true && /não consegui conferir/.test(erro.message));
 });
 
 test("matarArvore (Windows): órfão que só aparece nas fotos antigas também é morto e conferido; a foto de agora não substitui as antigas", () => {
   const vivos = new Set([300]);
-  const filho = { pid: 100, arvore: [100, 200, 300] };
-  const ok = escada.matarArvore(filho, { plataforma: "win32", executar: (cmd, args) => { if (cmd === "taskkill" && args[1] === "300") vivos.delete(300); return cmd === "powershell" ? { status: 0, stdout: "100,1\n" } : { status: 0 }; }, vivo: (p) => vivos.has(p) });
+  const filho = { pid: 100, arvore: [{ pid: 100, criacao: "111" }, { pid: 200, criacao: "222" }, { pid: 300, criacao: "333" }] };
+  const ok = escada.matarArvore(filho, { plataforma: "win32", executar: (cmd, args) => { if (cmd === "taskkill" && args[1] === "300") vivos.delete(300); return cmd === "powershell" ? { status: 0, stdout: T("100,1,111") } : { status: 0 }; }, vivo: (p) => vivos.has(p) });
   assert.strictEqual(ok, true);
   assert.strictEqual(vivos.size, 0);
+});
+
+test("no erro fatal o lote ESPERA a morte confirmada dos outros agentes antes de lançar o erro, e lista os que não foram confirmados", async () => {
+  const mortes = [];
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    const id = prompt.includes("contexto de a") ? "a" : prompt.includes("contexto de b") ? "b" : "c";
+    signal.addEventListener("abort", () => {
+      if (id === "b") setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 10);
+      else if (id === "a") setTimeout(() => { mortes.push("a"); no(new Error("abortado")); }, 150); // demora a morrer
+      else setTimeout(() => { mortes.push("c"); no(Object.assign(new Error("também não"), { naoConfirmado: true })); }, 80);
+    });
+  });
+  setTimeout(() => {}, 0);
+  let limite = 3;
+  setTimeout(() => { limite = 1; }, 40);
+  let erro;
+  try {
+    await escada.lote({ microtarefas: ["a", "b", "c"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } });
+  } catch (e) { erro = e; }
+  assert.ok(erro, "o lote falhou");
+  assert.deepStrictEqual(mortes.sort(), ["a", "c"], "quando o erro chegou, os outros já tinham terminado de morrer");
+  assert.match(erro.message, /o lote parou/);
+  assert.match(erro.message, /Também não foi confirmada a morte de: c/);
 });
