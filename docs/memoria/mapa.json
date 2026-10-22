@@ -62,6 +62,11 @@
       "funcoes": []
     },
     {
+      "arquivo": "local/iniciar-vigia.ps1",
+      "descricao": "Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.",
+      "funcoes": []
+    },
+    {
       "arquivo": "local/modo.ps1",
       "descricao": "Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).",
       "funcoes": []
@@ -105,6 +110,44 @@
       "arquivo": "local/vigia-prioridade.ps1",
       "descricao": "Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)",
       "funcoes": []
+    },
+    {
+      "arquivo": "orquestra/aplicar.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "normalizar",
+          "linha": 4
+        },
+        {
+          "nome": "entradasDoEscopo",
+          "linha": 14
+        },
+        {
+          "nome": "permitido",
+          "linha": 26
+        },
+        {
+          "nome": "conferirAlterados",
+          "linha": 34
+        },
+        {
+          "nome": "dentroDaRaiz",
+          "linha": 39
+        },
+        {
+          "nome": "caminhoComCaixaExistente",
+          "linha": 44
+        },
+        {
+          "nome": "aplicarResposta",
+          "linha": 64
+        }
+      ],
+      "exporta": [
+        "aplicarResposta",
+        "conferirAlterados"
+      ]
     },
     {
       "arquivo": "orquestra/chamar.js",
@@ -356,6 +399,17 @@
       "funcoes": []
     },
     {
+      "arquivo": "tests/aplicar.test.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "emRaizTemporaria",
+          "linha": 9
+        }
+      ],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/canal-coordenacao.test.js",
       "descricao": "Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.",
       "funcoes": [
@@ -545,6 +599,10 @@
         {
           "nome": "rodar",
           "linha": 150
+        },
+        {
+          "nome": "prepararComGhFalso",
+          "linha": 164
         }
       ],
       "exporta": []
@@ -647,6 +705,12 @@
       ]
     },
     {
+      "o_que": "O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho",
+      "testes": [
+        "tests/modelo-local.test.js"
+      ]
+    },
+    {
       "o_que": "Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js)",
       "testes": [
         "tests/papeis.test.js"
@@ -666,6 +730,12 @@
     },
     {
       "o_que": "Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`)",
+      "testes": [
+        "tests/preparar-repo.test.js"
+      ]
+    },
+    {
+      "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
       ]
@@ -693,6 +763,12 @@
       "testes": [
         "tests/escada.test.js",
         "tests/falhas-escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo",
+      "testes": [
+        "tests/aplicar.test.js"
       ]
     },
     {
