@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "node .claude/hooks/canal.js inicio" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node .claude/hooks/canal.js parar" } ] }
+    ]
+  }
+}
