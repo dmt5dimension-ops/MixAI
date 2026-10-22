@@ -76,7 +76,13 @@ test("Codex #21: os hooks usam CLAUDE_PROJECT_DIR e funcionam a partir de uma su
   const subpasta = path.join(RAIZ, "tests");
   const cmd = cfg.hooks.Stop[0].hooks[0].command;
   // O Claude Code roda os hooks pelo bash (no Windows, o Git Bash), que expande ${CLAUDE_PROJECT_DIR}; o cmd.exe não expandiria.
-  const r = spawnSync("bash", ["-c", cmd], { cwd: subpasta, env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ.split(path.sep).join("/"), MIXAI_CANAL: arq }, encoding: "utf8", input: "{}" });
+  // No Windows o primeiro "bash" do PATH pode ser o do WSL (sem node); escolhe o Git Bash explicitamente.
+  const bash = process.platform === "win32"
+    ? [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Programs")]
+      .filter(Boolean).map((p) => path.join(p, "Git", "bin", "bash.exe")).find((p) => fs.existsSync(p))
+    : "bash";
+  if (!bash) return; // sem Git Bash instalado o Claude Code nem roda hooks no Windows; nada a provar aqui
+  const r = spawnSync(bash, ["-c", cmd], { cwd: subpasta, env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ.split(path.sep).join("/"), MIXAI_CANAL: arq }, encoding: "utf8", input: "{}" });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).decision, "block");
 });
