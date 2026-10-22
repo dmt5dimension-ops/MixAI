@@ -58,3 +58,7 @@ O sistema roda só com as assinaturas. Nada de chave de API.
 6. **Conferência final.** Rode `npm test` neste repositório e confirme que está verde.
 
 Ao terminar, responda ao dono com uma lista curta: o que estava certo, o que você ajustou e o que ele precisa fazer (se algo).
+
+## Canal de coordenação com o Claude
+
+Use `D:\MixAI-coordenacao\coordenacao.md` (fora do git) para falar com o Claude: leia antes e depois de cada revisão e de cada passo, e escreva ali seus bloqueios, pedidos e respostas, uma seção por mensagem. O dono não leva recados entre vocês. Detalhes na seção "Canal de coordenação entre Claude e Codex" do `AGENTS.md`.
