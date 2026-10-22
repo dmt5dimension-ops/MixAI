@@ -20,9 +20,25 @@ public static class MixaiOcioso {
 }
 '@
 
-# Os processos do próprio modelo local não contam como "outros programas".
-$meus = @('ollama', 'ollama app', 'llama-server', 'ollama_llama_server')
-$pidsMeus = @(Get-Process | Where-Object { $meus -contains $_.ProcessName } | ForEach-Object { $_.Id })
+# "Meu" = só o Ollama que o MixAI iniciou: o modo.ps1 registra o PID do cmd que sobe o servidor e meus são esse processo e
+# todos os que descendem dele (pelo ParentProcessId). Um Ollama/llama-server independente (aberto pelo dono ou por outro
+# programa) conta como uso do PC. Sem registro, ou se a lista de processos falhar, nada é "meu" (na dúvida, em uso).
+$pidsMeus = @()
+$arquivoOllama = Join-Path $env:TEMP 'mixai-ollama.pid'
+if (Test-Path $arquivoOllama) {
+  $raizMeu = 0
+  if ([int]::TryParse(((Get-Content $arquivoOllama -ErrorAction SilentlyContinue) -join '').Trim(), [ref]$raizMeu) -and $raizMeu -gt 0) {
+    $todos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $raizProc = $todos | Where-Object { $_.ProcessId -eq $raizMeu -and $_.Name -eq 'cmd.exe' } | Select-Object -First 1
+    if ($raizProc) {
+      $pidsMeus = @($raizMeu)
+      do {
+        $novos = @($todos | Where-Object { $pidsMeus -contains [int]$_.ParentProcessId -and $pidsMeus -notcontains [int]$_.ProcessId } | ForEach-Object { [int]$_.ProcessId })
+        $pidsMeus += $novos
+      } while ($novos.Count -gt 0)
+    }
+  }
+}
 
 $ocioso = [MixaiOcioso]::Segundos()
 if ($ocioso -lt 0) { $ocioso = $null }
@@ -72,14 +88,17 @@ if ($motores -and $motores.amostras -ge 1) {
   $somas = New-Object 'double[]' $motores.amostras
   $valido = $true
   $video = @()
+  $viuPid = $false
   foreach ($l in $motores.leituras) {
+    if ($l.n -match 'pid_(\d+)_') { $viuPid = $true }
     if ($l.n -match 'pid_(\d+)_' -and $pidsMeus -notcontains [int]$Matches[1]) {
       if (-not (Test-Numero $l.v)) { $valido = $false; continue }
       $somas[$l.i] += [double]$l.v
       if ($l.n -match 'video') { $video += [pscustomobject]@{ i = $l.i; n = $l.n; v = [Math]::Round([double]$l.v, 2) } }
     }
   }
-  if ($valido) {
+  # Amostras sem nenhum motor no formato pid_<n>_ não provam que a placa está livre: leitura indisponível ($null), nunca 0.
+  if ($valido -and $viuPid) {
     $gpuOutros = [Math]::Round([Math]::Min(100, ($somas | Measure-Object -Average).Average), 1)
     $videoAmostras = $motores.amostras
     $videoMotores = $video

@@ -28,7 +28,10 @@ Start-Sleep -Seconds 2
 # O desvio do log é feito pelo cmd: com -RedirectStandardError o servidor herda a saída deste script
 # e quem roda o modo.ps1 esperando a saída fica preso para sempre.
 $log = "$env:LOCALAPPDATA\Ollama\mixai-servidor.log"
-Start-Process cmd -ArgumentList '/c', "`"`"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe`"", 'serve', "2> `"$log`"`"" -WindowStyle Hidden
+# O PID do cmd que sobe o servidor fica registrado: só esse processo e os que descendem dele são "do MixAI" para o uso-windows.ps1.
+$arquivoOllama = Join-Path $env:TEMP 'mixai-ollama.pid'
+Remove-Item $arquivoOllama -Force -ErrorAction SilentlyContinue
+Start-Process cmd -ArgumentList '/c', "`"`"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe`"", 'serve', "2> `"$log`"`"" -WindowStyle Hidden -PassThru | ForEach-Object { Set-Content $arquivoOllama $_.Id }
 for ($i = 0; $i -lt 30 -and -not (Get-Process ollama -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
 Start-Sleep -Seconds 3
 

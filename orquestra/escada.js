@@ -309,8 +309,12 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     filho.on('close', (codigo) => {
       if (terminou) return;
       clearInterval(relogio);
-      // O shell fechou: se ficou descendente vivo (sem pipe), o 'close' não prova que acabou. Mata e confere.
-      Promise.resolve().then(() => orfaos(filho)).catch(() => null).then((sobrou) => {
+      clearTimeout(limiteDeTempo); // o comando já acabou: a conferência do job não pode transformar um sucesso em "tempo máximo"
+      // O shell fechou: se ficou descendente vivo (sem pipe), o 'close' não prova que acabou. Mata e confere, com prazo próprio.
+      let prazo;
+      const semResposta = new Promise((ok) => { prazo = setTimeout(() => ok(null), prazoDeFechamentoMs); });
+      Promise.race([Promise.resolve().then(() => orfaos(filho)), semResposta]).catch(() => null).then((sobrou) => {
+        clearTimeout(prazo);
         if (terminou) return;
         if (sobrou === null || sobrou === undefined) return naoConfirmado(`o processo ${filho.pid} fechou e não consegui conferir se sobrou descendente vivo (a conferência falhou)`);
         if (sobrou.length) return naoConfirmado(`o processo ${filho.pid} fechou, mas ${sobrou.length} descendente(s) continuam vivos e não morreram`);
@@ -581,7 +585,15 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
             // O sinal da microtarefa chega também aos superiores: erro fatal ou redução cancelam a chamada em andamento.
             const p = Promise.resolve().then(() => sup.chamar(...a, ...(a.length < 2 ? [e.ctl.signal] : [])));
             e.supFim = p.then(() => true, (erro) => erro?.naoConfirmado !== true); // a chamada terminou; só `true` prova que não ficou processo vivo
-            return p;
+            // Morte não confirmada de um superior (Codex/Claude) também é fatal: nunca vira falha comum que segue o lote.
+            return p.catch((erro) => {
+              if (erro?.naoConfirmado) {
+                naoConfirmados.push(m.id);
+                fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do superior "${sup.nome}" da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
+                avisarMudanca();
+              }
+              throw erro;
+            });
           },
         })),
         local: async (prompt) => {

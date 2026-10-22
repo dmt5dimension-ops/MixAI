@@ -1031,3 +1031,36 @@ test("erro fatal do lote cancela também a verificação em andamento e espera e
   assert.ok(sinalDaVerificacao && sinalDaVerificacao.aborted, "a verificação recebeu o aborto");
   assert.strictEqual(verificacaoTerminou, true, "o lote esperou a verificação terminar");
 });
+
+// --- Pontos do Codex no #19 (rodada final) -------------------------------------------------------------------------
+test("superior (Codex/Claude) que devolve naoConfirmado torna o lote FATAL, não falha comum", async () => {
+  const verificadorDe = () => async () => ({ ok: false, motivo: "errado" }); // o local não passa: sobe para o superior
+  const superior = { nome: "codex", chamar: async () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true }); } };
+  await assert.rejects(
+    escada.lote({ microtarefas: [microDe("a")], verificadorDe, arquivos: arquivosTemp(), agentes: { local: () => "ok", superiores: [superior] } }),
+    /o lote parou: não consegui confirmar que o processo do superior "codex" da microtarefa "a" morreu/,
+  );
+});
+
+test("o uso-windows.ps1 dá null (não 0) para placa sem motor no formato pid_, e só conta como 'meu' o Ollama registrado pelo MixAI", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /\$viuPid/);
+  assert.match(uso, /if \(\$valido -and \$viuPid\)/, "sem nenhum motor pid_ a placa fica null");
+  assert.doesNotMatch(uso, /\$meus = @\(/, "nada de contar 'meu' pelo nome do processo");
+  assert.match(uso, /mixai-ollama\.pid/);
+  assert.match(uso, /ParentProcessId/, "meus = o registrado e os descendentes dele");
+  const modo = fs.readFileSync(path.join(RAIZ, "local", "modo.ps1"), "utf8");
+  assert.match(modo, /mixai-ollama\.pid/);
+  assert.match(modo, /-PassThru \| ForEach-Object \{ Set-Content \$arquivoOllama \$_\.Id \}/);
+});
+
+test("conferência lenta do job não vira 'tempo máximo' num comando que já acabou, e conferência sem resposta tem prazo próprio", async () => {
+  const { spawn } = require("node:child_process");
+  const lancar = (comando, fd) => spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] });
+  const lenta = () => new Promise((ok) => setTimeout(() => ok([]), 400));
+  assert.strictEqual(await escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: lenta, tempoMaximoMs: 150, prazoDeFechamentoMs: 3000 })("x"), "ok");
+  await assert.rejects(
+    escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: () => new Promise(() => {}), prazoDeFechamentoMs: 150 })("x"),
+    (erro) => erro.naoConfirmado === true,
+  );
+});
