@@ -23,6 +23,8 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) | `tests/escada.test.js` |
 | Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) | `tests/escada.test.js` |
 | Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) | `tests/escada.test.js` e `tests/falhas-escada.test.js` |
+| Grafo persistente de tarefas (etapa 6): dependências, estados, tarefas prontas, travadas, validação de ciclo e escopo, gravação atômica (`orquestra/grafo.js`, `orquestra/grafo.json`) | `tests/grafo.test.js` |
+| Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (inclui conferir que o mapa real está em dia) |
 | Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar | `tests/aplicar.test.js` |
 | Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto | `tests/escada.test.js` |
 | Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo | `tests/aplicar.test.js` |
@@ -60,6 +62,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
 - `tests/instalar.test.js` falha às vezes no PC do dono quando a memória está quase cheia (falhou 2 de 9 também na main). Não é falha do instalador; investigar numa tarefa própria.
+- Ligar o vigia e a `escada.js` ao grafo (`orquestra/grafo.js`): hoje só o planejador e o Codex o usam pela linha de comando. Tarefa própria, mexe em arquivos de outras etapas.
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
 - O `AGENTS.md` copiado pelo kit cita `orquestra/` e `local/`, que só existem no MixAI. No repo de outro app esses comandos não existem; falta decidir se ele chama os scripts pela pasta do MixAI ou se o kit passa a levar essas pastas.
