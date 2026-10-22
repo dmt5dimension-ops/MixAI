@@ -1,0 +1,1 @@
+{"entrada":"Converta 21/10/2026 para o formato ISO (ano-mes-dia).","saidasErradas":["21-10-2026","2026/10/21"],"motivos":["formato errado","separador errado"],"saidaCerta":"2026-10-21","verificar":"node orquestra/falhas/confere-data-iso.js","resolvidoPor":"codex","data":"2026-10-21T00:00:00.000Z"}

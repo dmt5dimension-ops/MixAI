@@ -10,7 +10,7 @@ const escada = require(path.resolve(__dirname, "..", "orquestra", "escada.js"));
 
 function pastaTemp() {
   const p = fs.mkdtempSync(path.join(os.tmpdir(), "escada-"));
-  return { regras: path.join(p, "regras.json"), casos: path.join(p, "casos.jsonl") };
+  return { regras: path.join(p, "regras.json"), casos: path.join(p, "casos.jsonl"), falhas: path.join(p, "falhas.jsonl"), pendentes: path.join(p, "pendentes.jsonl") };
 }
 
 const ENTRADA = "Converta a data 21/10/2026 para o formato ISO.";
@@ -248,4 +248,171 @@ test("lote recusa paralelismo inválido em vez de travar", async () => {
   for (const p of [NaN, 0, -1, 1.5]) {
     await assert.rejects(() => escada.lote({ microtarefas: [micro("a")], verificadorDe, paralelismo: p, agentes: { local: () => "a", superiores: [] }, arquivos: pastaTemp() }), /paralelismo/);
   }
+});
+
+// ---- loop de tentativas: local tenta, o modelo grande investiga e reinstrui, até acertar ou estourar o limite ----
+const verifMotivo = (esperado) => (saida) => (saida.trim() === esperado ? { ok: true } : { ok: false, motivo: `esperava ${esperado}, veio ${saida.trim()}` });
+
+test("loop: o grande recebe o erro, reinstrui, e o local acerta na segunda rodada", async () => {
+  const f = pastaTemp();
+  const reinstrucoes = [];
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva a palavra alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 3,
+    agentes: {
+      local: (p) => (p.includes("DICA-DO-GRANDE") ? "alfa" : "beta"),
+      superiores: [{ nome: "codex", chamar: (p) => { reinstrucoes.push(p); return "DICA-DO-GRANDE: devolva exatamente alfa."; } }],
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.resolvidoPor, "local");
+  assert.strictEqual(r.tentativas, 2);
+  assert.ok(reinstrucoes[0].includes("esperava alfa, veio beta"), "o erro do verificador vai para o grande");
+});
+
+test("loop: se um grande não responde (sem cota), passa para o outro", async () => {
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: pastaTemp(), maxTentativas: 2,
+    agentes: {
+      local: (p) => (p.includes("DICA") ? "alfa" : "x"),
+      superiores: [{ nome: "codex", chamar: () => { throw new Error("usage limit"); } }, { nome: "claude", chamar: () => "DICA: alfa" }],
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.resolvidoPor, "local");
+});
+
+test("loop: estourou o limite, o grande resolve direto e a falha vira caso de regressão", async () => {
+  const f = pastaTemp();
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 2, verificarComando: "node confere-alfa",
+    agentes: { local: () => "x", superiores: [{ nome: "codex", chamar: (p) => (p.includes("REINSTRUIR") ? "tente de novo" : "alfa") }] },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.resolvidoPor, "codex");
+  const falhas = escada.lerCasos(f.falhas);
+  assert.strictEqual(falhas.length, 1);
+  assert.strictEqual(falhas[0].saidaCerta, "alfa");
+  assert.strictEqual(falhas[0].verificar, "node confere-alfa");
+  assert.ok(falhas[0].saidasErradas.length >= 1);
+});
+
+test("loop: ninguém acerta -> vai para pendentes, não para os casos de regressão", async () => {
+  const f = pastaTemp();
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 2,
+    agentes: { local: () => "x", superiores: [{ nome: "codex", chamar: () => "y" }] },
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(escada.lerCasos(f.falhas).length, 0);
+  assert.strictEqual(escada.lerCasos(f.pendentes).length, 1);
+});
+
+test("loop: checagem antagônica reprova resposta que passou no verificador", async () => {
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: pastaTemp(), maxTentativas: 1, antagonico: true,
+    agentes: {
+      local: () => "alfa",
+      superiores: [
+        { nome: "codex", chamar: (p) => (p.includes("ANTAGONISTA") ? "PROBLEMA: faltou tratar maiúscula" : "alfa") },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK" : "alfa") },
+      ],
+    },
+  });
+  // o local passa no verificador mas o codex (antagonista) reprova; o codex resolve e o OUTRO grande (claude) confere
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.resolvidoPor, "codex");
+  assert.strictEqual(r.antagonista, "claude");
+});
+
+test("loop: limite de tentativas inválido é recusado", async () => {
+  for (const m of [0, -1, 1.5, NaN]) {
+    await assert.rejects(() => escada.resolverComLoop({ entrada: "x", verificar: () => ({ ok: true }), maxTentativas: m, agentes: { local: () => "x", superiores: [] }, arquivos: pastaTemp() }), /tentativas/);
+  }
+});
+
+test("loop: antagonista sem resposta passa para o próximo grande e só 'OK' isolado aprova", async () => {
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: pastaTemp(), maxTentativas: 1, antagonico: true,
+    agentes: {
+      local: () => "alfa",
+      superiores: [
+        { nome: "codex", chamar: (p) => { if (p.includes("ANTAGONISTA")) throw new Error("usage limit"); return "alfa"; } },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK, mas PROBLEMA: esqueceu o caso vazio" : "alfa") },
+      ],
+    },
+  });
+  assert.notStrictEqual(r.resolvidoPor, "local");
+});
+
+test("lote: pedir tentativas usa o loop e registra a falha resolvida", async () => {
+  const f = pastaTemp();
+  const [res] = await escada.lote({
+    microtarefas: [micro("a")], verificadorDe: () => (s) => (s.trim() === "a" ? { ok: true } : { ok: false, motivo: "não é a" }),
+    paralelismo: 1, maxTentativas: 1, arquivos: f,
+    agentes: { local: () => "x", superiores: [{ nome: "codex", chamar: (p) => (p.includes("REINSTRUIR") ? "dica" : "a") }] },
+  });
+  assert.strictEqual(res.resolvidoPor, "codex");
+  assert.strictEqual(escada.lerCasos(f.falhas).length, 1);
+});
+
+test("loop: com --antagonico, sem nenhum outro grande para conferir a resposta não vale", async () => {
+  const f = pastaTemp();
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 1, antagonico: true,
+    agentes: { local: () => "alfa", superiores: [{ nome: "codex", chamar: () => "alfa" }] },
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(escada.lerCasos(f.pendentes).length, 1);
+});
+
+test("loop: quando o grande resolve depois do local errar, a regra também é aprendida e salva", async () => {
+  const f = pastaTemp();
+  const codex = (p) => {
+    if (p.includes("REINSTRUIR")) return "dica";
+    if (p.includes("REGRA")) return JSON.stringify({ id: "alfa-regra", palavras: ["alfa"], regra: "REGRA-X: devolva alfa em minúsculas.", exemplo: { entrada: "beta", saida: "beta" } });
+    return "alfa";
+  };
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 2,
+    agentes: { local: (p) => (p.includes("REGRA-X") ? "alfa" : "x"), superiores: [{ nome: "codex", chamar: codex }] },
+  });
+  assert.strictEqual(r.resolvidoPor, "codex");
+  assert.strictEqual(r.regraSalva, "alfa-regra");
+  assert.strictEqual(JSON.parse(fs.readFileSync(f.regras, "utf8")).regras[0].status, "confirmada");
+});
+
+test("antagonico: resposta rejeitada só pelo revisor não entra nas 'saidas erradas' da regressão", async () => {
+  const f = pastaTemp();
+  await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 1, antagonico: true, verificarComando: "node confere-alfa",
+    agentes: {
+      local: () => "alfa", // passa no verificador, mas o codex (revisor) reprova
+      superiores: [
+        { nome: "codex", chamar: (p) => (p.includes("ANTAGONISTA") ? "PROBLEMA: x" : "alfa") },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK" : "alfa") },
+      ],
+    },
+  });
+  const [falha] = escada.lerCasos(f.falhas);
+  assert.deepStrictEqual(falha.saidasErradas, []); // o verificador aceitava "alfa"
+  assert.deepStrictEqual(falha.rejeitadasPeloRevisor, ["alfa"]);
+});
+
+test("antagonico: a regra só é salva se a resposta do local com ela também passar pelo antagonista", async () => {
+  const f = pastaTemp();
+  const regraJson = JSON.stringify({ id: "r-alfa", palavras: ["alfa"], regra: "REGRA-X devolva alfa.", exemplo: { entrada: "a", saida: "a" } });
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 1, antagonico: true,
+    agentes: {
+      local: (p) => (p.includes("REGRA-X") ? "alfa" : "x"),
+      superiores: [
+        // revisor: reprova a resposta do local com a regra (a resposta final do claude ele aprova)
+        { nome: "codex", chamar: (p) => (p.includes("ANTAGONISTA") ? (p.includes("Resposta: alfa") ? "PROBLEMA: x" : "OK") : p.includes("REGRA") ? regraJson : "alfa") },
+        { nome: "claude", chamar: (p) => (p.includes("ANTAGONISTA") ? "OK" : p.includes("REGRA") ? regraJson : "alfa") },
+      ],
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.regraSalva, null);
+  assert.ok(!fs.existsSync(f.regras) || JSON.parse(fs.readFileSync(f.regras, "utf8")).regras.length === 0);
 });
