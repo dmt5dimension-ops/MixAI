@@ -62,14 +62,14 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `julgar` (linha 225)
   - `ok` (linha 239)
   - `concluir` (linha 240)
-  - `validarPlano` (linha 289)
-  - `normaliza` (linha 303)
-  - `sobrepoe` (linha 304)
-  - `promptMicro` (linha 309)
-  - `lote` (linha 317)
-  - `exportar` (linha 344)
-  - `principal` (linha 351)
-  - `verificadorDe` (linha 363)
+  - `validarPlano` (linha 286)
+  - `normaliza` (linha 300)
+  - `sobrepoe` (linha 301)
+  - `promptMicro` (linha 306)
+  - `lote` (linha 314)
+  - `exportar` (linha 341)
+  - `principal` (linha 348)
+  - `verificadorDe` (linha 360)
 - `orquestra/mapa.js` — Mapa do código e da memória: onde fica cada função e o que já foi feito.
   - `listar` (linha 10)
   - `descricao` (linha 23)
@@ -105,7 +105,6 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `codex` (linha 370)
   - `local` (linha 389)
   - `local` (linha 407)
-  - `local` (linha 427)
 - `tests/falhas-escada.test.js` — Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta
   - `rodar` (linha 16)
 - `tests/guarda-testes.test.js` — Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.
@@ -133,6 +132,8 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `rodar` (linha 35)
 - `tests/regra-modelo-local.test.js` — Trava a regra do AGENTS.md que diz quando o planejador pode mandar tarefa para o modelo local.
   - `secao` (linha 9)
+- `tests/regras-locais.test.js` — Trava as regras que o modelo local (Qwen) aprendeu de verdade: orquestra/regras-locais.json.
+  - `ids` (linha 23)
 - `tests/smoke.test.js`
 - `tests/trava-de-escopo.test.js` — Testa a trava de escopo (.github/scripts/trava_de_escopo.py) num repositório git temporário.
   - `repoCom` (linha 12)
@@ -154,10 +155,10 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
 - Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
 - Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) — `tests/preparar-repo.test.js`
+- Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo` — `tests/regras-locais.test.js`
 - Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso — `tests/preparar-repo.test.js`
 - Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` — `tests/canal-coordenacao.test.js`
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
 - Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
-- Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto — `tests/escada.test.js`
 - Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) — `tests/mapa.test.js`
