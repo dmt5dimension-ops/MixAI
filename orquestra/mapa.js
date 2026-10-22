@@ -173,8 +173,7 @@ function principal(args) {
     return r.ok ? 0 : 1;
   }
   if (cmd === 'buscar' && resto.length) {
-    const arq = path.join(raiz, saida);
-    const m = fs.existsSync(arq) ? JSON.parse(fs.readFileSync(arq, 'utf8')) : construir(raiz);
+    const m = construir(raiz);
     const r = buscar(m, resto.join(' '));
     for (const x of r) {
       if (x.tipo === 'funcao') console.log(`${x.arquivo}:${x.linha}  ${x.nome}`);

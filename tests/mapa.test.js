@@ -131,13 +131,26 @@ test("buscar acha função, arquivo ou item feito por trecho do nome, sem reler 
   assert.deepStrictEqual(mapa.buscar(m, "zzz-nao-existe"), []);
 });
 
-test("o mapa do repositório real está em dia e conhece a escada", () => {
-  const r = mapa.conferir(RAIZ);
-  assert.strictEqual(r.ok, true, "mapa velho: rode `node orquestra/mapa.js gerar`");
-  const m = JSON.parse(fs.readFileSync(path.join(RAIZ, "docs/memoria/mapa.json"), "utf8"));
+test("o mapa real é gerado de forma determinística e conhece a escada", () => {
+  const m = mapa.gerar(RAIZ);
+  const primeiraSaida = ["mapa.json", "mapa.md"].map((nome) => fs.readFileSync(path.join(RAIZ, "docs/memoria", nome), "utf8"));
+  mapa.gerar(RAIZ);
+  const segundaSaida = ["mapa.json", "mapa.md"].map((nome) => fs.readFileSync(path.join(RAIZ, "docs/memoria", nome), "utf8"));
+  assert.deepStrictEqual(segundaSaida, primeiraSaida);
+  assert.deepStrictEqual(JSON.parse(primeiraSaida[0]), m);
   const escada = m.arquivos.find((a) => a.arquivo === "orquestra/escada.js");
   assert.ok(escada.funcoes.some((f) => f.nome === "resolverComLoop"));
   assert.ok(m.feitos.length >= 5);
+});
+
+test("os mapas gerados são ignorados pelo git e não estão versionados", () => {
+  for (const nome of ["mapa.json", "mapa.md"]) {
+    const rel = `docs/memoria/${nome}`;
+    const ignorado = spawnSync("git", ["check-ignore", "--no-index", "--quiet", rel], { cwd: RAIZ });
+    assert.strictEqual(ignorado.status, 0, `${rel} não está no .gitignore`);
+    const versionado = spawnSync("git", ["ls-files", "--error-unmatch", rel], { cwd: RAIZ });
+    assert.strictEqual(versionado.status, 1, `${rel} ainda está versionado`);
+  }
 });
 
 test("a linha de comando busca e confere (sai com 1 quando o mapa está velho)", () => {
@@ -145,6 +158,18 @@ test("a linha de comando busca e confere (sai com 1 quando o mapa está velho)",
   assert.strictEqual(ok.status, 0);
   assert.match(ok.stdout, /orquestra\/escada\.js:\d+/);
   const raiz = repoFalso();
+  const semMapa = spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "mapa.js"), "buscar", "somar", "--raiz", raiz], { encoding: "utf8" });
+  assert.strictEqual(semMapa.status, 0, semMapa.stderr);
+  assert.match(semMapa.stdout, /src\/soma\.js:2/);
   const velho = spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "mapa.js"), "conferir", "--raiz", raiz], { encoding: "utf8" });
   assert.strictEqual(velho.status, 1);
+});
+
+test("buscar usa o código atual mesmo se o mapa gerado estiver velho", () => {
+  const raiz = repoFalso();
+  mapa.gerar(raiz);
+  fs.appendFileSync(path.join(raiz, "src/soma.js"), "function novidade() {}\n");
+  const resultado = spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "mapa.js"), "buscar", "novidade", "--raiz", raiz], { encoding: "utf8" });
+  assert.strictEqual(resultado.status, 0, resultado.stderr);
+  assert.match(resultado.stdout, /src\/soma\.js:8\s+novidade/);
 });
