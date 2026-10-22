@@ -78,12 +78,22 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
   while (!criar(trava)) {
     if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
     if (velha(trava)) {
-      if (idade(limpeza) > 10000) { try { fs.rmSync(limpeza); } catch { /* outro tirou */ } }
+      // A trava de limpeza abandonada (dono morto) sai por troca de nome: só um processo consegue, e ele
+      // confere que levou a mesma que viu; se levou outra, devolve.
+      const vista = ler(limpeza);
+      if (vista !== null && velha(limpeza)) {
+        const levada = `${limpeza}.${dono.replace(/[^\w]/g, '')}`;
+        try {
+          fs.renameSync(limpeza, levada);
+          if (ler(levada) !== vista) { try { fs.linkSync(levada, limpeza); } catch { /* já existe outra */ } }
+          fs.rmSync(levada, { force: true });
+        } catch { /* outro processo levou primeiro */ }
+      }
       if (criar(limpeza)) {
         try {
           if (velha(trava)) fs.rmSync(trava, { force: true });
         } finally {
-          fs.rmSync(limpeza, { force: true });
+          if (ler(limpeza) === dono) fs.rmSync(limpeza, { force: true });
         }
         continue;
       }

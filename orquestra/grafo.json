@@ -48,7 +48,7 @@
     "etapa4": {
       "id": "etapa4",
       "titulo": "Mapa do código e da memória",
-      "estado": "em_andamento",
+      "estado": "feita",
       "depende": [
         "etapa2"
       ],
@@ -60,36 +60,47 @@
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T00:50:42.369Z",
-      "resultado": null
+      "atualizado": "2026-10-22T05:20:00.000Z",
+      "resultado": "PR #16 aprovado pelo Codex, aguardando merge"
     },
     "etapa5": {
       "id": "etapa5",
       "titulo": "Ajustar paralelismo pelo uso do PC",
-      "estado": "pendente",
+      "estado": "em_andamento",
       "depende": [
-        "etapa3"
+        "etapa2"
       ],
-      "agente": null,
-      "escopo": [],
+      "agente": "claude",
+      "escopo": [
+        "orquestra/paralelismo.js",
+        "orquestra/paralelismo.json",
+        "local/uso-windows.ps1",
+        "local/modo.ps1",
+        "local/modos.json",
+        "tests/paralelismo.test.js"
+      ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T00:50:42.157Z",
-      "resultado": null
+      "atualizado": "2026-10-22T05:20:00.000Z",
+      "resultado": "PR #19 em revisão (também toca orquestra/escada.js, que a etapa 3 usa)"
     },
     "etapa6": {
       "id": "etapa6",
       "titulo": "Grafo persistente de tarefas",
-      "estado": "pendente",
+      "estado": "em_andamento",
       "depende": [
         "etapa4"
       ],
       "agente": "claude",
-      "escopo": [],
+      "escopo": [
+        "orquestra/grafo.js",
+        "orquestra/grafo.json",
+        "tests/grafo.test.js"
+      ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T00:50:42.183Z",
-      "resultado": null
+      "atualizado": "2026-10-22T05:20:00.000Z",
+      "resultado": "PR #18 em revisão"
     }
   }
 }

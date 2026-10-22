@@ -184,6 +184,19 @@ test("trava de dono vivo nunca é tirada, mesmo velha; a de dono morto cai na ho
   });
 });
 
+test("trava de limpeza abandonada (dono morto) é recuperada por vários processos sem perder atualização", async () => {
+  const { spawnSync, spawn } = require("node:child_process");
+  const arq = tmp();
+  const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+  fs.writeFileSync(arq + ".lock", `${pidMorto}:a`);
+  fs.writeFileSync(arq + ".limpeza", `${pidMorto}:b`);
+  const ids = Array.from({ length: 6 }, (_, i) => "q" + i);
+  const rodar = (id) => new Promise((ok) => spawn(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), "add", id, "T " + id, "--arquivo", arq]).on("close", ok));
+  assert.deepStrictEqual(await Promise.all(ids.map(rodar)), ids.map(() => 0));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ids);
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(arq)), ["grafo.json"]);
+});
+
 test("adicionar recusa dependência que criaria ciclo", () => {
   let g = exemplo();
   assert.throws(() => grafo.adicionar(g, { id: "d", titulo: "x", depende: ["d"] }, AGORA), /ciclo/);

@@ -355,63 +355,63 @@
         },
         {
           "nome": "pegar",
-          "linha": 105
+          "linha": 115
         },
         {
           "nome": "adicionar",
-          "linha": 111
+          "linha": 121
         },
         {
           "nome": "feita",
-          "linha": 128
+          "linha": 138
         },
         {
           "nome": "prontas",
-          "linha": 130
+          "linha": 140
         },
         {
           "nome": "travadas",
-          "linha": 135
-        },
-        {
-          "nome": "mudar",
           "linha": 145
         },
         {
+          "nome": "mudar",
+          "linha": 155
+        },
+        {
           "nome": "iniciar",
-          "linha": 151
+          "linha": 161
         },
         {
           "nome": "concluir",
-          "linha": 158
+          "linha": 168
         },
         {
           "nome": "falhar",
-          "linha": 164
+          "linha": 174
         },
         {
           "nome": "validar",
-          "linha": 171
+          "linha": 181
         },
         {
           "nome": "visita",
-          "linha": 177
+          "linha": 187
         },
         {
           "nome": "resumo",
-          "linha": 196
+          "linha": 206
         },
         {
           "nome": "opcao",
-          "linha": 202
+          "linha": 212
         },
         {
           "nome": "principal",
-          "linha": 207
+          "linha": 217
         },
         {
           "nome": "virgulas",
-          "linha": 209
+          "linha": 219
         }
       ],
       "exporta": [
@@ -625,8 +625,12 @@
           "linha": 162
         },
         {
+          "nome": "rodar",
+          "linha": 194
+        },
+        {
           "nome": "cli",
-          "linha": 206
+          "linha": 219
         }
       ],
       "exporta": []
