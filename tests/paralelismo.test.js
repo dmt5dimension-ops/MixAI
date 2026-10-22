@@ -490,3 +490,40 @@ test("estado salvo de uma execução antiga expira: um lote novo não herda o al
   fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora }));
   assert.strictEqual(par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 1, "sem data de gravação: ignorado");
 });
+
+test("quem subiu para o Codex/Claude não ocupa vaga de agente local: com limite 1, outra microtarefa começa no local enquanto a primeira espera o Codex", async () => {
+  const eventos = [];
+  const local = (prompt) => {
+    const id = prompt.includes("contexto de a") ? "a" : "b";
+    eventos.push(`local ${id}`);
+    return id === "a" ? "ruim" : "ok";
+  };
+  const codex = () => new Promise((ok) => { eventos.push("codex começa"); setTimeout(() => { eventos.push("codex termina"); ok("ok"); }, 150); });
+  const r = await escada.lote({
+    microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: 1, arquivos: arquivosTemp(),
+    agentes: { local, superiores: [{ nome: "codex", chamar: codex }] },
+  });
+  assert.ok(r.every((x) => x.ok), JSON.stringify(r));
+  assert.ok(eventos.indexOf("local b") < eventos.indexOf("codex termina"), eventos.join(" | "));
+});
+
+test("abortar mata também o processo descendente (neto do shell), não só o shell", async () => {
+  if (process.platform === "win32") return;
+  const marca = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "neto-")), "pid");
+  const neto = `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000)`;
+  const comando = `"${process.execPath}" -e "${neto.replace(/"/g, '\\"')}" & wait`;
+  const ctl = new AbortController();
+  const chamada = escada.chamarComando(comando)("x", ctl.signal);
+  for (let i = 0; i < 100 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.ok(fs.existsSync(marca), "o neto começou");
+  const pid = Number(fs.readFileSync(marca, "utf8"));
+  const inicio = Date.now();
+  ctl.abort();
+  await assert.rejects(chamada);
+  assert.ok(Date.now() - inicio < 5000, "a chamada terminou logo, sem esperar o neto acabar sozinho (30 s)");
+  // zumbi (morto que o init ainda não recolheu) conta como morto
+  const estaVivo = () => { try { process.kill(pid, 0); } catch { return false; } try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; } };
+  let vivo = true;
+  for (let i = 0; i < 50 && vivo; i++) { vivo = estaVivo(); if (vivo) await new Promise((r) => setTimeout(r, 20)); }
+  assert.strictEqual(vivo, false, "o processo descendente morreu");
+});

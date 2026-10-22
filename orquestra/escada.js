@@ -352,14 +352,19 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
   const rodando = new Map();
   const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
   const encerrando = []; // { m, fim }: abortadas cujo processo ainda não confirmou que morreu; a vaga e o escopo seguem ocupados
+  // A vaga é de agente LOCAL: quem já subiu para o Codex/Claude (`emSuperior`) não usa o modelo local nem a placa e não conta.
+  const locais = () => [...rodando.keys()].filter((m) => !estados.get(m).emSuperior);
+  let acordaLoop;
+  let mudanca = new Promise((ok) => { acordaLoop = ok; });
+  const avisarMudanca = () => { acordaLoop(); mudanca = new Promise((ok) => { acordaLoop = ok; }); };
 
   while (pendentes.length || rodando.size || encerrando.length) {
     // O dono voltou ao PC: tira agentes locais em andamento (os mais novos primeiro) e devolve a microtarefa à fila.
     // Só tira quem está esperando o modelo local; quem já passou para o Codex/Claude ou para a conferência termina.
     // A vaga só é reaproveitada quando o processo abortado de fato terminou (o `fim` da chamada ao local).
     const limite = limiteAgora();
-    while (rodando.size > limite) {
-      const alvo = [...rodando.keys()].reverse().find((m) => estados.get(m).emLocal);
+    while (locais().length > limite) {
+      const alvo = locais().reverse().find((m) => estados.get(m).emLocal);
       if (!alvo) break;
       const e = estados.get(alvo);
       e.abandonada = true; // a execução antiga nunca mais responde: não sobe para o Codex nem registra resultado
@@ -369,19 +374,21 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
       rodando.delete(alvo);
       pendentes.unshift(alvo);
     }
-    while (rodando.size + encerrando.length < limiteAgora()) {
+    while (locais().length + encerrando.length < limiteAgora()) {
       const ocupados = () => [...rodando.keys(), ...encerrando.map((x) => x.m)];
       const i = pendentes.findIndex((m) => !ocupados().some((r) => sobrepoe(r.escopo, m.escopo)));
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
-      const e = { ctl: new AbortController(), abandonada: false, emLocal: false, fim: null };
+      const e = { ctl: new AbortController(), abandonada: false, emLocal: false, emSuperior: false, fim: null };
       estados.set(m, e);
       const agentesDaMicro = {
         ...agentes,
+        superiores: (agentes.superiores || []).map((sup) => ({ ...sup, chamar: (...a) => { if (!e.emSuperior) { e.emSuperior = true; avisarMudanca(); } return sup.chamar(...a); } })),
         local: (prompt) => new Promise((ok, no) => {
           if (e.abandonada) return;
           e.emLocal = true;
+          e.emSuperior = false; // voltou ao local (por exemplo depois de uma dica do Codex): ocupa vaga de novo
           // Cada chamada ao local (1ª tentativa, 2ª, correção...) tem o seu próprio fim: abortar a segunda não pode
           // olhar o fim da primeira, que já passou.
           let liberar;
@@ -407,8 +414,8 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
     // Com limite dinâmico, acorda de tempos em tempos: para abrir vaga quando o PC ficar parado
     // e para tirar agentes quando o dono voltar.
     let relogio;
-    const acordar = dinamico && (pendentes.length || rodando.size || encerrando.length) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
-    await Promise.race([...rodando.values(), ...encerrando.map((x) => x.fim), ...acordar]);
+    const acordar = dinamico && (pendentes.length || locais().length || encerrando.length) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
+    await Promise.race([...rodando.values(), ...encerrando.map((x) => x.fim), mudanca, ...acordar]);
     clearTimeout(relogio);
   }
   return microtarefas.map((m) => resultados.get(m.id));
