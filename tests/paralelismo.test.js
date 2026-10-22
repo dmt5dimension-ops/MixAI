@@ -13,6 +13,7 @@ const modos = JSON.parse(fs.readFileSync(path.join(RAIZ, "local", "modos.json"),
 const config = JSON.parse(fs.readFileSync(path.join(RAIZ, "orquestra", "paralelismo.json"), "utf8"));
 
 const PARADO = { ociosoSegundos: 600, gpuOutrosPct: 2, cpuOutrosPct: 5, videoDecodePct: 0, memoriaLivreGB: 6 };
+const RECEM_PARADO = { ...PARADO, ociosoSegundos: 100 };
 const decide = (leitura, modo, anterior, agora) => par.decidir({ leitura, modo, anterior, agora, modos, config, memoriaMinimaGB: 2 });
 
 test("usando o PC (mexeu há pouco, placa ou processador ocupados, vídeo, leitura faltando) o alvo é 1", () => {
@@ -36,7 +37,7 @@ test("parado, sobe um por vez, só depois do tempo mínimo, até o teto do modo"
   let estado = null;
   const alvos = [];
   for (let t = 0; t <= 300; t += 30) {
-    const d = decide(PARADO, "noite", estado, t * 1000);
+    const d = decide(estado ? PARADO : RECEM_PARADO, "noite", estado, t * 1000);
     estado = d.estado;
     alvos.push(d.alvo);
   }
@@ -124,11 +125,30 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   assert.match(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/);
 });
 
+test("sem histórico, o tempo que o PC já está parado conta como subida (parado há horas não começa em 1); mostra o regime", () => {
+  const horas = decide({ ...PARADO, ociosoSegundos: 5 * 3600 }, "dia", null, 0);
+  assert.strictEqual(horas.alvo, modos.dia.agentesMax);
+  assert.strictEqual(horas.regime, modos.dia.agentesMax);
+  assert.match(horas.motivo, /no máximo/);
+  const pouco = decide({ ...PARADO, ociosoSegundos: config.ocupado.ociosoAbaixoDeSegundos + 1 }, "noite", null, 0);
+  assert.strictEqual(pouco.alvo, 1);
+  assert.strictEqual(pouco.regime, modos.noite.agentesMax);
+  const quase = decide({ ...PARADO, ociosoSegundos: config.ocupado.ociosoAbaixoDeSegundos + config.subidaMinSegundos * 2 }, "noite", null, 0);
+  assert.strictEqual(quase.alvo, 3);
+  const usando = decide({ ...PARADO, ociosoSegundos: 5 }, "noite", null, 0);
+  assert.strictEqual(usando.alvo, 1);
+  assert.strictEqual(usando.regime, 1);
+  // a primeira chamada do controle (sem arquivo de estado) também parte desse crédito
+  const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "par-")), "estado.json");
+  const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "dia", arquivoEstado: arq, relogio: () => 0, modos, config });
+  assert.strictEqual(controle(), modos.dia.agentesMax);
+});
+
 test("o controle lê o PC, guarda o estado em arquivo, reaproveita leitura recente e avisa só quando muda", () => {
   const arq = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "par-")), "estado.json");
   let agora = 0;
   let leituras = 0;
-  const leitor = { ler: () => { leituras += 1; return PARADO; } };
+  const leitor = { ler: () => { leituras += 1; return leituras === 1 ? RECEM_PARADO : PARADO; } };
   const avisos = [];
   const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado: arq, relogio: () => agora, cacheMs: 5000, modos, config, aoDecidir: (d) => avisos.push(d.alvo) });
   assert.strictEqual(controle(), 1);

@@ -43,21 +43,28 @@ function motivosDeUso(leitura, config) {
 }
 
 // Decide o alvo agora. `anterior` é { alvo, subiuEm } da última decisão (ou null). Sobe no máximo um por vez.
+// `regime` é onde o alvo chega se o PC continuar parado (o teto), para quem só quer olhar.
 function decidir({ leitura, modo, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
   const motivos = motivosDeUso(leitura, config);
   const cap = capacidade({ modo, memoriaLivreGB: leitura?.memoriaLivreGB ?? os.freemem() / 1024 ** 3, modos, config, memoriaMinimaGB });
   const antes = anterior?.alvo >= 1 ? anterior.alvo : 1;
   if (motivos.length) {
-    return { alvo: 1, motivo: `usando o PC: ${motivos.join('; ')}`, estado: { alvo: 1, subiuEm: agora }, capacidade: cap };
+    return { alvo: 1, regime: 1, motivo: `usando o PC: ${motivos.join('; ')}`, estado: { alvo: 1, subiuEm: agora }, capacidade: cap };
   }
   if (antes > cap.max) {
-    return { alvo: cap.max, motivo: `limite caiu para ${cap.max} (${cap.limitante})`, estado: { alvo: cap.max, subiuEm: agora }, capacidade: cap };
+    return { alvo: cap.max, regime: cap.max, motivo: `limite caiu para ${cap.max} (${cap.limitante})`, estado: { alvo: cap.max, subiuEm: agora }, capacidade: cap };
   }
-  if (!anterior) return { alvo: 1, motivo: 'PC parado: começa com 1', estado: { alvo: 1, subiuEm: agora }, capacidade: cap };
+  if (!anterior) {
+    // Sem histórico (primeira chamada): o tempo que o PC já está parado conta como subida. Parado há 5 h não precisa
+    // esperar 60 s por agente; parado há pouco começa baixo. Nunca passa do teto.
+    const parado = leitura.ociosoSegundos - config.ocupado.ociosoAbaixoDeSegundos;
+    const alvo = Math.min(cap.max, 1 + Math.max(0, Math.floor(parado / config.subidaMinSegundos)));
+    return { alvo, regime: cap.max, motivo: alvo === cap.max ? `PC parado há ${leitura.ociosoSegundos}s: já no máximo (${cap.max}, limite: ${cap.limitante})` : `PC parado há ${leitura.ociosoSegundos}s: começa com ${alvo} de ${cap.max}`, estado: { alvo, subiuEm: agora }, capacidade: cap };
+  }
   const podeSubir = antes < cap.max && agora - anterior.subiuEm >= config.subidaMinSegundos * 1000;
   const alvo = podeSubir ? antes + 1 : antes;
   const motivo = podeSubir ? `PC parado: sobe para ${alvo} de ${cap.max}` : antes === cap.max ? `PC parado: no máximo (${cap.max}, limite: ${cap.limitante})` : `PC parado: espera para subir (${antes} de ${cap.max})`;
-  return { alvo, motivo, estado: { alvo, subiuEm: podeSubir ? agora : anterior.subiuEm }, capacidade: cap };
+  return { alvo, regime: cap.max, motivo, estado: { alvo, subiuEm: podeSubir ? agora : anterior.subiuEm }, capacidade: cap };
 }
 
 // Leitor real: roda local/uso-windows.ps1. Devolve null se o PowerShell não existe ou falha.
@@ -132,5 +139,5 @@ if (require.main === module) {
   const modo = i >= 0 ? process.argv[i + 1] : modoAtual();
   const leitura = leitorWindows().ler();
   const d = decidir({ leitura, modo });
-  console.log(JSON.stringify({ modo, leitura, alvo: d.alvo, motivo: d.motivo, capacidade: d.capacidade }, null, 2));
+  console.log(JSON.stringify({ modo, leitura, alvo: d.alvo, regime: d.regime, motivo: d.motivo, capacidade: d.capacidade, subida: `+1 a cada ${configPadrao().subidaMinSegundos}s com o PC parado` }, null, 2));
 }
