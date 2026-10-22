@@ -111,14 +111,15 @@ function leitorWindows() {
 // Uso médio dos motores de DECODIFICAÇÃO de vídeo da placa, a partir das leituras cruas do uso-windows.ps1.
 // Os nomes mudam por fabricante: "VideoDecode" (NVIDIA/Intel), "video decode" e "video codec 0" (AMD, este é
 // o que mexe quando um vídeo toca). "video jpeg" e "video enhance" ficam de fora. Precisa de pelo menos
-// `amostrasMinimas` leituras e de pelo menos um motor de vídeo; senão devolve null (leitura indisponível).
+// `amostrasMinimas` leituras; sem motor de decodificação nelas devolve 0 (sem vídeo); falha de coleta devolve null.
 const motorDeDecodificacao = /engtype_(?:video\s*decode|video\s*codec)/i;
 function videoDecodeDe({ amostras, motores }, amostrasMinimas = 3) {
   if (!Number.isInteger(amostras) || amostras < amostrasMinimas) return null;
   const lista = Array.isArray(motores) ? motores : motores ? [motores] : [];
   const videos = lista.filter((m) => /video/i.test(String(m?.n)));
-  // Só jpeg/enhance não mede vídeo tocando: é leitura indisponível, não "0%".
-  if (!videos.some((m) => motorDeDecodificacao.test(String(m?.n)))) return null;
+  // Coleta válida sem nenhum motor de decodificação (a placa não expõe, ou só jpeg/enhance): conta como "sem vídeo" (0).
+  // Só falha de coleta (amostras insuficientes, leitura inválida) vira null.
+  if (!videos.some((m) => motorDeDecodificacao.test(String(m?.n)))) return 0;
   // Toda leitura de motor de vídeo tem que ser um número válido, de uma das amostras, e cada amostra tem que
   // ter pelo menos um motor de vídeo. Leitura inválida ou faltando não pode virar zero (= "sem vídeo").
   const vistas = new Set(); // amostras que tiveram motor de DECODIFICAÇÃO

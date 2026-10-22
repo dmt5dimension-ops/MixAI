@@ -12,6 +12,16 @@ const matarGrupo = (pid) => {
   else { try { process.kill(-pid, "SIGKILL"); } catch { /* limpeza do teste */ } }
 };
 const matarReal = (f) => escada.matarArvore(f);
+// O orquestrador com paralelismo só roda no Windows (Job Object); fora dele `chamarComando` recusa (testado abaixo).
+// Para exercitar o resto da lógica em Linux (CI), `chamar` injeta um lançador de shell em grupo próprio, com a morte
+// do grupo no lugar do Job Object. No Windows passa direto para o código real.
+const semente = () => process.platform === "win32" ? {} : {
+  plataforma: "win32",
+  lancar: (c, fd) => require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true }),
+  matar: (f) => { matarGrupo(f.pid); return true; },
+  orfaos: (f) => { matarGrupo(f.pid); return []; },
+};
+const chamar = (comando, opcoes = {}) => escada.chamarComando(comando, opcoes.lancar ? opcoes : { ...semente(), ...opcoes });
 const par = require(path.join(RAIZ, "orquestra", "paralelismo.js"));
 const escada = require(path.join(RAIZ, "orquestra", "escada.js"));
 const modos = JSON.parse(fs.readFileSync(path.join(RAIZ, "local", "modos.json"), "utf8"));
@@ -118,9 +128,13 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   // AMD tocando vídeo: o uso aparece em "video codec 0" (0 a 4%), "video decode" fica em 0.
   const amd = leituras([{ "video decode": 0, "video codec 0": 4, "video jpeg": 0, "video enhance": 0 }, { "video decode": 0, "video codec 0": 0, "video jpeg": 0, "video enhance": 0 }, { "video decode": 0, "video codec 0": 2, "video jpeg": 0, "video enhance": 0 }]);
   assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: amd }), 2);
-  // jpeg e enhance sozinhos não medem vídeo tocando: leitura indisponível (= usando o PC), nunca 0%
+  // coleta válida sem motor de decodificação (só jpeg/enhance, ou nenhum motor de vídeo): "sem vídeo" = 0, não null
   const so = leituras([{ "video jpeg": 50, "video enhance": 60 }, { "video jpeg": 50, "video enhance": 60 }, { "video jpeg": 50, "video enhance": 60 }]);
-  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: so }), null);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: so }), 0);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: [] }), 0);
+  // só falha de coleta vira null
+  assert.strictEqual(par.videoDecodeDe({ amostras: 2, motores: [] }), null);
+  assert.strictEqual(par.videoDecodeDe({ amostras: undefined, motores: [] }), null);
   // uma amostra só com jpeg no meio de amostras com decodificador também é indisponível
   const faltaUma = leituras([{ "video codec 0": 0 }, { "video jpeg": 5 }, { "video codec 0": 0 }]);
   assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: faltaUma }), null);
@@ -129,8 +143,7 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: nv }), 6);
   // menos de 3 leituras, ou nenhum motor de vídeo: indisponível
   assert.strictEqual(par.videoDecodeDe({ amostras: 2, motores: nv }), null);
-  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: [] }), null);
-  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: { i: 0, n: nome("3D"), v: 5 } }), null);
+  assert.strictEqual(par.videoDecodeDe({ amostras: 3, motores: { i: 0, n: nome("3D"), v: 5 } }), 0);
   // um pico isolado diluído nas 3 leituras (0,0,2 => 0,67%) não conta; média de 1% ou mais conta
   const pico = leituras([{ "video codec 0": 0 }, { "video codec 0": 0 }, { "video codec 0": 2 }]);
   assert.ok(par.videoDecodeDe({ amostras: 3, motores: pico }) < config.ocupado.videoDecodeAcimaDePct);
@@ -139,7 +152,10 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   const bruta = (motores) => JSON.stringify({ ...base, videoAmostras: 3, videoMotores: motores });
   assert.match(decide(par.lerSaida(bruta(limite)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /vídeo tocando/);
   assert.strictEqual(decide(par.lerSaida(bruta(pico)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
-  assert.match(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/);
+  // coleta válida (3 amostras) sem nenhum motor de decodificação = sem vídeo: não bloqueia
+  assert.strictEqual(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
+  // falha de coleta (nenhuma amostra) continua indisponível
+  assert.match(decide(par.lerSaida(JSON.stringify({ ...base, videoAmostras: 0, videoMotores: [] })), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/);
 });
 
 test("falha de leitura NUNCA vira PC parado: null, texto, negativo, NaN, fora de faixa e campo faltando contam como em uso", () => {
@@ -159,7 +175,7 @@ test("falha de leitura NUNCA vira PC parado: null, texto, negativo, NaN, fora de
     assert.strictEqual(decide(PARADO, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: tudo válido e parado mantém");
     // pela saída do script: contador que falhou vem null
     const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [0, 1, 2].map((i) => ({ i, n: "pid_1_engtype_video codec 0", v: 0 })), memoriaLivreGB: 6 };
-    for (const quebra of [{ ociosoSegundos: null }, { gpuOutrosPct: null }, { cpuTotalPct: null }, { cpuMeuPct: null }, { nucleos: null }, { videoAmostras: 0 }, { videoMotores: [] }, { memoriaLivreGB: null }]) {
+    for (const quebra of [{ ociosoSegundos: null }, { gpuOutrosPct: null }, { cpuTotalPct: null }, { cpuMeuPct: null }, { nucleos: null }, { videoAmostras: 0 }, { memoriaLivreGB: null }]) {
       const leitura = par.lerSaida(JSON.stringify({ ...base, ...quebra }));
       assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, JSON.stringify(quebra));
     }
@@ -379,7 +395,7 @@ test("limite oscilando 2 -> 0 -> 1 -> 2: com 0 nada novo nasce, com 1 só nasce 
 test("chamarComando: ao abortar, só termina depois do processo morrer de verdade", async () => {
   const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
   const ctl = new AbortController();
-  const chamada = escada.chamarComando(comando)("x", ctl.signal);
+  const chamada = chamar(comando)("x", ctl.signal);
   const inicio = Date.now();
   setTimeout(() => ctl.abort(), 150);
   await assert.rejects(chamada);
@@ -488,13 +504,13 @@ test("shell que fecha deixando um descendente sem pipe vivo: o descendente é mo
   const marca = path.join(dir, "pid");
   const orfaoJs = path.join(dir, "orfao.js");
   fs.writeFileSync(orfaoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
-  const saida = await escada.chamarComando(`"${process.execPath}" "${orfaoJs}" >/dev/null 2>&1 & sleep 1; echo pronto`)("x");
+  const saida = await chamar(`"${process.execPath}" "${orfaoJs}" >/dev/null 2>&1 & sleep 1; echo pronto`)("x");
   assert.match(saida, /pronto/);
   const pid = Number(fs.readFileSync(marca, "utf8"));
   const estaVivo = () => { try { process.kill(pid, 0); } catch { return false; } try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; } };
   assert.strictEqual(estaVivo(), false, "o descendente sem pipe foi morto ao fechar o shell");
   // descendente que não morre: naoConfirmado
-  const chamada = escada.chamarComando(`echo oi`, { orfaos: () => [4242] })("x");
+  const chamada = chamar(`echo oi`, { orfaos: () => [4242] })("x");
   await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /continuam vivos/.test(erro.message));
 });
 
@@ -507,7 +523,8 @@ test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node 
     const ctl = new AbortController();
     const comando = '"' + process.execPath + '" -e "setTimeout(()=>{},20000)"';
     let pidPreso;
-    escada.chamarComando(comando, { matar: (f) => { pidPreso = f.pid; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal)
+    const lancar = (c, fd) => require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true });
+    escada.chamarComando(comando, { lancar, orfaos: () => [], matar: (f) => { pidPreso = f.pid; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal)
       .catch((e) => console.log(e.naoConfirmado ? "naoConfirmado " + pidPreso : "outro"));
     setTimeout(() => ctl.abort(), 100);
   `);
@@ -521,7 +538,7 @@ test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node 
 test("o tempo máximo mata a árvore pelo mesmo caminho (matar), não só o shell", async () => {
   let mortes = 0;
   const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
-  const chamada = escada.chamarComando(comando, { tempoMaximoMs: 200, matar: (f) => { mortes += 1; return matarReal(f); } })("x");
+  const chamada = chamar(comando, { tempoMaximoMs: 200, matar: (f) => { mortes += 1; if (process.platform !== "win32") { matarGrupo(f.pid); return true; } return matarReal(f); } })("x");
   await assert.rejects(chamada, /tempo máximo/);
   assert.strictEqual(mortes, 1);
 });
@@ -571,7 +588,7 @@ test("abortar mata também o processo descendente (neto), em qualquer sistema", 
   fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
   fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'inherit' }); setTimeout(()=>{},30000);`);
   const ctl = new AbortController();
-  const chamada = escada.chamarComando(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
+  const chamada = chamar(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
   for (let i = 0; i < 150 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 20));
   assert.ok(fs.existsSync(marca), "o neto começou");
   await new Promise((r) => setTimeout(r, 50));
@@ -591,7 +608,7 @@ test("se não dá para confirmar a morte do processo (taskkill falhando), a cham
   const ctl = new AbortController();
   const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
   let preso;
-  const chamada = escada.chamarComando(comando, { matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
+  const chamada = chamar(comando, { matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /não morreu/.test(erro.message));
   matarGrupo(preso.pid);
@@ -654,7 +671,7 @@ test("a memória livre que o controle recebe já vem reduzida pelos agentes que 
 
 test("o prompt chega ao comando por arquivo (stdin sem pipe) e o arquivo temporário é apagado", async () => {
   const antes = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length;
-  const saida = await escada.chamarComando(`"${process.execPath}" -e "process.stdin.pipe(process.stdout)"`)("olá, prompt com acentuação ç ã");
+  const saida = await chamar(`"${process.execPath}" -e "process.stdin.pipe(process.stdout)"`)("olá, prompt com acentuação ç ã");
   assert.strictEqual(saida, "olá, prompt com acentuação ç ã");
   assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("mixai-prompt-")).length, antes);
 });
@@ -662,7 +679,7 @@ test("o prompt chega ao comando por arquivo (stdin sem pipe) e o arquivo tempor�
 test("morte não confirmada no tempo máximo também para o lote (não vira erro comum que sobe para o Codex)", async () => {
   let codex = 0;
   let preso;
-  const local = () => escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { tempoMaximoMs: 100, matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x");
+  const local = () => chamar(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { tempoMaximoMs: 100, matar: (f) => { preso = f; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x");
   await assert.rejects(
     escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: 1, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [{ nome: "codex", chamar: () => { codex += 1; return "ok"; } }] } }),
     /o lote parou.*"a"/,
@@ -718,7 +735,7 @@ test("aborto e tempo máximo ao mesmo tempo usam UMA rotina de parada: um só te
   setTimeout(() => ctl.abort(), 20);
   const t0 = Date.now();
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, {
+    chamar(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, {
       matar: () => { chamadas++; return false; }, orfaos: () => [], reintentoMs: 20, tentativasDeMatar: 3, tempoMaximoMs: 90,
     })("x", ctl.signal),
     (erro) => erro.naoConfirmado === true,
@@ -765,7 +782,7 @@ test("chamarComando (Windows simulado): aborta, termina logo, e a conferência v
   const matar = (f) => escada.matarArvore(f, { plataforma: "win32" });
   const ctl = new AbortController();
   const inicio = Date.now();
-  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar, matar, orfaos })("x", ctl.signal);
+  const chamada = chamar("setTimeout(()=>{},30000)", { plataforma: "win32", lancar, matar, orfaos })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada);
   assert.ok(Date.now() - inicio < 5000);
@@ -775,11 +792,11 @@ test("chamarComando (Windows simulado): aborta, termina logo, e a conferência v
   assert.ok(consultas[0][1].some((x) => /job-confirmar-windows\.ps1$/.test(x)), "usa o script de conferência do job");
   assert.match(consultas[0][1].at(-1), /^Local\\MixAI-[0-9a-f]{24}$/, "pelo nome do job desta chamada");
   // comando normal termina com a conferência do job, e o job com processo sobrando não é "limpo"
-  assert.strictEqual(await escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos })("x"), "ok");
+  assert.strictEqual(await chamar("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos })("x"), "ok");
   const vivos = (cmd, args, opcoes, cb) => cb(null, "VIVOS 2\n");
-  await assert.rejects(escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: vivos }) })("x"), (erro) => erro.naoConfirmado === true && /2 descendente/.test(erro.message));
-  for (const resposta of ["lixo\n", ""]) await assert.rejects(escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: (c, a, o, cb) => cb(null, resposta) }) })("x"), (erro) => erro.naoConfirmado === true, "resposta que não é FECHADO/VAZIO/VIVOS é inconclusiva");
-  await assert.rejects(escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: (c, a, o, cb) => cb(new Error("PowerShell bloqueado")) }) })("x"), (erro) => erro.naoConfirmado === true);
+  await assert.rejects(chamar("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: vivos }) })("x"), (erro) => erro.naoConfirmado === true && /2 descendente/.test(erro.message));
+  for (const resposta of ["lixo\n", ""]) await assert.rejects(chamar("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: (c, a, o, cb) => cb(null, resposta) }) })("x"), (erro) => erro.naoConfirmado === true, "resposta que não é FECHADO/VAZIO/VIVOS é inconclusiva");
+  await assert.rejects(chamar("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: (c, a, o, cb) => cb(new Error("PowerShell bloqueado")) }) })("x"), (erro) => erro.naoConfirmado === true);
   assert.strictEqual(await escada.confirmarJob("Local\\MixAI-x", (c, a, o, cb) => cb(null, "VAZIO\n")).then((r) => r.length), 0);
 });
 
@@ -793,7 +810,7 @@ test("Windows de verdade: abortar mata o neto (o comando roda dentro do Job Obje
   // o pai cria o neto e SAI: o neto fica órfão, fora de qualquer foto de árvore
   fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true }).unref(); setTimeout(()=>{},60000);`);
   const ctl = new AbortController();
-  const chamada = escada.chamarComando(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
+  const chamada = chamar(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
   for (let i = 0; i < 400 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 50));
   assert.ok(fs.existsSync(marca), "o neto começou");
   const pid = Number(fs.readFileSync(marca, "utf8"));
@@ -811,7 +828,7 @@ test("pedido de parada aceito mas a chamada não termina (descendente desconheci
   const t0 = Date.now();
   let filhoCriado;
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; return true; }, orfaos: () => [], prazoDeFechamentoMs: 150, reintentoMs: 40 })("x", ctl.signal),
+    chamar(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; return true; }, orfaos: () => [], prazoDeFechamentoMs: 150, reintentoMs: 40 })("x", ctl.signal),
     (erro) => erro.naoConfirmado === true && /não terminou em/.test(erro.message),
   );
   assert.ok(Date.now() - t0 < 3000);
@@ -821,7 +838,7 @@ test("pedido de parada aceito mas a chamada não termina (descendente desconheci
 test("saída sem fim: passado o limite de bytes a árvore é parada e a chamada falha com mensagem clara (sem esgotar a memória)", async () => {
   const t0 = Date.now();
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "setInterval(()=>process.stdout.write('x'.repeat(500)),2)"`, { maxSaidaBytes: 2000 })("x"),
+    chamar(`"${process.execPath}" -e "setInterval(()=>process.stdout.write('x'.repeat(500)),2)"`, { maxSaidaBytes: 2000 })("x"),
     (erro) => /saída passou de 2000 bytes/.test(erro.message),
   );
   assert.ok(Date.now() - t0 < 5000);
@@ -838,7 +855,7 @@ test("erro do processo depois de ele nascer: para, ESPERA o close e confere; sem
   };
   const rodar = (fechaAoMatar) => {
     const f = falso(fechaAoMatar);
-    const chamada = escada.chamarComando("x", { lancar: () => f, matar: (x) => x.kill(), orfaos: () => [], reintentoMs: 10, prazoDeFechamentoMs: 60 })("p");
+    const chamada = chamar("x", { lancar: () => f, matar: (x) => x.kill(), orfaos: () => [], reintentoMs: 10, prazoDeFechamentoMs: 60 })("p");
     setTimeout(() => f.emit("error", new Error("EPIPE")), 10);
     return chamada;
   };
@@ -883,10 +900,6 @@ test("morte NÃO confirmada de um agente tirado do local para o lote (a vaga nã
   );
 });
 
-test("matarArvore (outros sistemas): grupo que não existe mais = já morreu (true)", () => {
-  assert.strictEqual(escada.matarArvore({ pid: 2147483000, exitCode: null, kill: () => false }, { plataforma: "linux" }), true);
-});
-
 test("o script de conferência do job: abre pelo nome, encerra o job e só dá por limpo com job inexistente ou vazio", () => {
   const ps = fs.readFileSync(path.join(RAIZ, "orquestra", "job-confirmar-windows.ps1"), "utf8");
   assert.match(ps, /OpenJobObject\(0x0004 \| 0x0008, false, nome\)/, "QUERY | TERMINATE, sem herança");
@@ -898,7 +911,7 @@ test("o script de conferência do job: abre pelo nome, encerra o job e só dá p
 
 test("um só orçamento de BYTES para stdout e stderr juntos (cada um abaixo do limite, os dois juntos acima)", async () => {
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "process.stdout.write('a'.repeat(600));process.stderr.write('é'.repeat(300));setTimeout(()=>{},20000)"`, { maxSaidaBytes: 1000 })("x"),
+    chamar(`"${process.execPath}" -e "process.stdout.write('a'.repeat(600));process.stderr.write('é'.repeat(300));setTimeout(()=>{},20000)"`, { maxSaidaBytes: 1000 })("x"),
     (erro) => /saída passou de 1000 bytes/.test(erro.message),
   );
 });
@@ -907,7 +920,7 @@ test("chamada abortada nunca vira sucesso, mesmo que o processo já tenha saído
   const ctl = new AbortController();
   ctl.abort();
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "process.stdout.write('ok')"`, { matar: () => true, orfaos: () => [] })("x", ctl.signal),
+    chamar(`"${process.execPath}" -e "process.stdout.write('ok')"`, { matar: () => true, orfaos: () => [] })("x", ctl.signal),
     (erro) => erro.abortada === true,
   );
 });
@@ -918,7 +931,7 @@ test("a parada continua tentando depois de o pedido ser aceito, até o prazo fin
   setTimeout(() => ctl.abort(), 20);
   let filhoCriado;
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; pedidos += 1; return true; }, orfaos: () => [], reintentoMs: 20, prazoDeFechamentoMs: 120 })("x", ctl.signal),
+    chamar(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; pedidos += 1; return true; }, orfaos: () => [], reintentoMs: 20, prazoDeFechamentoMs: 120 })("x", ctl.signal),
     (erro) => erro.naoConfirmado === true,
   );
   assert.ok(pedidos >= 3, `o pedido foi repetido (${pedidos} vezes)`);
@@ -965,41 +978,25 @@ test("o controle de paralelismo com leitor assíncrono não bloqueia: sem leitur
   assert.strictEqual(c2({ agentesLocais: 0 }), 1);
 });
 
-// --- Verificação como processo, e descendente que sai do grupo (setsid) ---------------------------------------------
-test("fora do Windows: descendente que saiu do grupo com setsid é achado pela marca MIXAI_JOB e morto (não é declarado limpo)", async () => {
-  if (process.platform === "win32") return; // no Windows quem faz isso é o Job Object
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "setsid-"));
-  const marca = path.join(dir, "pid");
-  const netoJs = path.join(dir, "neto.js");
-  const paiJs = path.join(dir, "pai.js");
-  fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
-  // detached:true = setsid: o neto nasce em outro grupo e outra sessão, e o pai sai logo
-  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true }).unref(); setTimeout(()=>process.exit(0), 300);`);
-  const resposta = await escada.chamarComando(`"${process.execPath}" "${paiJs}"`)("x");
-  assert.strictEqual(resposta, "");
-  assert.ok(fs.existsSync(marca), "o neto chegou a nascer");
-  const pid = Number(fs.readFileSync(marca, "utf8"));
-  const estaVivo = () => { try { process.kill(pid, 0); } catch { return false; } try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; } };
-  let vivo = true;
-  for (let i = 0; i < 50 && vivo; i++) { vivo = estaVivo(); if (vivo) await new Promise((r) => setTimeout(r, 20)); }
-  assert.strictEqual(vivo, false, "o descendente com setsid foi morto pela conferência");
-});
-
-test("fora do Windows: sem /proc legível a conferência é inconclusiva (null), nunca 'limpo'", async () => {
-  if (process.platform === "win32") return;
-  const lerDir = fs.readdirSync;
-  fs.readdirSync = (p, ...r) => { if (p === "/proc") throw Object.assign(new Error("sem /proc"), { code: "ENOENT" }); return lerDir(p, ...r); };
-  try { assert.strictEqual(await escada.orfaosVivos({ pid: 2147483000, jobNome: "Local\\MixAI-x" }, { plataforma: "linux" }), null); } finally { fs.readdirSync = lerDir; }
+// --- Verificação como processo; só Windows ------------------------------------------------------------------------
+test("fora do Windows (sem lançador injetado) chamarComando recusa com erro explícito e não executa nada", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "recusa-"));
+  const marca = path.join(dir, "rodou");
+  const comando = `"${process.execPath}" -e "require('fs').writeFileSync(${JSON.stringify(marca).replace(/"/g, '\\"')}, 'x')"`;
+  for (const plataforma of ["linux", "darwin"]) {
+    await assert.rejects(escada.chamarComando(comando, { plataforma })("x"), /plataforma sem contenção garantida/);
+  }
+  assert.strictEqual(fs.existsSync(marca), false, "nada foi executado");
 });
 
 test("verificadorPorComando: processo de verdade (assíncrono, abortável): código 0 = ok, outro = não ok com o motivo, morte não confirmada sobe como erro", async () => {
-  const ok = escada.verificadorPorComando(`"${process.execPath}" -e "process.exit(0)"`);
+  const ok = escada.verificadorPorComando(`"${process.execPath}" -e "process.exit(0)"`, semente());
   assert.deepStrictEqual(await ok("x"), { ok: true, motivo: "" });
-  const ruim = escada.verificadorPorComando(`"${process.execPath}" -e "console.error('faltou X'); process.exit(3)"`);
+  const ruim = escada.verificadorPorComando(`"${process.execPath}" -e "console.error('faltou X'); process.exit(3)"`, semente());
   const r = await ruim("x");
   assert.strictEqual(r.ok, false);
   assert.match(r.motivo, /faltou X/);
-  const preso = escada.verificadorPorComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 });
+  const preso = escada.verificadorPorComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { ...semente(), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 });
   const ctl = new AbortController();
   setTimeout(() => ctl.abort(), 20);
   await assert.rejects(preso("x", ctl.signal), (erro) => erro.naoConfirmado === true);

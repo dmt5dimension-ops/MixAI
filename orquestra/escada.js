@@ -170,39 +170,15 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
 // iniciar o comando, então nenhum descendente nasce fora dele; o job tem KILL_ON_JOB_CLOSE e não permite escapar
 // (sem BREAKAWAY): quando o wrapper morre, o Windows mata o grupo inteiro. Matar é só matar o wrapper pela alça que o
 // próprio Node guarda, sem ler PID de ninguém (não existe PID reaproveitado, nem corrida entre ler e matar).
-// Outros sistemas: grupo de processos próprio, morto com SIGKILL.
+// O orquestrador com paralelismo só roda no Windows: fora dele `chamarComando` recusa e não executa nada.
 const WRAPPER_JOB = path.join(__dirname, 'job-windows.ps1');
 const CONFIRMAR_JOB = path.join(__dirname, 'job-confirmar-windows.ps1');
 const argsDoWrapper = () => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', WRAPPER_JOB];
 
 // Pede a morte de toda a árvore. Devolve true se o pedido foi aceito; quem confirma a morte é a conferência depois do
-// 'close' (`orfaosVivos`). `plataforma` existe para os testes.
-function matarArvore(filho, { plataforma = process.platform } = {}) {
-  if (plataforma === 'win32') {
-    try { return filho.kill('SIGKILL') || filho.exitCode != null || filho.signalCode != null; } catch { return false; }
-  }
-  try { process.kill(-filho.pid, 'SIGKILL'); return true; } catch (e) { if (e.code === 'ESRCH') return true; } // grupo inexistente: já morreu
-  try { return filho.kill('SIGKILL') || filho.exitCode != null || filho.signalCode != null; } catch { return false; } // sem sinalizar nem saber se morreu: não declara sucesso
-}
-
-// Há processo vivo no grupo? Zumbi (morto que ninguém recolheu) não conta; onde existe /proc lê o estado de cada um.
-// Erro ao ler o /proc de um processo (em geral de outro usuário, sem relação com o grupo) é inconclusivo: nesse caso
-// pergunta ao sistema se o grupo ainda existe, em vez de chamar o comando de "com órfão".
-function grupoTemVivos(pgid) {
-  const grupoExiste = () => { try { process.kill(-pgid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-  try {
-    let incerto = false;
-    for (const nome of fs.readdirSync('/proc')) {
-      if (!/^\d+$/.test(nome)) continue;
-      let stat;
-      try { stat = fs.readFileSync(`/proc/${nome}/stat`, 'utf8'); } catch (e) { if (e.code !== 'ENOENT' && e.code !== 'ESRCH') incerto = true; continue; } // sumiu = morreu
-      const resto = stat.slice(stat.lastIndexOf(')') + 2).split(' '); // estado, ppid, pgrp...
-      if (Number(resto[2]) === pgid && resto[0] !== 'Z') return true;
-    }
-    return incerto ? grupoExiste() : false;
-  } catch {
-    return grupoExiste();
-  }
+// 'close' (`orfaosVivos`).
+function matarArvore(filho) {
+  try { return filho.kill('SIGKILL') || filho.exitCode != null || filho.signalCode != null; } catch { return false; }
 }
 
 // Windows: pergunta ao próprio Job Object (por nome) se ainda há processo dentro, encerra o job e só dá por limpo quando
@@ -222,50 +198,11 @@ function confirmarJob(nome, executar = execFile) {
   });
 }
 
-// Processos vivos (fora zumbis) cujo ambiente carrega a marca MIXAI_JOB=<nome>: todo descendente do comando, mesmo o que
-// saiu do grupo com setsid ou foi adotado pelo init. Só Linux (/proc). Devolve a lista de pids, ou null se não deu para
-// ler o /proc (inconclusivo). Processos de outro usuário (EACCES) não podem ser nossos e são ignorados.
-function descendentesPorMarca(nome) {
-  let entradas;
-  try { entradas = fs.readdirSync('/proc'); } catch { return null; }
-  const alvo = `\0MIXAI_JOB=${nome}\0`;
-  const vivos = [];
-  for (const n of entradas) {
-    if (!/^\d+$/.test(n) || Number(n) === process.pid) continue;
-    try {
-      const ambiente = `\0${fs.readFileSync(`/proc/${n}/environ`, 'latin1')}\0`;
-      if (!ambiente.includes(alvo)) continue;
-      const stat = fs.readFileSync(`/proc/${n}/stat`, 'utf8');
-      if (stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z') vivos.push(Number(n));
-    } catch (e) {
-      if (['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes(e.code)) continue; // sumiu, ou é de outro usuário
-      return null;
-    }
-  }
-  return vivos;
-}
-
 // Depois que o shell fechou: sobrou algum descendente vivo (sem pipe, que o 'close' não enxerga)? Mata e confere.
 // Devolve (uma promessa de) a lista dos que continuam vivos (vazia = limpo) ou null se não deu para conferir.
-// Windows: consulta o job. Outros sistemas: o grupo de processos E os processos com a marca MIXAI_JOB (pega quem saiu do
-// grupo com setsid); sem /proc a conferência é inconclusiva (não dá para provar que ninguém escapou do grupo).
-async function orfaosVivos(filho, { plataforma = process.platform, executar = execFile } = {}) {
-  if (plataforma === 'win32') return filho.jobNome ? confirmarJob(filho.jobNome, executar) : null;
-  const marcados = () => (filho.jobNome ? descendentesPorMarca(filho.jobNome) : []);
-  const situacao = () => { const m = marcados(); return m === null ? null : { marcados: m, grupo: grupoTemVivos(filho.pid) }; };
-  let agora = situacao();
-  if (agora === null) return null;
-  if (!agora.marcados.length && !agora.grupo) return [];
-  try { process.kill(-filho.pid, 'SIGKILL'); } catch { /* já foi */ }
-  for (const pid of agora.marcados) { try { process.kill(pid, 'SIGKILL'); } catch { /* já foi */ } }
-  const limite = Date.now() + 1000;
-  for (;;) {
-    agora = situacao();
-    if (agora === null) return null;
-    if ((!agora.marcados.length && !agora.grupo) || Date.now() >= limite) break;
-    await new Promise((ok) => setTimeout(ok, 20));
-  }
-  return [...agora.marcados, ...(agora.grupo ? [-filho.pid] : [])];
+// Consulta o Job Object (por nome). Sem nome de job a conferência é inconclusiva (null).
+async function orfaosVivos(filho, { executar = execFile } = {}) {
+  return filho.jobNome ? confirmarJob(filho.jobNome, executar) : null;
 }
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
@@ -276,6 +213,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
   // erro `naoConfirmado` (o processo pode continuar vivo e quem chamou, o lote, deve parar). Depois do 'close' a árvore
   // é conferida (`orfaos`); descendente vivo que não morre ou conferência impossível também é `naoConfirmado`.
   return (prompt, signal) => new Promise((resolve, reject) => {
+    if (!lancar && plataforma !== 'win32') return reject(new Error('plataforma sem contenção garantida: o orquestrador com paralelismo só roda no Windows (Job Object); nada foi executado'));
     // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
     // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
     const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
@@ -293,8 +231,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       const fdEntrada = fs.openSync(entrada, 'r');
       try {
         if (lancar) filho = lancar(comando, fdEntrada);
-        else if (plataforma === 'win32') filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
-        else filho = spawn(comando, { shell: true, env: { ...process.env, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], detached: true }); // grupo próprio; a marca MIXAI_JOB no ambiente é herdada por TODO descendente, até o que sair do grupo (setsid)
+        else filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { apagarEntrada(); throw e; }
     filho.jobNome = jobNome;
