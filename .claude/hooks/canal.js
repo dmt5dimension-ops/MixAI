@@ -11,11 +11,15 @@ const LINHAS_NO_INICIO = 60;
 function ultimoAutor(texto) {
   const cabecalhos = String(texto).split(/\r?\n/).filter((l) => /^###\s/.test(l));
   for (let i = cabecalhos.length - 1; i >= 0; i--) {
-    const m = /^###\s+(?:\S+\s+)?[—-]\s*([^→\n]+?)\s*(?:→|$)/.exec(cabecalhos[i]);
+    // data (com ou sem hora), travessão (— ou -) e depois o autor até a seta
+    const m = /^###\s+(?:\S+(?:\s+\d{1,2}:\d{2})?\s+)?[—–-]\s*([^→\n]+?)\s*(?:→|$)/.exec(cabecalhos[i]);
     if (!m) continue;
     const autor = m[1].trim();
-    if (/rodad[oa] pel[oa] Claude|MIGRADO/i.test(cabecalhos[i])) return 'claude';
-    return /^codex/i.test(autor) ? 'codex' : 'claude';
+    // Transcrição do Codex rodada pelo Claude (autor "Codex (rodado pelo Claude...)") conta como do Claude.
+    if (/^codex\s*\([^)]*rodad[oa] pel[oa] Claude/i.test(autor)) return 'claude';
+    if (/^codex/i.test(autor)) return 'codex';
+    if (/^claude/i.test(autor)) return 'claude';
+    // Autor de outra pessoa (dono, nuvem) ou cabeçalho sem autor: não decide quem respondeu; olha a seção anterior.
   }
   return null;
 }
@@ -39,7 +43,14 @@ function lerEntrada() {
 
 function principal(modo) {
   let texto;
-  try { texto = fs.readFileSync(CANAL, 'utf8'); } catch { return; } // sem canal: silêncio
+  try { texto = fs.readFileSync(CANAL, 'utf8'); } catch (erro) {
+    if (erro && erro.code === 'ENOENT') return; // sem canal (ex.: sessão na nuvem): silêncio
+    // Qualquer outra falha (acesso negado, é uma pasta...) NÃO pode desligar a trava em silêncio.
+    const motivo = `Não consegui ler o canal ${CANAL} (${erro && erro.code ? erro.code : 'erro'}). Corrija o acesso ao arquivo antes de encerrar o turno.`;
+    if (modo === 'parar') console.log(JSON.stringify({ decision: 'block', reason: motivo }));
+    else console.log(`[Canal com o Codex] ${motivo}`);
+    return;
+  }
   if (modo === 'inicio') {
     console.log(`[Canal com o Codex: ${CANAL}] Regra do dono: leia o canal antes e depois de cada passo e nunca termine o turno sem checar. Últimas linhas:\n${fimDoCanal(texto)}`);
   } else if (modo === 'parar') {
