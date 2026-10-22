@@ -737,7 +737,7 @@ test("o wrapper do Job Object: KILL_ON_JOB_CLOSE sem escape, entra no job ANTES 
   assert.deepStrictEqual([...ps.matchAll(/LimitFlags = (0x[0-9a-f]+)/g)].map((m) => m[1]), ["0x2000"], "nenhuma outra flag: sem permissão de escapar do job");
   assert.match(ps, /AssignProcessToJobObject\(job, GetCurrentProcess\(\)\)/, "o próprio wrapper entra no job");
   assert.ok(ps.indexOf("[MixJob]::Entrar()") < ps.indexOf("[System.Diagnostics.Process]::Start"), "entra no job antes de criar o comando");
-  assert.match(ps, /CreateJobObject\(IntPtr\.Zero, null\)/, "alça do job sem atributos de herança: o comando não herda a alça");
+  assert.match(ps, /CreateJobObject\(IntPtr\.Zero, nome\)/, "alça do job sem atributos de herança: o comando não herda a alça");
   assert.match(ps, /exit 125/, "falha ao criar o job: sai sem rodar o comando");
   assert.match(ps, /\$env:MIXAI_COMANDO/);
   assert.match(ps, /UseShellExecute = \$false/, "o comando herda stdin/stdout/stderr");
@@ -754,21 +754,33 @@ test("matarArvore no Windows mata pela alça do Node (sem ler PID): aceito = tru
   assert.strictEqual(escada.matarArvore({ exitCode: null, kill: () => { throw new Error("x"); } }, { plataforma: "win32" }), false);
 });
 
-test("chamarComando (Windows simulado): aborta, termina logo, e não chama o PowerShell nem o taskkill para ler ou conferir árvore", async () => {
+test("chamarComando (Windows simulado): aborta, termina logo, e a conferência vai ao Job Object (por nome), não a uma leitura de árvore por PID", async () => {
   const { spawn } = require("node:child_process");
   const lancados = [];
   // sem shell: no Windows de verdade, matar o cmd.exe não mataria o node dentro dele (quem cuida disso é o Job Object, que este teste não usa)
   const lancar = (comando, fd) => { lancados.push(comando); return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] }); };
+  const consultas = [];
+  const executar = (cmd, args, opcoes, cb) => { consultas.push([cmd, args]); cb(null, "FECHADO\n"); };
+  const orfaos = (f) => escada.orfaosVivos(f, { plataforma: "win32", executar });
+  const matar = (f) => escada.matarArvore(f, { plataforma: "win32" });
   const ctl = new AbortController();
   const inicio = Date.now();
-  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar, matar: (f) => escada.matarArvore(f, { plataforma: "win32" }), orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32" }) })("x", ctl.signal);
+  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar, matar, orfaos })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada);
   assert.ok(Date.now() - inicio < 5000);
   assert.strictEqual(lancados.length, 1);
-  // comando normal termina sem conferência alguma de descendentes
-  assert.strictEqual(await escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32" }) })("x"), "ok");
-  assert.deepStrictEqual(escada.orfaosVivos({ pid: 1 }, { plataforma: "win32" }), [], "o job já cuidou dos descendentes");
+  assert.strictEqual(consultas.length, 1, "uma só conferência, no Job Object");
+  assert.strictEqual(consultas[0][0], "powershell");
+  assert.ok(consultas[0][1].some((x) => /job-confirmar-windows\.ps1$/.test(x)), "usa o script de conferência do job");
+  assert.match(consultas[0][1].at(-1), /^Local\\MixAI-[0-9a-f]{24}$/, "pelo nome do job desta chamada");
+  // comando normal termina com a conferência do job, e o job com processo sobrando não é "limpo"
+  assert.strictEqual(await escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos })("x"), "ok");
+  const vivos = (cmd, args, opcoes, cb) => cb(null, "VIVOS 2\n");
+  await assert.rejects(escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: vivos }) })("x"), (erro) => erro.naoConfirmado === true && /2 descendente/.test(erro.message));
+  for (const resposta of ["lixo\n", ""]) await assert.rejects(escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: (c, a, o, cb) => cb(null, resposta) }) })("x"), (erro) => erro.naoConfirmado === true, "resposta que não é FECHADO/VAZIO/VIVOS é inconclusiva");
+  await assert.rejects(escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32", executar: (c, a, o, cb) => cb(new Error("PowerShell bloqueado")) }) })("x"), (erro) => erro.naoConfirmado === true);
+  assert.strictEqual(await escada.confirmarJob("Local\\MixAI-x", (c, a, o, cb) => cb(null, "VAZIO\n")).then((r) => r.length), 0);
 });
 
 test("Windows de verdade: abortar mata o neto (o comando roda dentro do Job Object); em outros sistemas este teste não se aplica", async () => {
@@ -799,7 +811,7 @@ test("pedido de parada aceito mas a chamada não termina (descendente desconheci
   const t0 = Date.now();
   let filhoCriado;
   await assert.rejects(
-    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; return true; }, orfaos: () => [], prazoDeFechamentoMs: 150 })("x", ctl.signal),
+    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; return true; }, orfaos: () => [], prazoDeFechamentoMs: 150, reintentoMs: 40 })("x", ctl.signal),
     (erro) => erro.naoConfirmado === true && /não terminou em/.test(erro.message),
   );
   assert.ok(Date.now() - t0 < 3000);
@@ -815,22 +827,22 @@ test("saída sem fim: passado o limite de bytes a árvore é parada e a chamada 
   assert.ok(Date.now() - t0 < 5000);
 });
 
-test("erro do processo depois de ele nascer passa pelo protocolo de parada: pedido recusado vira naoConfirmado, aceito vira erro normal", async () => {
+test("erro do processo depois de ele nascer: para, ESPERA o close e confere; sem close vira naoConfirmado, com close vira o erro normal", async () => {
   const { EventEmitter } = require("node:events");
-  const falso = (matarOk) => {
+  const falso = (fechaAoMatar) => {
     const f = new EventEmitter();
     f.pid = 4242; f.exitCode = null; f.stdout = new EventEmitter(); f.stderr = new EventEmitter();
     f.stdout.destroy = f.stderr.destroy = () => {}; f.unref = () => {};
-    f.kill = () => matarOk;
+    f.kill = () => { if (fechaAoMatar) setImmediate(() => f.emit("close", null)); return true; };
     return f;
   };
-  const rodar = (matarOk) => {
-    const f = falso(matarOk);
-    const chamada = escada.chamarComando("x", { lancar: () => f, matar: () => matarOk, orfaos: () => [] })("p");
+  const rodar = (fechaAoMatar) => {
+    const f = falso(fechaAoMatar);
+    const chamada = escada.chamarComando("x", { lancar: () => f, matar: (x) => x.kill(), orfaos: () => [], reintentoMs: 10, prazoDeFechamentoMs: 60 })("p");
     setTimeout(() => f.emit("error", new Error("EPIPE")), 10);
     return chamada;
   };
-  await assert.rejects(rodar(false), (erro) => erro.naoConfirmado === true && /EPIPE/.test(erro.message));
+  await assert.rejects(rodar(false), (erro) => erro.naoConfirmado === true && /não terminou em/.test(erro.message), "sem close: não rejeita como erro comum");
   await assert.rejects(rodar(true), (erro) => !erro.naoConfirmado && /EPIPE/.test(erro.message));
 });
 
@@ -873,4 +885,82 @@ test("morte NÃO confirmada de um agente tirado do local para o lote (a vaga nã
 
 test("matarArvore (outros sistemas): grupo que não existe mais = já morreu (true)", () => {
   assert.strictEqual(escada.matarArvore({ pid: 2147483000, exitCode: null, kill: () => false }, { plataforma: "linux" }), true);
+});
+
+test("o script de conferência do job: abre pelo nome, encerra o job e só dá por limpo com job inexistente ou vazio", () => {
+  const ps = fs.readFileSync(path.join(RAIZ, "orquestra", "job-confirmar-windows.ps1"), "utf8");
+  assert.match(ps, /OpenJobObject\(0x0004 \| 0x0008, false, nome\)/, "QUERY | TERMINATE, sem herança");
+  assert.match(ps, /erro == 2\) return "FECHADO"/);
+  assert.match(ps, /TerminateJobObject/);
+  assert.match(ps, /"VIVOS " \+ ativos/);
+  assert.match(ps, /exit 2/, "falha de consulta é inconclusiva");
+});
+
+test("um só orçamento de BYTES para stdout e stderr juntos (cada um abaixo do limite, os dois juntos acima)", async () => {
+  await assert.rejects(
+    escada.chamarComando(`"${process.execPath}" -e "process.stdout.write('a'.repeat(600));process.stderr.write('é'.repeat(300));setTimeout(()=>{},20000)"`, { maxSaidaBytes: 1000 })("x"),
+    (erro) => /saída passou de 1000 bytes/.test(erro.message),
+  );
+});
+
+test("chamada abortada nunca vira sucesso, mesmo que o processo já tenha saído com código 0", async () => {
+  const ctl = new AbortController();
+  ctl.abort();
+  await assert.rejects(
+    escada.chamarComando(`"${process.execPath}" -e "process.stdout.write('ok')"`, { matar: () => true, orfaos: () => [] })("x", ctl.signal),
+    (erro) => erro.abortada === true,
+  );
+});
+
+test("a parada continua tentando depois de o pedido ser aceito, até o prazo final (e não para na primeira aceitação)", async () => {
+  let pedidos = 0;
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 20);
+  let filhoCriado;
+  await assert.rejects(
+    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; pedidos += 1; return true; }, orfaos: () => [], reintentoMs: 20, prazoDeFechamentoMs: 120 })("x", ctl.signal),
+    (erro) => erro.naoConfirmado === true,
+  );
+  assert.ok(pedidos >= 3, `o pedido foi repetido (${pedidos} vezes)`);
+  matarGrupo(filhoCriado.pid);
+});
+
+test("erro fatal do lote cancela também a chamada em andamento a um superior (Codex/Claude): ela recebe o sinal e o lote espera ela terminar", async () => {
+  let sinalDoSuperior = null;
+  let superiorTerminou = false;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    if (prompt.includes("contexto de b")) signal.addEventListener("abort", () => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })));
+    else no(new Error("o local errou")); // a vai para o superior
+  });
+  const superior = { nome: "codex", chamar: (prompt, signal) => new Promise((ok, no) => {
+    sinalDoSuperior = signal;
+    signal.addEventListener("abort", () => setTimeout(() => { superiorTerminou = true; no(new Error("cancelado")); }, 30));
+  }) };
+  let limite = 2;
+  setTimeout(() => { limite = 0; }, 60); // a está no superior (não ocupa vaga local); b é tirada do local e não morre
+  await assert.rejects(
+    escada.lote({ microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, reavaliarMs: 10, arquivos: arquivosTemp(), paralelismo: () => limite, agentes: { local, superiores: [superior] } }),
+    /o lote parou/,
+  );
+  assert.ok(sinalDoSuperior && sinalDoSuperior.aborted, "o superior foi abortado");
+  assert.strictEqual(superiorTerminou, true, "o lote esperou a chamada ao superior terminar antes de lançar o erro");
+});
+
+test("o controle de paralelismo com leitor assíncrono não bloqueia: sem leitura pronta vale 1 (indisponível); com leitura pronta usa o PC parado; leitura velha demais vale 1", async () => {
+  let agora = 1e6;
+  let leituras = 0;
+  const leitor = { lerAsync: async () => { leituras += 1; return { ...PARADO, ociosoSegundos: 900 }; }, ler: () => { throw new Error("o controle não pode usar a leitura que bloqueia"); } };
+  const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json"), relogio: () => agora, cacheMs: 1000, modos, config });
+  assert.strictEqual(controle({ agentesLocais: 0 }), 1, "primeira vez: ainda sem leitura = indisponível");
+  await new Promise((r) => setImmediate(r));
+  agora += 1500;
+  assert.ok(controle({ agentesLocais: 0 }) >= 1);
+  await new Promise((r) => setImmediate(r));
+  assert.ok(leituras >= 2, "a leitura roda em segundo plano a cada decisão nova");
+  // leitura que ficou velha (mais de 4 x o cache) não vale
+  const lento = { lerAsync: () => new Promise(() => {}) };
+  const c2 = par.criarControle({ leitor: lento, modo: "noite", arquivoEstado: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ctl-")), "e.json"), relogio: () => agora, cacheMs: 1000, modos, config });
+  assert.strictEqual(c2({ agentesLocais: 0 }), 1);
+  agora += 10000;
+  assert.strictEqual(c2({ agentesLocais: 0 }), 1);
 });

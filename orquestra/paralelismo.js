@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFile } = require('node:child_process');
 
 const raiz = path.resolve(__dirname, '..');
 const lerJson = (arq) => JSON.parse(fs.readFileSync(arq, 'utf8'));
@@ -89,8 +89,17 @@ function decidir({ leitura, modo, agentesAtuais = 0, anterior = null, agora = Da
 }
 
 // Leitor real: roda local/uso-windows.ps1. Devolve null se o PowerShell não existe ou falha.
+// `ler()` bloqueia (só para o uso na linha de comando); `lerAsync()` não bloqueia o Node (é o que o controle usa dentro do
+// lote, onde um bloqueio de até 30 s atrasaria abortos, temporizadores e os outros agentes).
 function leitorWindows() {
   return {
+    lerAsync() {
+      return new Promise((resolve) => {
+        execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000, windowsHide: true }, (erro, stdout) => {
+          resolve(erro ? null : lerSaida(stdout));
+        });
+      });
+    },
     ler() {
       const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000 });
       if (r.error || r.status !== 0) return null;
@@ -151,6 +160,18 @@ function modoAtual(env = process.env) {
 // Função sem argumentos para o `lote` chamar sempre que for abrir vaga: lê o PC, decide e guarda o estado.
 function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEstado = path.join(os.tmpdir(), 'mixai-paralelismo.json'), relogio = Date.now, cacheMs = 5000, modos, config, aoDecidir } = {}) {
   let ultimo = null;
+  // Leitor assíncrono: a leitura roda em segundo plano e a decisão usa a última pronta. Sem leitura recente (a primeira
+  // vez, ou uma que demorou demais) vale "indisponível" = usando o PC = 1 agente.
+  let pronta = null;
+  let lendo = false;
+  const leituraAtual = () => {
+    if (!leitor.lerAsync) return leitor.ler();
+    if (!lendo) {
+      lendo = true;
+      Promise.resolve().then(() => leitor.lerAsync()).then((l) => { pronta = { em: relogio(), leitura: l }; }, () => { pronta = { em: relogio(), leitura: null }; }).finally(() => { lendo = false; });
+    }
+    return pronta && relogio() - pronta.em < 4 * cacheMs ? pronta.leitura : null;
+  };
   return ({ agentesLocais = 0 } = {}) => {
     // O lote pergunta a cada vaga; ler o Windows custa um PowerShell, então reaproveita a resposta recente.
     if (ultimo && relogio() - ultimo.em < cacheMs) return ultimo.alvo;
@@ -161,7 +182,7 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
       const validade = (config ?? configPadrao()).validadeEstadoSegundos ?? 300;
       if (!numeroValido(anterior?.gravadoEm, 0) || relogio() - anterior.gravadoEm > validade * 1000 || relogio() < anterior.gravadoEm) anterior = null;
     } catch { anterior = null; /* primeira vez */ }
-    const d = decidir({ leitura: leitor.ler(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
+    const d = decidir({ leitura: leituraAtual(), modo, agentesAtuais: agentesLocais, anterior, agora: relogio(), modos, config });
     try { fs.writeFileSync(arquivoEstado, JSON.stringify({ ...d.estado, gravadoEm: relogio() })); } catch { /* sem estado, só não sobe devagar */ }
     if (aoDecidir && d.alvo !== ultimo?.alvo) aoDecidir(d);
     ultimo = { em: relogio(), alvo: d.alvo };

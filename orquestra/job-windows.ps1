@@ -1,7 +1,7 @@
 # Roda o comando de $env:MIXAI_COMANDO dentro de um Job Object do Windows, para que matar este processo mate tudo o
 # que o comando criou (filhos, netos, órfãos), sem ler PID de ninguém. Usado por orquestra/escada.js (chamarComando).
 #
-# 1. Cria o job com KILL_ON_JOB_CLOSE (quando o último dono do job fecha, o Windows mata todos os processos dentro).
+# 1. Cria o job (com o nome de $env:MIXAI_JOB, para o escada.js poder consultá-lo) com KILL_ON_JOB_CLOSE (quando o último dono do job fecha, o Windows mata todos os processos dentro).
 #    Sem BREAKAWAY: ninguém dentro do job consegue sair dele.
 # 2. Coloca ESTE processo no job antes de iniciar o comando. Tudo que nascer daqui em diante nasce dentro do job.
 # 3. Inicia o comando por cmd.exe, herdando stdin/stdout/stderr (o Node ligou os três a este processo), espera e
@@ -28,9 +28,11 @@ public static class MixJob {
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr processo);
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   static IntPtr job; // a alça fica viva até este processo morrer; ao morrer, o Windows fecha e mata o job
-  public static void Entrar() {
-    job = CreateJobObject(IntPtr.Zero, null);
-    if (job == IntPtr.Zero) throw new Exception("CreateJobObject falhou: " + Marshal.GetLastWin32Error());
+  public static void Entrar(string nome) {
+    job = CreateJobObject(IntPtr.Zero, nome); // sem atributos: a alça não é herdável. O nome deixa orquestra/job-confirmar-windows.ps1 consultar o job.
+    int erro = Marshal.GetLastWin32Error();
+    if (job == IntPtr.Zero) throw new Exception("CreateJobObject falhou: " + erro);
+    if (erro == 183) throw new Exception("já existe um job com este nome (ERROR_ALREADY_EXISTS): recusado"); // nunca entrar num job que não é nosso
     EXT info = new EXT();
     info.Basic.LimitFlags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     int tamanho = Marshal.SizeOf(typeof(EXT));
@@ -44,9 +46,10 @@ public static class MixJob {
 }
 '@
 
+if ([string]::IsNullOrEmpty($env:MIXAI_JOB)) { [Console]::Error.WriteLine('MIXAI_JOB vazio'); exit 125 }
 try {
   Add-Type -TypeDefinition $codigo
-  [MixJob]::Entrar()
+  [MixJob]::Entrar($env:MIXAI_JOB)
 } catch {
   [Console]::Error.WriteLine("não consegui criar o Job Object: $($_.Exception.Message)")
   exit 125
