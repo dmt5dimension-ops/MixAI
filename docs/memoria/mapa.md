@@ -1,0 +1,185 @@
+# Mapa do código e da memória
+
+Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
+
+## Arquivos
+
+- `ferramentas/instalar.ps1` — Instala as ferramentas do orquestrador no Windows 11.
+  - `Write-Passo` (linha 15)
+  - `Write-Ok` (linha 16)
+  - `Write-Aviso` (linha 17)
+  - `Test-Comando` (linha 19)
+  - `Update-Path` (linha 23)
+  - `Install-ViaWinget` (linha 29)
+- `ferramentas/preparar-repo.ps1` — Prepara um repositorio para o orquestrador: regras dos agentes, CI de regressao,
+  - `Write-Passo` (linha 22)
+  - `Write-Ok` (linha 23)
+  - `Write-Aviso` (linha 24)
+  - `Aplicar-ComandoTeste` (linha 28)
+  - `Copiar-Arquivo` (linha 38)
+- `local/criar-apelido.ps1` — Aponta o nome fixo "mixai-local" para o modelo do modo (não baixa nem copia nada).
+- `local/modo.ps1` — Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).
+- `local/rodar-local.js` — Porta de entrada única para o modelo local: a escada e o chamar.js passam por aqui.
+  - `minimoGB` (linha 23)
+  - `memoriaSuficiente` (linha 28)
+  - `carregar` (linha 37)
+  - `foraDaPlaca` (linha 47)
+  - `descarregar` (linha 63)
+  - `chamarOllama` (linha 71)
+  - `principal` (linha 86)
+- `local/vigia-prioridade.ps1` — Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)
+- `orquestra/chamar.js`
+  - `detectarLimite` (linha 10)
+  - `limiteNaSaida` (linha 14)
+  - `ultimoJson` (linha 34)
+  - `falhouSemCota` (linha 45)
+  - `marcarSemCota` (linha 49)
+  - `escolher` (linha 56)
+  - `lerEstado` (linha 65)
+  - `salvarEstado` (linha 79)
+  - `uso` (linha 83)
+  - `principal` (linha 88)
+- `orquestra/escada.js` — Escada do modelo local: tarefa bem delimitada vai primeiro ao mixai-local.
+  - `lerRegras` (linha 18)
+  - `salvarRegra` (linha 29)
+  - `escolherRegras` (linha 46)
+  - `montarPrompt` (linha 52)
+  - `promptRegra` (linha 65)
+  - `lerRegraGerada` (linha 75)
+  - `registrarCaso` (linha 89)
+  - `lerCasos` (linha 94)
+  - `paraTreino` (linha 100)
+  - `tentar` (linha 104)
+  - `aprenderRegra` (linha 114)
+  - `resolver` (linha 126)
+  - `ok` (linha 128)
+  - `chamarComando` (linha 166)
+  - `verificadorPorComando` (linha 189)
+  - `promptReinstruir` (linha 196)
+  - `promptAntagonista` (linha 205)
+  - `resolverComLoop` (linha 217)
+  - `julgar` (linha 225)
+  - `ok` (linha 239)
+  - `concluir` (linha 240)
+  - `validarPlano` (linha 286)
+  - `normaliza` (linha 300)
+  - `sobrepoe` (linha 301)
+  - `promptMicro` (linha 306)
+  - `lote` (linha 314)
+  - `exportar` (linha 341)
+  - `principal` (linha 348)
+  - `verificadorDe` (linha 360)
+- `orquestra/grafo.js` — Grafo persistente de tarefas: quem depende de quem, em que estado está cada uma e quem a executa.
+  - `novo` (linha 10)
+  - `copia` (linha 11)
+  - `normaliza` (linha 12)
+  - `lista` (linha 13)
+  - `carregar` (linha 15)
+  - `salvar` (linha 26)
+  - `pegar` (linha 33)
+  - `adicionar` (linha 39)
+  - `feita` (linha 56)
+  - `prontas` (linha 58)
+  - `travadas` (linha 63)
+  - `mudar` (linha 73)
+  - `iniciar` (linha 79)
+  - `concluir` (linha 86)
+  - `falhar` (linha 92)
+  - `validar` (linha 99)
+  - `visita` (linha 105)
+  - `resumo` (linha 124)
+  - `opcao` (linha 130)
+  - `principal` (linha 135)
+  - `virgulas` (linha 137)
+  - `grava` (linha 140)
+- `orquestra/mapa.js` — Mapa do código e da memória: onde fica cada função e o que já foi feito.
+  - `listar` (linha 10)
+  - `descricao` (linha 23)
+  - `semTextos` (linha 31)
+  - `lerArquivo` (linha 74)
+  - `lerFeitos` (linha 102)
+  - `construir` (linha 117)
+  - `emTexto` (linha 121)
+  - `gerar` (linha 132)
+  - `conferir` (linha 140)
+  - `buscar` (linha 150)
+  - `principal` (linha 161)
+- `orquestra/trocar.ps1` — Troca manualmente quem está sem cota.
+- `tests/canal-coordenacao.test.js` — Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.
+  - `ler` (linha 8)
+- `tests/escada.test.js` — Testa a escada: tarefa vai primeiro ao modelo local; se falhar sobe para Codex/Claude;
+  - `pastaTemp` (linha 11)
+  - `verificar` (linha 17)
+  - `local` (linha 59)
+  - `codex` (linha 63)
+  - `verificar` (linha 81)
+  - `codex` (linha 90)
+  - `codex` (linha 139)
+  - `codex` (linha 163)
+  - `esperar` (linha 183)
+  - `micro` (linha 184)
+  - `verificadorDe` (linha 185)
+  - `verifMotivo` (linha 254)
+  - `local` (linha 262)
+  - `local` (linha 276)
+  - `local` (linha 314)
+  - `local` (linha 337)
+  - `codex` (linha 370)
+  - `local` (linha 389)
+  - `local` (linha 407)
+- `tests/falhas-escada.test.js` — Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta
+  - `rodar` (linha 16)
+- `tests/grafo.test.js` — Testa o grafo persistente de tarefas (orquestra/grafo.js): dependências, estado e gravação segura.
+  - `tmp` (linha 13)
+  - `exemplo` (linha 15)
+  - `cli` (linha 96)
+- `tests/guarda-testes.test.js` — Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.
+  - `rodar` (linha 12)
+  - `git` (linha 14)
+  - `mudar` (linha 54)
+- `tests/instalar.test.js` — Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:
+  - `achar` (linha 51)
+  - `rodarComFalsos` (linha 57)
+- `tests/mapa.test.js` — Testa o mapa do código e da memória (orquestra/mapa.js): índice de onde fica cada função e do que já foi feito.
+  - `repoFalso` (linha 12)
+  - `grava` (linha 14)
+- `tests/modelo-local.test.js` — Testa a configuração dos modos dia/noite do modelo local (local/modos.json e local/modo.ps1).
+  - `criarApelidoComOllamaFalso` (linha 14)
+- `tests/papeis.test.js` — Testa a troca de papéis entre Claude, Codex e o modelo local (orquestra/).
+- `tests/preparar-repo.test.js` — Testa o kit que leva as regras do MixAI para o repositório de outro app (ferramentas/preparar-repo.ps1).
+  - `ler` (linha 8)
+  - `cobre` (linha 22)
+  - `titulos` (linha 44)
+  - `rodar` (linha 150)
+- `tests/protecao-local.test.js` — Testa as proteções do modelo local: nunca cair para o processador, conferir a memória
+  - `pastaTemporaria` (linha 16)
+  - `ollamaFalso` (linha 21)
+  - `rodar` (linha 35)
+- `tests/regra-modelo-local.test.js` — Trava a regra do AGENTS.md que diz quando o planejador pode mandar tarefa para o modelo local.
+  - `secao` (linha 9)
+- `tests/smoke.test.js`
+- `tests/trava-de-escopo.test.js` — Testa a trava de escopo (.github/scripts/trava_de_escopo.py) num repositório git temporário.
+  - `repoCom` (linha 12)
+  - `git` (linha 14)
+  - `rodar` (linha 32)
+  - `escopo` (linha 44)
+  - `padroes` (linha 115)
+  - `git` (linha 152)
+  - `git` (linha 181)
+
+## Já feito e o teste que trava
+
+- Portões do CI: regressão, guarda de testes, revisão cruzada — `tests/smoke.test.js`
+- Trava de escopo do PR — `tests/trava-de-escopo.test.js`
+- Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows) — `tests/trava-de-escopo.test.js`
+- Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) — `tests/modelo-local.test.js`
+- Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) — `tests/papeis.test.js`
+- Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
+- Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
+- Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) — `tests/preparar-repo.test.js`
+- Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md` — `tests/canal-coordenacao.test.js`
+- Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
+- Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
+- Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
+- Grafo persistente de tarefas (etapa 6): dependências, estados, tarefas prontas, travadas, validação de ciclo e escopo, gravação atômica (`orquestra/grafo.js`, `orquestra/grafo.json`) — `tests/grafo.test.js`
+- Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) — `tests/mapa.test.js`

@@ -65,3 +65,10 @@ node orquestra/escada.js lote plano.json --paralelo 2
 - `iniciar <id> <agente>` só aceita tarefa pronta; `concluir` e `falhar` só aceitam tarefa `em_andamento`. `falhar` devolve a tarefa à fila; na 3ª falha ela vira `falhou` e as dependentes aparecem como `travada` no `status`.
 - Todo comando que grava valida o grafo antes: recusa dependência que não existe, ciclo e duas tarefas `em_andamento` com o mesmo arquivo no escopo. A gravação é atômica (arquivo temporário e troca), e arquivo corrompido dá erro sem ser apagado.
 - Exemplos: `node orquestra/grafo.js add t1 "Título" --agente codex --depende t0 --escopo src/a.js`, `iniciar t1 codex`, `concluir t1 "PR #20"`, `status`.
+
+## Mapa do código e da memória (etapa 4)
+
+`node orquestra/mapa.js gerar` cria `docs/memoria/mapa.json` e `mapa.md`: cada arquivo `.js`/`.ps1` com a descrição (primeira linha de comentário), as funções com a linha, e a lista do que já funciona e qual teste trava (lida do `estado.md`).
+
+- Modelo grande: antes de ler arquivos, rode `node orquestra/mapa.js buscar <termo>` e abra só o trecho indicado.
+- Mudou código ou `estado.md`? Rode `gerar` de novo. `node orquestra/mapa.js conferir` sai com 1 se o mapa está velho, e `tests/mapa.test.js` faz a mesma conferência.

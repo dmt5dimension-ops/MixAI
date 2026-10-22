@@ -20,6 +20,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) | `tests/escada.test.js` |
 | Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) | `tests/escada.test.js` e `tests/falhas-escada.test.js` |
 | Grafo persistente de tarefas (etapa 6): dependências, estados, tarefas prontas, travadas, validação de ciclo e escopo, gravação atômica (`orquestra/grafo.js`, `orquestra/grafo.json`) | `tests/grafo.test.js` |
+| Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (inclui conferir que o mapa real está em dia) |
 
 ## Em andamento
 
@@ -46,6 +47,8 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
+- Na nuvem (sem PowerShell) 3 testes ficam vermelhos por falta de `pwsh`: `modelo-local.test.js` (2 do `modo.ps1`) e `protecao-local.test.js` (num_gpu 99). Passam no PC do dono; na nuvem, comparar só com a `main`.
+- Depois de mudar código ou o `estado.md`, rodar `node orquestra/mapa.js gerar`; senão `tests/mapa.test.js` fica vermelho de propósito.
 - O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
 - O `claude` do terminal não está logado ("Not logged in"). Sem isso o Claude não executa por `orquestra/chamar.js`. O dono precisa rodar `claude` uma vez e entrar com a conta.
 
