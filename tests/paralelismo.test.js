@@ -503,7 +503,14 @@ test("orfaosVivos: depois que o shell fecha, descendente vivo é achado pelo pai
   assert.strictEqual(vivos.size, 0);
   const teimosos = escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => p === 300 });
   assert.deepStrictEqual(teimosos, [300]);
-  assert.deepStrictEqual(escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar: () => ({ status: 1 }), vivo: () => true }), [], "sem foto: nada a conferir (o fim normal não pode quebrar sem PowerShell)");
+  assert.strictEqual(escada.orfaosVivos({ pid: 100 }, { plataforma: "win32", executar: () => ({ status: 1 }), vivo: () => true }), null, "sem leitura da árvore: inconclusivo, não 'limpo'");
+  // as fotos periódicas guardam o órfão cujo intermediário já morreu (a foto de agora só vê a raiz)
+  const ex = (cmd) => (cmd === "powershell" ? { status: 0, stdout: "100,1\n" } : { status: 0 });
+  const filho = { pid: 100, arvore: [100, 200, 300] };
+  const vivosAgora = new Set([300]);
+  const sobrou = escada.orfaosVivos(filho, { plataforma: "win32", executar: (cmd, args) => { if (cmd === "taskkill") vivosAgora.delete(300); return ex(cmd); }, vivo: (p) => vivosAgora.has(p) });
+  assert.deepStrictEqual(sobrou, []);
+  assert.strictEqual(vivosAgora.size, 0, "o órfão da foto antiga foi morto");
 });
 
 test("shell que fecha deixando um descendente sem pipe vivo: o descendente é morto e a chamada ainda termina normalmente; se não morrer, naoConfirmado", async () => {
@@ -692,4 +699,32 @@ test("morte não confirmada no tempo máximo também para o lote (não vira erro
   );
   assert.strictEqual(codex, 0, "não subiu para o Codex");
   try { process.kill(-preso.pid, "SIGKILL"); } catch { /* limpeza do teste */ }
+});
+
+test("arvoreDe: saída vazia ou sem linhas válidas (consulta falhou sem erro) é inconclusiva, não 'só a raiz'", () => {
+  for (const stdout of ["", "\n\n", "lixo sem numeros"]) assert.strictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout })), null, JSON.stringify(stdout));
+  assert.deepStrictEqual(escada.arvoreDe(100, () => ({ status: 0, stdout: "100,1\n" })), [100]);
+});
+
+test("chamarComando (Windows simulado): fotografa a árvore durante a execução e as fotos chegam ao matar; leitura da árvore falhando depois do close vira naoConfirmado", async () => {
+  const ctl = new AbortController();
+  let vistoPeloMatar;
+  const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
+  const chamada = escada.chamarComando(comando, {
+    plataforma: "win32", fotografar: (f) => [f.pid, 999], fotoMs: 20,
+    matar: (f) => { vistoPeloMatar = f.arvore; try { process.kill(-f.pid, "SIGKILL"); } catch { /* já */ } return true; },
+    orfaos: () => [],
+  })("x", ctl.signal);
+  setTimeout(() => ctl.abort(), 150);
+  await assert.rejects(chamada);
+  assert.ok(vistoPeloMatar.includes(999), "a foto periódica estava registrada quando o matar rodou");
+  await assert.rejects(escada.chamarComando("echo oi", { orfaos: () => null })("x"), (erro) => erro.naoConfirmado === true && /não consegui conferir/.test(erro.message));
+});
+
+test("matarArvore (Windows): órfão que só aparece nas fotos antigas também é morto e conferido; a foto de agora não substitui as antigas", () => {
+  const vivos = new Set([300]);
+  const filho = { pid: 100, arvore: [100, 200, 300] };
+  const ok = escada.matarArvore(filho, { plataforma: "win32", executar: (cmd, args) => { if (cmd === "taskkill" && args[1] === "300") vivos.delete(300); return cmd === "powershell" ? { status: 0, stdout: "100,1\n" } : { status: 0 }; }, vivo: (p) => vivos.has(p) });
+  assert.strictEqual(ok, true);
+  assert.strictEqual(vivos.size, 0);
 });

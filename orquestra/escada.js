@@ -171,10 +171,13 @@ function arvoreDe(pid, executar = spawnSync) {
   const r = executar('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
   if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
   const filhos = new Map();
+  let linhas = 0;
   for (const linha of r.stdout.split(/\r?\n/)) {
     const m = /^(\d+),(\d+)$/.exec(linha.trim());
-    if (m) filhos.set(Number(m[2]), [...(filhos.get(Number(m[2])) || []), Number(m[1])]);
+    if (m) { linhas += 1; filhos.set(Number(m[2]), [...(filhos.get(Number(m[2])) || []), Number(m[1])]); }
   }
+  // Saída vazia ou sem nenhuma linha válida (a consulta falhou sem dar erro) é inconclusiva, não "só a raiz".
+  if (!linhas) return null;
   const todos = [pid];
   for (let i = 0; i < todos.length; i++) for (const f of filhos.get(todos[i]) || []) if (!todos.includes(f)) todos.push(f);
   return todos;
@@ -189,10 +192,11 @@ function arvoreDe(pid, executar = spawnSync) {
 function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3, vivo = processoVivoNoSistema } = {}) {
   if (plataforma === 'win32') {
     const opcoes = { timeout: 15000, windowsHide: true };
-    if (filho.arvore === undefined) {
-      filho.arvore = arvoreDe(filho.pid, executar);
-      if (filho.arvore && !vivo(filho.pid) && filho.arvore.length === 1) filho.arvore = null; // raiz sumiu e nada achado: inconclusivo
-    }
+    // Foto de agora, somada às fotos periódicas da execução (um intermediário que já morreu deixou o órfão fora da foto
+    // de agora, mas ele aparece nas anteriores).
+    const agora = vivo(filho.pid) ? arvoreDe(filho.pid, executar) : null;
+    filho.arvore = juntarPids(filho.arvore, agora);
+    if (filho.arvore && filho.arvore.length === 1 && !vivo(filho.pid)) filho.arvore = null; // raiz sumiu e nada achado: inconclusivo
     if (filho.arvore) {
       for (let i = 0; i < tentativas; i++) {
         executar('taskkill', ['/pid', String(filho.pid), '/T', '/F'], opcoes);
@@ -208,9 +212,10 @@ function matarArvore(filho, { plataforma = process.platform, executar = spawnSyn
   try { process.kill(-filho.pid, 'SIGKILL'); } catch { try { filho.kill('SIGKILL'); } catch { /* já morreu */ } }
   return true;
 }
+const juntarPids = (a, b) => (a || b ? [...new Set([...(a || []), ...(b || [])])] : null);
 
 // Depois que o shell fechou: sobrou algum descendente vivo (sem pipe, que o 'close' não enxerga)? Mata e confere.
-// Devolve a lista dos que continuam vivos (vazia = limpo). Windows: descendentes achados pelo pid do pai registrado;
+// Devolve a lista dos que continuam vivos (vazia = limpo) ou `null` se não deu para conferir (Windows sem leitura da árvore). Windows: descendentes achados pelo pid do pai registrado;
 // outros sistemas: o grupo de processos do comando.
 // Há processo vivo no grupo? Zumbi (morto que ninguém recolheu) não conta; onde existe /proc lê o estado de cada um.
 function grupoTemVivos(pgid) {
@@ -230,9 +235,10 @@ function grupoTemVivos(pgid) {
 
 function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSync, vivo = processoVivoNoSistema } = {}) {
   if (plataforma === 'win32') {
-    const arvore = arvoreDe(filho.pid, executar);
-    if (!arvore) return [];
-    const resto = arvore.slice(1).filter(vivo);
+    // Fotos periódicas da execução + a de agora (a raiz já fechou, mas os descendentes guardam o pid do pai).
+    filho.arvore = juntarPids(filho.arvore, arvoreDe(filho.pid, executar));
+    if (!filho.arvore) return null; // não deu para ler a árvore: inconclusivo, quem chamou trata como morte não confirmada
+    const resto = filho.arvore.filter((p) => p !== filho.pid && vivo(p));
     for (const p of resto) executar('taskkill', ['/pid', String(p), '/T', '/F'], { timeout: 15000, windowsHide: true });
     return resto.filter(vivo);
   }
@@ -245,7 +251,7 @@ function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSyn
 }
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fotografar = (f) => arvoreDe(f.pid), fotoMs = 2000, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
   // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
   // reduzir agentes locais quando o dono volta a usar o PC. Se a árvore não morrer (taskkill falhando), repete a
   // cada `reintentoMs`; esgotadas as tentativas, a chamada termina com erro `naoConfirmado`: o processo pode
@@ -255,19 +261,24 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, rei
     // O prompt vai por ARQUIVO como stdin (nada de pipe de entrada): no Windows, com shell, um pipe de entrada aberto
     // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
     const entrada = path.join(os.tmpdir(), `mixai-prompt-${process.pid}-${Math.random().toString(36).slice(2)}.txt`);
-    fs.writeFileSync(entrada, String(prompt));
-    const fdEntrada = fs.openSync(entrada, 'r');
+    const apagarEntrada = () => { try { fs.rmSync(entrada, { force: true }); } catch { /* no Windows pode estar em uso; fica no tmp */ } };
     let filho;
     try {
-      filho = spawn(comando, { shell: true, stdio: [fdEntrada, 'pipe', 'pipe'], detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
-    } finally { fs.closeSync(fdEntrada); }
+      fs.writeFileSync(entrada, String(prompt), { mode: 0o600 }); // só o dono lê
+      const fdEntrada = fs.openSync(entrada, 'r');
+      try {
+        filho = spawn(comando, { shell: true, stdio: [fdEntrada, 'pipe', 'pipe'], detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
+      } finally { fs.closeSync(fdEntrada); }
+    } catch (e) { apagarEntrada(); throw e; }
     let terminou = false;
     let relogio = null;
     let estourou = false;
+    let fotos = null;
     const fim = (f, valor) => {
       if (terminou) return;
       terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
-      try { fs.rmSync(entrada, { force: true }); } catch { /* no Windows pode estar em uso; fica no tmp */ }
+      clearInterval(fotos);
+      apagarEntrada();
       f(valor);
     };
     // Morte não confirmada: larga o processo (pipes fechados e sem segurar o Node), senão o comando nunca termina.
@@ -292,6 +303,13 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, rei
     };
     // O tempo máximo também mata a árvore pelo mesmo caminho (o `timeout` do spawn mataria só o shell).
     const limiteDeTempo = setTimeout(() => { estourou = true; parar(); }, tempoMaximoMs);
+    // Windows: fotografa a árvore de tempos em tempos, para o órfão de um intermediário que morreu ainda constar da lista.
+    if (plataforma === 'win32') {
+      const foto = () => { try { filho.arvore = juntarPids(filho.arvore, fotografar(filho)); } catch { /* a próxima tenta */ } };
+      setTimeout(foto, 200).unref?.();
+      fotos = setInterval(foto, fotoMs);
+      fotos.unref?.();
+    }
     if (signal) {
       if (signal.aborted) parar();
       else signal.addEventListener('abort', parar, { once: true });
@@ -305,8 +323,9 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, rei
     filho.on('close', (codigo) => {
       if (terminou) return;
       // O shell fechou: se ficou descendente vivo (sem pipe), o 'close' não prova que acabou. Mata e confere.
-      let sobrou = [];
-      try { sobrou = orfaos(filho); } catch { sobrou = []; }
+      let sobrou;
+      try { sobrou = orfaos(filho); } catch { sobrou = null; }
+      if (sobrou === null || sobrou === undefined) return naoConfirmado(`o shell do processo ${filho.pid} fechou e não consegui conferir se sobrou descendente vivo (leitura da árvore falhou)`);
       if (sobrou.length) return naoConfirmado(`o shell do processo ${filho.pid} fechou, mas ${sobrou.length} descendente(s) continuam vivos e não morreram`);
       if (codigo === 0 && !estourou) fim(resolve, saida);
       else fim(reject, new Error(estourou ? `passou do tempo máximo (${tempoMaximoMs / 1000} s)` : erro || `saiu com ${codigo}`));
