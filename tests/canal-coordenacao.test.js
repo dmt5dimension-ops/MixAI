@@ -15,3 +15,10 @@ test("AGENTS.md e CODEX.md mandam usar o mesmo canal fora do git, antes e depois
   }
   assert.ok(/antes e depois/i.test(ler("AGENTS.md")));
 });
+
+test("CLAUDE.md obriga o Claude a ler e escrever no canal antes e depois de cada passo, e antes de terminar o turno", () => {
+  const texto = ler("CLAUDE.md");
+  assert.ok(texto.includes(CANAL), "CLAUDE.md não cita o canal");
+  assert.ok(/antes e depois de cada passo/i.test(texto), "falta 'antes e depois de cada passo'");
+  assert.ok(/nunca (termine|terminar) (um|o) turno/i.test(texto), "falta a regra de nunca terminar o turno sem checar o canal");
+});
