@@ -697,6 +697,12 @@
       ]
     },
     {
+      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único)",
+      "testes": [
+        "tests/canal-coordenacao.test.js"
+      ]
+    },
+    {
       "o_que": "Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo`",
       "testes": [
         "tests/regras-locais.test.js"
@@ -706,12 +712,6 @@
       "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
-      ]
-    },
-    {
-      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md`",
-      "testes": [
-        "tests/canal-coordenacao.test.js"
       ]
     },
     {
