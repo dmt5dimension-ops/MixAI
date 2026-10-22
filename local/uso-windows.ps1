@@ -1,5 +1,5 @@
 # Lê o uso do Windows e imprime um JSON: tempo sem mexer no PC, uso de placa e processador por outros programas,
-# vídeo tocando e memória livre. Quem chama é orquestra/paralelismo.js; os testes usam leituras simuladas.
+# uso do decodificador de vídeo da placa (vídeo tocando) e memória livre. Quem chama é orquestra/paralelismo.js; os testes usam leituras simuladas.
 # Uso: powershell -NoProfile -ExecutionPolicy Bypass -File local\uso-windows.ps1
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -37,9 +37,19 @@ foreach ($p in (Get-Process | Where-Object { $pidsMeus -contains $_.Id })) {
 }
 $cpuOutros = [Math]::Max(0, $cpuTotal - ($cpuMeu / [Environment]::ProcessorCount))
 
-# Vídeo tocando: o Windows registra que alguém pediu a tela ligada (DISPLAY) enquanto um vídeo roda.
-$pedidos = (powercfg /requests) -join "`n"
-$video = $pedidos -match 'DISPLAY:\s*\r?\n(?!None)\s*\S'
+# Vídeo tocando: uso do decodificador de vídeo da placa por outros programas (funciona sem administrador).
+# Fica $null se o contador não existe ou falha; quem lê trata isso como "em uso", o lado seguro.
+$videoDecode = $null
+$contador = (Get-Counter '\GPU Engine(*engtype_VideoDecode)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples
+if ($contador) {
+  $videoDecode = 0
+  foreach ($a in $contador) {
+    if ($a.InstanceName -match 'pid_(\d+)_') {
+      if ($pidsMeus -notcontains [int]$Matches[1]) { $videoDecode += $a.CookedValue }
+    }
+  }
+  $videoDecode = [Math]::Round([Math]::Min(100, $videoDecode), 1)
+}
 
 $livre = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
 
@@ -47,6 +57,6 @@ $livre = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
   ociosoSegundos = [int][MixaiOcioso]::Segundos()
   gpuOutrosPct   = [Math]::Round([Math]::Min(100, $gpuOutros), 1)
   cpuOutrosPct   = [Math]::Round([Math]::Min(100, $cpuOutros), 1)
-  videoTocando   = [bool]$video
+  videoDecodePct = $videoDecode
   memoriaLivreGB = [Math]::Round($livre, 2)
 } | ConvertTo-Json -Compress

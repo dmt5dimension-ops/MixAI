@@ -2,7 +2,8 @@
   "ocupado": {
     "ociosoAbaixoDeSegundos": 90,
     "gpuOutrosAcimaDePct": 30,
-    "cpuOutrosAcimaDePct": 60
+    "cpuOutrosAcimaDePct": 60,
+    "videoDecodeAcimaDePct": 1
   },
   "subidaMinSegundos": 60,
   "maximoAbsoluto": 4,

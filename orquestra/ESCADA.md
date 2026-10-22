@@ -60,7 +60,7 @@ node orquestra/escada.js lote plano.json --paralelo 2
 
 `node orquestra/escada.js lote plano.json --paralelo auto` deixa o número de agentes locais por conta de `orquestra/paralelismo.js`:
 
-- **Usando o PC: 1 agente.** Conta como "usando": mexeu no teclado ou mouse há menos de 90 s, outro programa usa mais de 30% da placa ou 60% do processador (o próprio Ollama não conta), vídeo tocando, ou a leitura do Windows falhou (na dúvida, 1). Volta a 1 na hora.
+- **Usando o PC: 1 agente.** Conta como "usando": mexeu no teclado ou mouse há menos de 90 s, outro programa usa mais de 30% da placa ou 60% do processador (o próprio Ollama não conta), vídeo tocando (decodificador de vídeo da placa, contador "GPU Engine" `VideoDecode`, acima de 1%; funciona sem administrador), ou a leitura do Windows falhou, inclusive se o contador de vídeo não existir (na dúvida, 1). Volta a 1 na hora.
 - **Parado: sobe um por vez**, no mínimo 60 s entre uma subida e outra, até o teto. Nunca começa acima de 1.
 - **Teto = o menor de**: `agentesMax` do modo em `local/modos.json` (dia 2, noite 3), o que cabe na placa (8 GB menos pesos do modelo, reserva do Windows e cache de contexto de cada agente, números em `orquestra/paralelismo.json`), a memória livre acima do mínimo de `local/protecao.json` (0,5 GB por agente) e `maximoAbsoluto`.
 - `local/modo.ps1` agora liga `OLLAMA_NUM_PARALLEL` com o `agentesMax` do modo (antes era sempre 1, então mais agentes só enfileiravam) e grava o modo ligado em `%LOCALAPPDATA%\Ollama\mixai-modo.txt`; sem esse arquivo o paralelismo assume o dia. Para ver o que ele decidiria agora: `node orquestra/paralelismo.js`.

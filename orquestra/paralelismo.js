@@ -32,13 +32,13 @@ function capacidade({ modo, memoriaLivreGB, modos = modosPadrao(), config = conf
 // Motivos pelos quais o dono está usando o PC. Leitura que faltou conta como "usando" (o seguro).
 function motivosDeUso(leitura, config) {
   const o = config.ocupado;
-  const campos = ['ociosoSegundos', 'gpuOutrosPct', 'cpuOutrosPct', 'videoTocando', 'memoriaLivreGB'];
+  const campos = ['ociosoSegundos', 'gpuOutrosPct', 'cpuOutrosPct', 'videoDecodePct', 'memoriaLivreGB'];
   if (!leitura || campos.some((c) => leitura[c] === undefined || leitura[c] === null)) return ['leitura do Windows indisponível'];
   const motivos = [];
   if (leitura.ociosoSegundos < o.ociosoAbaixoDeSegundos) motivos.push(`mexeu no PC há ${leitura.ociosoSegundos}s`);
   if (leitura.gpuOutrosPct > o.gpuOutrosAcimaDePct) motivos.push(`outro programa usa ${leitura.gpuOutrosPct}% da placa`);
   if (leitura.cpuOutrosPct > o.cpuOutrosAcimaDePct) motivos.push(`outros programas usam ${leitura.cpuOutrosPct}% do processador`);
-  if (leitura.videoTocando) motivos.push('vídeo tocando');
+  if (leitura.videoDecodePct > o.videoDecodeAcimaDePct) motivos.push(`vídeo tocando (decodificador em ${leitura.videoDecodePct}%)`);
   return motivos;
 }
 
@@ -66,9 +66,17 @@ function leitorWindows() {
     ler() {
       const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(raiz, 'local', 'uso-windows.ps1')], { encoding: 'utf8', timeout: 30000 });
       if (r.error || r.status !== 0) return null;
-      try { return JSON.parse(r.stdout.trim().split(/\r?\n/).pop()); } catch { return null; }
+      return lerSaida(r.stdout);
     },
   };
+}
+
+// Interpreta o que o uso-windows.ps1 imprimiu (a última linha é o JSON). Texto estranho vira null.
+function lerSaida(texto) {
+  try {
+    const l = JSON.parse(String(texto).trim().split(/\r?\n/).pop());
+    return l && typeof l === 'object' ? l : null;
+  } catch { return null; }
 }
 
 // Leitor para testes: devolve as leituras da lista, na ordem (a última se repete).
@@ -100,7 +108,7 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
   };
 }
 
-module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, leitorSimulado, modoAtual, criarControle };
+module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, leitorSimulado, modoAtual, criarControle };
 
 if (require.main === module) {
   const i = process.argv.indexOf('--modo');

@@ -12,7 +12,7 @@ const escada = require(path.join(RAIZ, "orquestra", "escada.js"));
 const modos = JSON.parse(fs.readFileSync(path.join(RAIZ, "local", "modos.json"), "utf8"));
 const config = JSON.parse(fs.readFileSync(path.join(RAIZ, "orquestra", "paralelismo.json"), "utf8"));
 
-const PARADO = { ociosoSegundos: 600, gpuOutrosPct: 2, cpuOutrosPct: 5, videoTocando: false, memoriaLivreGB: 6 };
+const PARADO = { ociosoSegundos: 600, gpuOutrosPct: 2, cpuOutrosPct: 5, videoDecodePct: 0, memoriaLivreGB: 6 };
 const decide = (leitura, modo, anterior, agora) => par.decidir({ leitura, modo, anterior, agora, modos, config, memoriaMinimaGB: 2 });
 
 test("usando o PC (mexeu há pouco, placa ou processador ocupados, vídeo, leitura faltando) o alvo é 1", () => {
@@ -20,7 +20,8 @@ test("usando o PC (mexeu há pouco, placa ou processador ocupados, vídeo, leitu
     [{ ...PARADO, ociosoSegundos: 10 }, /mexeu no PC/],
     [{ ...PARADO, gpuOutrosPct: 80 }, /placa/],
     [{ ...PARADO, cpuOutrosPct: 90 }, /processador/],
-    [{ ...PARADO, videoTocando: true }, /vídeo/],
+    [{ ...PARADO, videoDecodePct: 18.5 }, /vídeo/],
+    [{ ...PARADO, videoDecodePct: null }, /indisponível/],
     [null, /indisponível/],
     [{ ...PARADO, memoriaLivreGB: undefined }, /indisponível/],
   ];
@@ -79,6 +80,21 @@ test("se a memória livre cai no meio do caminho, o alvo desce para o que cabe",
   const d = decide({ ...PARADO, memoriaLivreGB: 2.6 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
   assert.strictEqual(d.alvo, 1);
   assert.match(d.motivo, /memoria/);
+});
+
+test("a saída do uso-windows.ps1 vira leitura: JSON na última linha, vídeo medido pelo decodificador, lixo vira null (= usando o PC)", () => {
+  const saida = JSON.stringify({ ociosoSegundos: 700, gpuOutrosPct: 1.5, cpuOutrosPct: 4, videoDecodePct: 0, memoriaLivreGB: 5.2 });
+  const parado = par.lerSaida(`aviso qualquer\r\n${saida}\r\n`);
+  assert.strictEqual(decide(parado, "noite", { alvo: 2, subiuEm: 0 }, 1e6).alvo, 3);
+  const comVideo = par.lerSaida(saida.replace('"videoDecodePct":0', '"videoDecodePct":23.4'));
+  const d = decide(comVideo, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
+  assert.strictEqual(d.alvo, 1);
+  assert.match(d.motivo, /23\.4%/);
+  const semContador = par.lerSaida(saida.replace('"videoDecodePct":0', '"videoDecodePct":null'));
+  assert.match(decide(semContador, "noite", null, 0).motivo, /indisponível/);
+  assert.strictEqual(par.lerSaida("erro: nada"), null);
+  assert.strictEqual(par.lerSaida(""), null);
+  assert.strictEqual(par.lerSaida("123"), null);
 });
 
 test("o controle lê o PC, guarda o estado em arquivo, reaproveita leitura recente e avisa só quando muda", () => {
@@ -140,7 +156,9 @@ test("o modo.ps1 liga o paralelismo do Ollama pelo modo e guarda o modo ligado; 
   assert.ok(modo.indexOf("mixai-modo.txt") > modo.indexOf("criar-apelido.ps1"), "só guarda o modo depois de criar o mixai-local");
   for (const m of Object.values(modos)) assert.ok(Number.isInteger(m.agentesMax) && m.agentesMax >= 1);
   const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
-  for (const campo of ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoTocando", "memoriaLivreGB"]) assert.ok(uso.includes(campo), campo);
+  for (const campo of ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoDecodePct", "memoriaLivreGB"]) assert.ok(uso.includes(campo), campo);
+  assert.match(uso, /VideoDecode/);
+  assert.doesNotMatch(uso, /powercfg/, "powercfg /requests exige administrador");
   assert.match(uso, /ConvertTo-Json/);
 });
 
