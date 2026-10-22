@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const RAIZ = path.resolve(__dirname, "..");
+const matarReal = (f) => escada.matarArvore(f);
 const par = require(path.join(RAIZ, "orquestra", "paralelismo.js"));
 const escada = require(path.join(RAIZ, "orquestra", "escada.js"));
 const modos = JSON.parse(fs.readFileSync(path.join(RAIZ, "local", "modos.json"), "utf8"));
@@ -463,23 +464,69 @@ test("uma única microtarefa rodando é reavaliada: se o teto cai para 0 ela é 
   assert.deepStrictEqual(violacoes, []);
 });
 
-test("matarArvore no Windows repete o taskkill, aceita 'já não existe' e, se falhar, avisa e devolve false (a vaga segue ocupada até o processo fechar)", () => {
-  const filho = { pid: 123, kill: () => { filho.mortoSo = true; } };
+test("matarArvore no Windows: tira a foto da árvore, só dá por morta quando CADA pid sumiu (128 do taskkill não prova nada), mata os que sobram um a um", () => {
+  const tabela = "100,1\n200,100\n300,200\n400,1\n";
   const chamadas = [];
-  const seguidos = (...status) => (cmd, args) => { chamadas.push([cmd, ...args]); return { status: status[Math.min(chamadas.length - 1, status.length - 1)] }; };
-  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: seguidos(1, 1, 0) }), true);
-  assert.strictEqual(chamadas.length, 3);
-  assert.deepStrictEqual(chamadas[0], ["taskkill", "/pid", "123", "/T", "/F"]);
-  chamadas.length = 0;
-  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: seguidos(128) }), true, "128 = já não existe");
-  chamadas.length = 0;
+  const vivos = new Set([100, 200, 300]);
+  const executar = (cmd, args) => {
+    chamadas.push([cmd, ...args]);
+    if (cmd === "powershell") return { status: 0, stdout: tabela };
+    if (args.includes("/T")) { vivos.delete(100); return { status: 128 }; } // só o shell morreu; 200 e 300 ficaram órfãos
+    vivos.delete(Number(args[1]));
+    return { status: 0 };
+  };
+  const filho = { pid: 100 };
+  assert.deepStrictEqual(escada.arvoreDe(100, executar), [100, 200, 300]);
+  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar, vivo: (p) => vivos.has(p) }), true);
+  assert.deepStrictEqual([...vivos], [], "os descendentes órfãos foram mortos um a um");
+  assert.ok(chamadas.some((c) => c[0] === "taskkill" && c[2] === "200" && c.includes("/F") && !c.includes("/T")));
+  // status 128 sem foto da árvore (PowerShell falhou) não vale como prova
+  const semFoto = (cmd, args) => (cmd === "powershell" ? { status: 1 } : { status: 128 });
+  assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: semFoto, vivo: () => false }), false);
+  assert.strictEqual(escada.matarArvore({ pid: 5 }, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 1 } : { status: 0 }), vivo: () => false }), true, "código 0 do taskkill /T vale quando não há foto");
+  // descendente que não morre: falha, avisa, e não mata só o processo principal
+  const teimoso = { pid: 100, kill: () => { teimoso.mortoSo = true; } };
   const err = console.error; const avisos = []; console.error = (m) => avisos.push(m);
   try {
-    assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: () => ({ status: 1 }) }), false);
+    assert.strictEqual(escada.matarArvore(teimoso, { plataforma: "win32", executar: (cmd) => (cmd === "powershell" ? { status: 0, stdout: tabela } : { status: 0 }), vivo: (p) => p === 300, tentativas: 2 }), false);
   } finally { console.error = err; }
-  assert.ok(!filho.mortoSo, "não mata só o processo principal (o close pareceria um fim limpo com descendentes vivos)");
+  assert.ok(!teimoso.mortoSo);
   assert.match(avisos[0], /não consegui matar/);
-  assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: () => ({ error: new Error("sem taskkill") }), tentativas: 1 }), false);
+});
+
+test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node consegue terminar (não fica pendurado)", async () => {
+  const { spawnSync } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "largar-"));
+  const script = path.join(dir, "s.js");
+  fs.writeFileSync(script, `
+    const escada = require(${JSON.stringify(path.join(__dirname, "..", "orquestra", "escada.js"))});
+    const ctl = new AbortController();
+    const comando = '"' + process.execPath + '" -e "setTimeout(()=>{},20000)"';
+    escada.chamarComando(comando, { matar: () => false, reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal)
+      .catch((e) => console.log(e.naoConfirmado ? "naoConfirmado" : "outro"));
+    setTimeout(() => ctl.abort(), 100);
+  `);
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 15000 });
+  assert.strictEqual(r.stdout.trim(), "naoConfirmado");
+  assert.ok(Date.now() - t0 < 10000, `o Node terminou sozinho (${Date.now() - t0} ms)`);
+});
+
+test("o tempo máximo mata a árvore pelo mesmo caminho (matar), não só o shell", async () => {
+  let mortes = 0;
+  const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
+  const chamada = escada.chamarComando(comando, { tempoMaximoMs: 200, matar: (f) => { mortes += 1; return matarReal(f); } })("x");
+  await assert.rejects(chamada, /tempo máximo/);
+  assert.strictEqual(mortes, 1);
+});
+
+test("durante a conferência da resposta (depois que o modelo local terminou) a microtarefa não ocupa vaga: outra começa no local", async () => {
+  const eventos = [];
+  const local = (prompt) => { eventos.push(`local ${prompt.includes("contexto de a") ? "a" : "b"}`); return "ok"; };
+  const verificadorDe = (m) => async (saida) => { if (m.id === "a") { eventos.push("conferindo a"); await new Promise((r) => setTimeout(r, 200)); eventos.push("a conferida"); } return { ok: saida === "ok" }; };
+  const r = await escada.lote({ microtarefas: ["a", "b"].map(microDe), verificadorDe, paralelismo: 1, arquivos: arquivosTemp(), agentes: { local, superiores: [] } });
+  assert.ok(r.every((x) => x.ok), JSON.stringify(r));
+  assert.ok(eventos.indexOf("local b") < eventos.indexOf("a conferida"), eventos.join(" | "));
 });
 
 test("estado salvo de uma execução antiga expira: um lote novo não herda o alvo antigo", () => {

@@ -163,33 +163,57 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   return { ok: true, resolvidoPor: nome, saida, regrasUsadas: ids, regraSalva };
 }
 
-// Mata o processo e os filhos dele. No Windows usa `taskkill /T /F`, repetido se falhar (código 128 = já não existe);
-// se não conseguir, avisa e mata ao menos o processo principal. Nunca declara que morreu: quem espera é o 'close'
-// do processo, então a vaga só é liberada quando ele realmente terminou. `executar` existe para os testes.
-function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3 } = {}) {
+// Pids do processo e de todos os descendentes (uma foto tirada ENQUANTO o processo principal ainda existe), pelo
+// PowerShell. `null` se não deu para ler. É a única forma de saber, depois, se algum descendente ficou vivo: o
+// `taskkill /T` só acha filhos pelo pai, e um descendente cujo pai já morreu fica órfão e não é mais encontrado.
+function arvoreDe(pid, executar = spawnSync) {
+  const r = executar('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }'], { encoding: 'utf8' });
+  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
+  const filhos = new Map();
+  for (const linha of r.stdout.split(/\r?\n/)) {
+    const m = /^(\d+),(\d+)$/.exec(linha.trim());
+    if (m) filhos.set(Number(m[2]), [...(filhos.get(Number(m[2])) || []), Number(m[1])]);
+  }
+  const todos = [pid];
+  for (let i = 0; i < todos.length; i++) for (const f of filhos.get(todos[i]) || []) if (!todos.includes(f)) todos.push(f);
+  return todos;
+}
+
+// Mata o processo e os filhos dele. No Windows tira antes uma foto da árvore, roda `taskkill /T /F` e só dá por morta
+// quando CADA pid da foto não existe mais (o código 128 do taskkill só diz que o pid do shell sumiu, não que os
+// descendentes morreram); os que sobrarem levam `taskkill /F` um a um. Sem a foto (PowerShell falhou), só o código 0
+// vale. Se não conseguir, devolve false e NÃO mata só o processo principal. `executar` e `vivo` existem para os testes.
+function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3, vivo = processoVivoNoSistema } = {}) {
   if (plataforma === 'win32') {
+    if (filho.arvore === undefined) filho.arvore = arvoreDe(filho.pid, executar);
     for (let i = 0; i < tentativas; i++) {
       const r = executar('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
-      if (!r.error && (r.status === 0 || r.status === 128)) return true;
+      if (filho.arvore) {
+        for (const p of filho.arvore.filter(vivo)) executar('taskkill', ['/pid', String(p), '/F']);
+        if (filho.arvore.every((p) => !vivo(p))) return true;
+      } else if (!r.error && r.status === 0) return true;
     }
     console.error(`não consegui matar a árvore do processo ${filho.pid} (taskkill falhou ${tentativas} vezes); o lote vai parar se não conseguir`);
-    // Não mata só o processo principal: isso faria o 'close' parecer um fim limpo com os descendentes ainda vivos.
     return false;
   }
   try { process.kill(-filho.pid, 'SIGKILL'); } catch { try { filho.kill('SIGKILL'); } catch { /* já morreu */ } }
   return true;
 }
+const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tentativasDeMatar = 5 } = {}) {
+function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
   // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
   // reduzir agentes locais quando o dono volta a usar o PC. Se a árvore não morrer (taskkill falhando), repete a
   // cada `reintentoMs`; esgotadas as tentativas, a chamada termina com erro `naoConfirmado`: o processo pode
   // continuar vivo, e quem chamou (o lote) não deve reaproveitar a vaga nem o escopo.
   return (prompt, signal) => new Promise((resolve, reject) => {
-    const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS, detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
+    const filho = spawn(comando, { shell: true, detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
     let terminou = false;
     let relogio = null;
-    const fim = (f, valor) => { if (terminou) return; terminou = true; clearInterval(relogio); f(valor); };
+    let estourou = false;
+    const fim = (f, valor) => { if (terminou) return; terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo); f(valor); };
+    // Morte não confirmada: larga o processo (pipes fechados e sem segurar o Node), senão o comando nunca termina.
+    const largar = () => { for (const f of [filho.stdin, filho.stdout, filho.stderr]) { try { f.destroy(); } catch { /* já fechado */ } } try { filho.unref(); } catch { /* sem efeito */ } };
     const parar = () => {
       if (matar(filho)) return;
       let feitas = 1;
@@ -197,8 +221,11 @@ function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tenta
         if (terminou) return clearInterval(relogio);
         if (matar(filho)) return clearInterval(relogio);
         if (++feitas >= tentativasDeMatar) fim(reject, Object.assign(new Error(`o processo ${filho.pid} não morreu (taskkill falhou ${feitas} vezes); pode continuar vivo`), { naoConfirmado: true }));
+        if (terminou) largar();
       }, reintentoMs);
     };
+    // O tempo máximo também mata a árvore pelo mesmo caminho (o `timeout` do spawn mataria só o shell).
+    const limiteDeTempo = setTimeout(() => { estourou = true; parar(); }, tempoMaximoMs);
     if (signal) {
       if (signal.aborted) parar();
       else signal.addEventListener('abort', parar, { once: true });
@@ -209,7 +236,7 @@ function chamarComando(comando, { matar = matarArvore, reintentoMs = 2000, tenta
     filho.stdout.on('data', (d) => { saida += d; });
     filho.stderr.on('data', (d) => { erro += d; });
     filho.on('error', (e) => fim(reject, e));
-    filho.on('close', (codigo) => (codigo === 0 ? fim(resolve, saida) : fim(reject, new Error(erro || `saiu com ${codigo}`))));
+    filho.on('close', (codigo) => (codigo === 0 ? fim(resolve, saida) : fim(reject, new Error(estourou ? `passou do tempo máximo (${tempoMaximoMs / 1000} s)` : erro || `saiu com ${codigo}`))));
     filho.stdin.on('error', () => {});
     filho.stdin.end(prompt);
   });
@@ -365,8 +392,8 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
   const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
   let fatal = null; // processo abortado que não deu para confirmar que morreu: o lote inteiro para com erro claro
   const encerrando = []; // { m, fim }: abortadas cujo processo ainda não confirmou que morreu; a vaga e o escopo seguem ocupados
-  // A vaga é de agente LOCAL: quem já subiu para o Codex/Claude (`emSuperior`) não usa o modelo local nem a placa e não conta.
-  const locais = () => [...rodando.keys()].filter((m) => !estados.get(m).emSuperior);
+  // A vaga é de agente LOCAL: quem já subiu para o Codex/Claude (`ocupa` falso: subiu, ou está só conferindo a resposta) não usa o modelo local nem a placa e não conta.
+  const locais = () => [...rodando.keys()].filter((m) => estados.get(m).ocupa);
   limiteAgora(); // recusa cedo um limite inválido
   let acordaLoop;
   let mudanca = new Promise((ok) => { acordaLoop = ok; });
@@ -407,11 +434,11 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
-      const e = { ctl: new AbortController(), abandonada: false, emLocal: false, emSuperior: false, fim: null };
+      const e = { ctl: new AbortController(), abandonada: false, emLocal: false, ocupa: true, fim: null };
       estados.set(m, e);
       const agentesDaMicro = {
         ...agentes,
-        superiores: (agentes.superiores || []).map((sup) => ({ ...sup, chamar: (...a) => { if (!e.emSuperior) { e.emSuperior = true; avisarMudanca(); } return sup.chamar(...a); } })),
+        superiores: (agentes.superiores || []).map((sup) => ({ ...sup, chamar: (...a) => { if (e.ocupa) { e.ocupa = false; avisarMudanca(); } return sup.chamar(...a); } })),
         local: async (prompt) => {
           // Voltando do Codex/Claude (ou começando), só entra no local quando houver vaga dentro do limite.
           const outros = () => locais().filter((m) => estados.get(m) !== e).length;
@@ -423,14 +450,14 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
           return new Promise((ok, no) => {
           if (e.abandonada || fatal) return;
           e.emLocal = true;
-          e.emSuperior = false; // voltou ao local (por exemplo depois de uma dica do Codex): ocupa vaga de novo
+          e.ocupa = true; // (re)entrou no local: ocupa vaga
           // Cada chamada ao local (1ª tentativa, 2ª, correção...) tem o seu próprio fim: abortar a segunda não pode
           // olhar o fim da primeira, que já passou.
           let liberar;
           e.fim = new Promise((fimOk) => { liberar = fimOk; });
           Promise.resolve().then(() => agentes.local(prompt, e.ctl.signal)).then(
-            (r) => { e.emLocal = false; liberar(); if (!e.abandonada) ok(r); },
-            (erro) => { e.emLocal = false; if (erro?.naoConfirmado) e.preso = true; liberar(); if (!e.abandonada) no(erro); },
+            (r) => { e.emLocal = false; e.ocupa = false; avisarMudanca(); liberar(); if (!e.abandonada) ok(r); },
+            (erro) => { e.emLocal = false; e.ocupa = false; avisarMudanca(); if (erro?.naoConfirmado) e.preso = true; liberar(); if (!e.abandonada) no(erro); },
           );
           });
         },
@@ -522,7 +549,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, matarArvore, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, matarArvore, arvoreDe, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
