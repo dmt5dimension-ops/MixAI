@@ -31,12 +31,13 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - `local/vigia-prioridade.ps1` — Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)
 - `orquestra/aplicar.js`
   - `normalizar` (linha 4)
-  - `entradasDoEscopo` (linha 14)
-  - `permitido` (linha 26)
-  - `conferirAlterados` (linha 34)
-  - `dentroDaRaiz` (linha 39)
-  - `caminhoComCaixaExistente` (linha 44)
-  - `aplicarResposta` (linha 64)
+  - `entradasDoEscopo` (linha 19)
+  - `comparar` (linha 31)
+  - `permitido` (linha 35)
+  - `conferirAlterados` (linha 43)
+  - `dentroDaRaiz` (linha 48)
+  - `caminhoComCaixaExistente` (linha 53)
+  - `aplicarResposta` (linha 73)
 - `orquestra/chamar.js`
   - `detectarLimite` (linha 10)
   - `limiteNaSaida` (linha 14)
@@ -168,5 +169,5 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) — `tests/escada.test.js`
 - Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) — `tests/escada.test.js`
 - Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) — `tests/escada.test.js`, `tests/falhas-escada.test.js`
-- Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo — `tests/aplicar.test.js`
+- Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar — `tests/aplicar.test.js`
 - Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) — `tests/mapa.test.js`
