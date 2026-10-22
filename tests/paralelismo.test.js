@@ -508,7 +508,9 @@ test("shell que fecha deixando um descendente sem pipe vivo: o descendente é mo
   assert.match(saida, /pronto/);
   const pid = Number(fs.readFileSync(marca, "utf8"));
   const estaVivo = () => { try { process.kill(pid, 0); } catch { return false; } try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; } };
-  assert.strictEqual(estaVivo(), false, "o descendente sem pipe foi morto ao fechar o shell");
+  let vivo = true;
+  for (let i = 0; i < 100 && vivo; i++) { vivo = estaVivo(); if (vivo) await new Promise((r) => setTimeout(r, 20)); } // o SIGKILL leva um instante para valer
+  assert.strictEqual(vivo, false, "o descendente sem pipe foi morto ao fechar o shell");
   // descendente que não morre: naoConfirmado
   const chamada = chamar(`echo oi`, { orfaos: () => [4242] })("x");
   await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /continuam vivos/.test(erro.message));
