@@ -1,6 +1,37 @@
 {
   "arquivos": [
     {
+      "arquivo": ".claude/hooks/canal.js",
+      "descricao": "Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:",
+      "funcoes": [
+        {
+          "nome": "ultimoAutor",
+          "linha": 11
+        },
+        {
+          "nome": "decidirParar",
+          "linha": 27
+        },
+        {
+          "nome": "fimDoCanal",
+          "linha": 36
+        },
+        {
+          "nome": "lerEntrada",
+          "linha": 40
+        },
+        {
+          "nome": "principal",
+          "linha": 44
+        }
+      ],
+      "exporta": [
+        "ultimoAutor",
+        "decidirParar",
+        "fimDoCanal"
+      ]
+    },
+    {
       "arquivo": "ferramentas/instalar.ps1",
       "descricao": "Instala as ferramentas do orquestrador no Windows 11.",
       "funcoes": [
@@ -296,35 +327,35 @@
         },
         {
           "nome": "validarPlano",
-          "linha": 286
+          "linha": 289
         },
         {
           "nome": "normaliza",
-          "linha": 300
+          "linha": 303
         },
         {
           "nome": "sobrepoe",
-          "linha": 301
+          "linha": 304
         },
         {
           "nome": "promptMicro",
-          "linha": 306
+          "linha": 309
         },
         {
           "nome": "lote",
-          "linha": 314
+          "linha": 317
         },
         {
           "nome": "exportar",
-          "linha": 341
+          "linha": 344
         },
         {
           "nome": "principal",
-          "linha": 348
+          "linha": 351
         },
         {
           "nome": "verificadorDe",
-          "linha": 360
+          "linha": 363
         }
       ],
       "exporta": [
@@ -503,6 +534,10 @@
         {
           "nome": "local",
           "linha": 407
+        },
+        {
+          "nome": "local",
+          "linha": 427
         }
       ],
       "exporta": []
@@ -533,6 +568,21 @@
         {
           "nome": "mudar",
           "linha": 54
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/hooks-canal.test.js",
+      "descricao": "Trava obrigatória do canal Claude↔Codex no Claude Code: hooks que mostram o canal ao começar a sessão",
+      "funcoes": [
+        {
+          "nome": "tmp",
+          "linha": 14
+        },
+        {
+          "nome": "doGit",
+          "linha": 80
         }
       ],
       "exporta": []
@@ -750,6 +800,18 @@
       ]
     },
     {
+      "o_que": "Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`)",
+      "testes": [
+        "tests/hooks-canal.test.js"
+      ]
+    },
+    {
+      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único)",
+      "testes": [
+        "tests/canal-coordenacao.test.js"
+      ]
+    },
+    {
       "o_que": "Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo`",
       "testes": [
         "tests/regras-locais.test.js"
@@ -759,12 +821,6 @@
       "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
       "testes": [
         "tests/preparar-repo.test.js"
-      ]
-    },
-    {
-      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md`",
-      "testes": [
-        "tests/canal-coordenacao.test.js"
       ]
     },
     {
@@ -788,6 +844,18 @@
     },
     {
       "o_que": "Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar",
+      "testes": [
+        "tests/aplicar.test.js"
+      ]
+    },
+    {
+      "o_que": "Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto",
+      "testes": [
+        "tests/escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo",
       "testes": [
         "tests/aplicar.test.js"
       ]
