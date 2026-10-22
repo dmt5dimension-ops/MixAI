@@ -392,3 +392,43 @@ test("o grafo real é lido sem erro e o escopo da etapa 6 inclui o .gitignore", 
   const g = grafo.carregar(path.join(RAIZ, "orquestra", "grafo.json"));
   assert.ok(g.tarefas.etapa6.escopo.includes(".gitignore"));
 });
+
+test("status sai com código 1 quando a validação acusa erro, e 0 quando está tudo certo", () => {
+  const { spawnSync } = require("node:child_process");
+  const arq = tmp();
+  const cli = (...a) => spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), ...a, "--arquivo", arq], { encoding: "utf8" });
+  assert.strictEqual(cli("status").status, 0);
+  let g = grafo.novo();
+  g = grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["src/a.js"] }, AGORA);
+  g = grafo.adicionar(g, { id: "b", titulo: "B", escopo: ["src"] }, AGORA);
+  g.tarefas.a.estado = "em_andamento";
+  g.tarefas.b.estado = "em_andamento";
+  grafo.salvar(arq, g);
+  const r = cli("status");
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /erro: escopo sobreposto/);
+});
+
+test("etapa 4 do grafo real não está feita enquanto o PR #16 não entrou (dependentes não são liberados antes da hora)", () => {
+  const g = grafo.carregar(path.join(RAIZ, "orquestra", "grafo.json"));
+  assert.notStrictEqual(g.tarefas.etapa4.estado, "feita");
+});
+
+test("geração criada atrasada (lista velha depois da limpeza de outro processo) solta a sua e tenta de novo, sem falhar", () => {
+  const arq = tmp();
+  // gerações 1 e 3 existem; a 2 foi apagada: quem listou [1] cria a 2 (nasce atrasada, pois a 3 existe) e deve seguir para a 4
+  fs.writeFileSync(trava(arq, 1), "livre");
+  fs.writeFileSync(trava(arq, 3), "livre");
+  const real = fs.readdirSync;
+  let primeira = true;
+  fs.readdirSync = (d, ...resto) => {
+    const todos = real(d, ...resto);
+    if (primeira && String(d) === path.dirname(arq)) { primeira = false; return todos.filter((f) => !f.endsWith("0003")); }
+    return todos;
+  };
+  try {
+    grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A", escopo: ["x"] }, AGORA));
+  } finally { fs.readdirSync = real; }
+  assert.ok("a" in grafo.carregar(arq).tarefas);
+  assert.ok(travas(arq).some((f) => f.endsWith("0004")));
+});

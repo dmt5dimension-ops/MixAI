@@ -379,71 +379,71 @@
         },
         {
           "nome": "pegar",
-          "linha": 159
-        },
-        {
-          "nome": "adicionar",
           "linha": 165
         },
         {
+          "nome": "adicionar",
+          "linha": 171
+        },
+        {
           "nome": "feita",
-          "linha": 184
+          "linha": 190
         },
         {
           "nome": "prontas",
-          "linha": 186
+          "linha": 192
         },
         {
           "nome": "travadas",
-          "linha": 191
+          "linha": 197
         },
         {
           "nome": "mudar",
-          "linha": 201
-        },
-        {
-          "nome": "iniciar",
           "linha": 207
         },
         {
+          "nome": "iniciar",
+          "linha": 213
+        },
+        {
           "nome": "revisar",
-          "linha": 215
+          "linha": 221
         },
         {
           "nome": "devolver",
-          "linha": 222
+          "linha": 228
         },
         {
           "nome": "concluir",
-          "linha": 231
-        },
-        {
-          "nome": "falhar",
           "linha": 237
         },
         {
-          "nome": "validar",
-          "linha": 244
+          "nome": "falhar",
+          "linha": 243
         },
         {
-          "nome": "visita",
+          "nome": "validar",
           "linha": 250
         },
         {
+          "nome": "visita",
+          "linha": 256
+        },
+        {
           "nome": "resumo",
-          "linha": 269
+          "linha": 275
         },
         {
           "nome": "opcao",
-          "linha": 276
+          "linha": 282
         },
         {
           "nome": "principal",
-          "linha": 284
+          "linha": 290
         },
         {
           "nome": "virgulas",
-          "linha": 286
+          "linha": 292
         }
       ],
       "exporta": [
@@ -690,6 +690,10 @@
         {
           "nome": "rodar",
           "linha": 355
+        },
+        {
+          "nome": "cli",
+          "linha": 399
         }
       ],
       "exporta": []

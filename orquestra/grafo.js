@@ -132,7 +132,13 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     const todas = geracoes();
     const maior = todas.length ? todas[todas.length - 1] : 0;
     if (maior === 0 || solta(maior)) {
-      if (criar(nome(maior + 1))) { minha = maior + 1; break; }
+      if (criar(nome(maior + 1))) {
+        // A lista pode ter ficado velha (a limpeza de outro processo apagou gerações no meio): se já existe uma geração
+        // maior, a minha nasceu atrasada. Solta e olha de novo, em vez de falhar só no fim da operação.
+        if (!geracoes().some((n) => n > maior + 1)) { minha = maior + 1; break; }
+        try { comRetentativa(() => fs.writeFileSync(nome(maior + 1), 'livre')); } catch { /* fica com o dono; vira solta se ele morrer */ }
+        continue;
+      }
       if (Date.now() > limite) throw new Error(`grafo travado: não consegui criar ${nome(maior + 1)}`);
       esperar(5);
       continue; // outro criou esta geração primeiro (ou o Windows está ocupado): olha de novo
@@ -307,7 +313,9 @@ function principal(args) {
   } else if (cmd === 'status') {
     for (const [e, n] of Object.entries(resumo(g))) console.log(`${e}: ${n}`);
     for (const t of travadas(g)) console.log(`travada: ${t.id}`);
-    for (const e of validar(g)) console.log(`erro: ${e}`);
+    const erros = validar(g);
+    for (const e of erros) console.log(`erro: ${e}`);
+    if (erros.length) return 1;
   } else {
     console.error('Uso: node orquestra/grafo.js add <id> <título> [--agente a] [--depende x,y] [--escopo f,g] [--verificar cmd] | iniciar <id> <agente> | revisar <id> [resultado] | devolver <id> [motivo] | concluir <id> [resultado] | falhar <id> [motivo] | proximas | status [--arquivo f]');
     return 1;
