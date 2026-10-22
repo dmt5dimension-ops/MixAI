@@ -48,6 +48,12 @@ jobs:
             pip install pytest
           fi
 
+      - name: Gerar mapa local
+        if: hashFiles('orquestra/mapa.js') != ''
+        run: |
+          node orquestra/mapa.js gerar
+          node orquestra/mapa.js conferir
+
       - name: Suite de regressao
         env:
           REGRESSION_CMD: ${{ vars.REGRESSION_CMD }}
