@@ -254,35 +254,35 @@
         },
         {
           "nome": "validarPlano",
-          "linha": 286
+          "linha": 289
         },
         {
           "nome": "normaliza",
-          "linha": 300
+          "linha": 303
         },
         {
           "nome": "sobrepoe",
-          "linha": 301
+          "linha": 304
         },
         {
           "nome": "promptMicro",
-          "linha": 306
+          "linha": 309
         },
         {
           "nome": "lote",
-          "linha": 314
+          "linha": 317
         },
         {
           "nome": "exportar",
-          "linha": 341
+          "linha": 344
         },
         {
           "nome": "principal",
-          "linha": 348
+          "linha": 351
         },
         {
           "nome": "verificadorDe",
-          "linha": 360
+          "linha": 363
         }
       ],
       "exporta": [
@@ -450,6 +450,10 @@
         {
           "nome": "local",
           "linha": 407
+        },
+        {
+          "nome": "local",
+          "linha": 427
         }
       ],
       "exporta": []
@@ -731,6 +735,12 @@
       "testes": [
         "tests/escada.test.js",
         "tests/falhas-escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto",
+      "testes": [
+        "tests/escada.test.js"
       ]
     },
     {
