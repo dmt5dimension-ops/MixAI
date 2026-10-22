@@ -38,9 +38,7 @@ $arquivoVigia = Join-Path $env:TEMP 'mixai-vigia.pid'
 if (Test-Path $arquivoVigia) {
   Stop-Process -Id (Get-Content $arquivoVigia) -Force -ErrorAction SilentlyContinue
 }
-$vigia = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'vigia-prioridade.ps1'),
-  '-Prioridade', $config.prioridade)
+$vigia = & (Join-Path $PSScriptRoot 'iniciar-vigia.ps1') -ScriptVigia (Join-Path $PSScriptRoot 'vigia-prioridade.ps1') -Prioridade $config.prioridade
 Set-Content $arquivoVigia $vigia.Id
 Get-Process 'ollama', 'ollama app' -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = $config.prioridade }
 
