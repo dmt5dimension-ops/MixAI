@@ -156,6 +156,34 @@ test("o tempo de espera vale mesmo com a trava sumindo e voltando", () => {
   assert.ok(Date.now() - t0 < 3000);
 });
 
+test("trava de dono vivo nunca é tirada, mesmo velha; a de dono morto cai na hora", () => {
+  const { spawnSync, spawn } = require("node:child_process");
+  const arq = tmp();
+  const script = (espera) => `const g=require(${JSON.stringify(path.join(RAIZ, "orquestra", "grafo.js"))});g.atualizar(${JSON.stringify(arq)},(x)=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,${espera});return g.adicionar(x,{id:"lento",titulo:"L"})});`;
+  return new Promise((ok, falha) => {
+    const filho = spawn(process.execPath, ["-e", script(2000)]);
+    const t0 = Date.now();
+    const espera = setInterval(() => {
+      if (!fs.existsSync(arq + ".lock") && Date.now() - t0 < 5000) return;
+      clearInterval(espera);
+      try {
+        // trava do filho (vivo) é considerada velha demais (1 ms), e mesmo assim não pode ser tirada
+        grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "pai", titulo: "P" }, AGORA), { velhaMs: 1, esperaMs: 8000 });
+        assert.ok(Date.now() - t0 >= 1500, "esperou o dono vivo terminar");
+        assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ["lento", "pai"]);
+        // dono morto: o pid de um processo que já terminou
+        const pidMorto = spawnSync(process.execPath, ["-e", "console.log(process.pid)"], { encoding: "utf8" }).stdout.trim();
+        fs.writeFileSync(arq + ".lock", `${pidMorto}:abc`);
+        const t1 = Date.now();
+        grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "depois", titulo: "D" }, AGORA), { esperaMs: 3000 });
+        assert.ok(Date.now() - t1 < 2000, "trava de dono morto cai na hora, sem esperar a idade");
+        assert.ok("depois" in grafo.carregar(arq).tarefas);
+        ok();
+      } catch (erro) { falha(erro); }
+    }, 20);
+  });
+});
+
 test("adicionar recusa dependência que criaria ciclo", () => {
   let g = exemplo();
   assert.throws(() => grafo.adicionar(g, { id: "d", titulo: "x", depende: ["d"] }, AGORA), /ciclo/);

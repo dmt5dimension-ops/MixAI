@@ -330,76 +330,88 @@
           "linha": 41
         },
         {
+          "nome": "processoVivo",
+          "linha": 45
+        },
+        {
           "nome": "atualizar",
-          "linha": 49
-        },
-        {
-          "nome": "idade",
-          "linha": 55
-        },
-        {
-          "nome": "criar",
           "linha": 56
         },
         {
+          "nome": "idade",
+          "linha": 62
+        },
+        {
+          "nome": "ler",
+          "linha": 63
+        },
+        {
+          "nome": "criar",
+          "linha": 64
+        },
+        {
+          "nome": "velha",
+          "linha": 70
+        },
+        {
           "nome": "pegar",
-          "linha": 93
+          "linha": 105
         },
         {
           "nome": "adicionar",
-          "linha": 99
+          "linha": 111
         },
         {
           "nome": "feita",
-          "linha": 116
+          "linha": 128
         },
         {
           "nome": "prontas",
-          "linha": 118
+          "linha": 130
         },
         {
           "nome": "travadas",
-          "linha": 123
+          "linha": 135
         },
         {
           "nome": "mudar",
-          "linha": 133
+          "linha": 145
         },
         {
           "nome": "iniciar",
-          "linha": 139
+          "linha": 151
         },
         {
           "nome": "concluir",
-          "linha": 146
+          "linha": 158
         },
         {
           "nome": "falhar",
-          "linha": 152
+          "linha": 164
         },
         {
           "nome": "validar",
-          "linha": 159
+          "linha": 171
         },
         {
           "nome": "visita",
-          "linha": 165
+          "linha": 177
         },
         {
           "nome": "resumo",
-          "linha": 184
+          "linha": 196
         },
         {
           "nome": "opcao",
-          "linha": 190
+          "linha": 202
         },
         {
           "nome": "principal",
-          "linha": 195
+          "linha": 207
         },
         {
           "nome": "virgulas",
-          "linha": 197
+          "linha": 209
         }
       ],
       "exporta": [
@@ -609,8 +621,12 @@
           "linha": 129
         },
         {
+          "nome": "script",
+          "linha": 162
+        },
+        {
           "nome": "cli",
-          "linha": 178
+          "linha": 206
         }
       ],
       "exporta": []

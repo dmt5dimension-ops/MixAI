@@ -42,32 +42,46 @@ function esperar(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function processoVivo(pid) {
+  try { process.kill(pid, 0); return true; } catch (erro) { return erro.code === 'EPERM'; }
+}
+
 // Lê, muda e grava o grafo com o arquivo trancado, para o supervisor e a escada não se atropelarem.
-// A trava é um arquivo `.lock` criado com 'wx' (só um processo consegue) e com o código do dono dentro.
-// Trava velha (dono morreu) só é removida por quem segura a `.limpeza`, e só depois de conferir de novo
-// que ela continua velha; assim dois processos nunca apagam a trava nova um do outro.
+// A trava é um arquivo `.lock` criado com 'wx' (só um processo consegue), com `pid:código` dentro.
+// Trava de dono VIVO nunca é tirada, por mais tempo que demore (a mudança é feita sem pausa e não dá para
+// "renovar" no meio dela); só cai a trava de dono que morreu, ou, se o conteúdo não for de um processo,
+// a que passou de `velhaMs`. Quem remove a trava velha segura a `.limpeza`, então só um processo por vez
+// mexe nela, e o dono morto não pode soltá-la nem recriá-la no meio da conferência.
+// Antes de gravar, confere que a trava ainda é sua; se não for, não grava.
 function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {}) {
   const trava = `${arquivo}.lock`;
   const limpeza = `${arquivo}.limpeza`;
-  const dono = `${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const dono = `${process.pid}:${Math.random().toString(36).slice(2)}`;
   fs.mkdirSync(path.dirname(arquivo), { recursive: true });
   const limite = Date.now() + esperaMs;
   const idade = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return null; } };
+  const ler = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
   const criar = (f) => {
     try { fs.writeFileSync(f, dono, { flag: 'wx' }); return true; } catch (erro) {
       if (erro.code === 'EEXIST') return false;
       throw erro;
     }
   };
+  const velha = (f) => {
+    const texto = ler(f);
+    if (texto === null) return false;
+    const pid = /^(\d+):/.exec(texto);
+    if (pid) return !processoVivo(Number(pid[1]));
+    const i = idade(f);
+    return i !== null && i > velhaMs;
+  };
   while (!criar(trava)) {
     if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
-    const idadeTrava = idade(trava);
-    if (idadeTrava !== null && idadeTrava > velhaMs) {
+    if (velha(trava)) {
       if (idade(limpeza) > 10000) { try { fs.rmSync(limpeza); } catch { /* outro tirou */ } }
       if (criar(limpeza)) {
         try {
-          const de_novo = idade(trava);
-          if (de_novo !== null && de_novo > velhaMs) fs.rmSync(trava, { force: true });
+          if (velha(trava)) fs.rmSync(trava, { force: true });
         } finally {
           fs.rmSync(limpeza, { force: true });
         }
@@ -80,13 +94,11 @@ function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {})
     const novoGrafo = mudanca(carregar(arquivo));
     const erros = validar(novoGrafo);
     if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
-    let atual = null;
-    try { atual = fs.readFileSync(trava, 'utf8'); } catch { /* sem trava */ }
-    if (atual !== dono) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a removeu); nada foi gravado, tente de novo');
+    if (ler(trava) !== dono) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a removeu); nada foi gravado, tente de novo');
     salvar(arquivo, novoGrafo);
     return novoGrafo;
   } finally {
-    try { if (fs.readFileSync(trava, 'utf8') === dono) fs.rmSync(trava); } catch { /* já removida */ }
+    if (ler(trava) === dono) fs.rmSync(trava, { force: true });
   }
 }
 

@@ -72,4 +72,4 @@ node orquestra/escada.js lote plano.json --paralelo 2
 
 - Modelo grande: antes de ler arquivos, rode `node orquestra/mapa.js buscar <termo>` e abra só o trecho indicado.
 - Mudou código ou `estado.md`? Rode `gerar` de novo. `node orquestra/mapa.js conferir` sai com 1 se o mapa está velho, e `tests/mapa.test.js` faz a mesma conferência.
-- Quem altera o grafo usa sempre `atualizar` (a linha de comando já usa): ele tranca o arquivo (`grafo.json.lock`), relê, muda, valida e grava. Trava de processo morto (mais de 60 s) é removida por um só processo de cada vez; quem perder a trava no meio da operação não grava. `salvar` é só a gravação atômica de baixo nível, sem trava.
+- Quem altera o grafo usa sempre `atualizar` (a linha de comando já usa): ele tranca o arquivo (`grafo.json.lock`), relê, muda, valida e grava. A trava guarda o `pid` do dono: trava de dono vivo nunca é tirada (por mais que demore), a de dono morto cai na hora e é removida por um só processo de cada vez; quem perder a trava no meio da operação não grava. `salvar` é só a gravação atômica de baixo nível, sem trava.
