@@ -323,75 +323,83 @@
         },
         {
           "nome": "salvar",
-          "linha": 33
+          "linha": 34
         },
         {
           "nome": "esperar",
-          "linha": 40
+          "linha": 41
         },
         {
           "nome": "atualizar",
-          "linha": 45
+          "linha": 49
+        },
+        {
+          "nome": "idade",
+          "linha": 55
+        },
+        {
+          "nome": "criar",
+          "linha": 56
         },
         {
           "nome": "pegar",
-          "linha": 73
+          "linha": 93
         },
         {
           "nome": "adicionar",
-          "linha": 79
+          "linha": 99
         },
         {
           "nome": "feita",
-          "linha": 96
+          "linha": 116
         },
         {
           "nome": "prontas",
-          "linha": 98
+          "linha": 118
         },
         {
           "nome": "travadas",
-          "linha": 103
+          "linha": 123
         },
         {
           "nome": "mudar",
-          "linha": 113
+          "linha": 133
         },
         {
           "nome": "iniciar",
-          "linha": 119
-        },
-        {
-          "nome": "concluir",
-          "linha": 126
-        },
-        {
-          "nome": "falhar",
-          "linha": 132
-        },
-        {
-          "nome": "validar",
           "linha": 139
         },
         {
+          "nome": "concluir",
+          "linha": 146
+        },
+        {
+          "nome": "falhar",
+          "linha": 152
+        },
+        {
+          "nome": "validar",
+          "linha": 159
+        },
+        {
           "nome": "visita",
-          "linha": 145
+          "linha": 165
         },
         {
           "nome": "resumo",
-          "linha": 164
+          "linha": 184
         },
         {
           "nome": "opcao",
-          "linha": 170
+          "linha": 190
         },
         {
           "nome": "principal",
-          "linha": 175
+          "linha": 195
         },
         {
           "nome": "virgulas",
-          "linha": 177
+          "linha": 197
         }
       ],
       "exporta": [
@@ -597,8 +605,12 @@
           "linha": 117
         },
         {
+          "nome": "rodar",
+          "linha": 129
+        },
+        {
           "nome": "cli",
-          "linha": 141
+          "linha": 178
         }
       ],
       "exporta": []

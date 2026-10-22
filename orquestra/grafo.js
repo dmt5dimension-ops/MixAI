@@ -30,6 +30,7 @@ function carregar(arquivo = padrao) {
   }
 }
 
+// Gravação atômica, mas sem trava: para alterar um grafo que outros também usam, chame `atualizar`.
 function salvar(arquivo, g) {
   fs.mkdirSync(path.dirname(arquivo), { recursive: true });
   const temp = `${arquivo}.${process.pid}.tmp`;
@@ -42,31 +43,50 @@ function esperar(ms) {
 }
 
 // Lê, muda e grava o grafo com o arquivo trancado, para o supervisor e a escada não se atropelarem.
+// A trava é um arquivo `.lock` criado com 'wx' (só um processo consegue) e com o código do dono dentro.
+// Trava velha (dono morreu) só é removida por quem segura a `.limpeza`, e só depois de conferir de novo
+// que ela continua velha; assim dois processos nunca apagam a trava nova um do outro.
 function atualizar(arquivo, mudanca, { esperaMs = 10000, velhaMs = 60000 } = {}) {
   const trava = `${arquivo}.lock`;
+  const limpeza = `${arquivo}.limpeza`;
+  const dono = `${process.pid}-${Math.random().toString(36).slice(2)}`;
   fs.mkdirSync(path.dirname(arquivo), { recursive: true });
   const limite = Date.now() + esperaMs;
-  for (;;) {
-    try {
-      fs.closeSync(fs.openSync(trava, 'wx'));
-      break;
-    } catch (erro) {
-      if (erro.code !== 'EEXIST') throw erro;
-      let idade = 0;
-      try { idade = Date.now() - fs.statSync(trava).mtimeMs; } catch { continue; }
-      if (idade > velhaMs) { try { fs.rmSync(trava); } catch { /* outro processo já tirou */ } continue; }
-      if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
-      esperar(25);
+  const idade = (f) => { try { return Date.now() - fs.statSync(f).mtimeMs; } catch { return null; } };
+  const criar = (f) => {
+    try { fs.writeFileSync(f, dono, { flag: 'wx' }); return true; } catch (erro) {
+      if (erro.code === 'EEXIST') return false;
+      throw erro;
     }
+  };
+  while (!criar(trava)) {
+    if (Date.now() > limite) throw new Error(`grafo travado por outro processo (${trava}); se ninguém está usando, apague esse arquivo`);
+    const idadeTrava = idade(trava);
+    if (idadeTrava !== null && idadeTrava > velhaMs) {
+      if (idade(limpeza) > 10000) { try { fs.rmSync(limpeza); } catch { /* outro tirou */ } }
+      if (criar(limpeza)) {
+        try {
+          const de_novo = idade(trava);
+          if (de_novo !== null && de_novo > velhaMs) fs.rmSync(trava, { force: true });
+        } finally {
+          fs.rmSync(limpeza, { force: true });
+        }
+        continue;
+      }
+    }
+    esperar(25);
   }
   try {
     const novoGrafo = mudanca(carregar(arquivo));
     const erros = validar(novoGrafo);
     if (erros.length) throw new Error(`grafo inválido: ${erros.join('; ')}`);
+    let atual = null;
+    try { atual = fs.readFileSync(trava, 'utf8'); } catch { /* sem trava */ }
+    if (atual !== dono) throw new Error('o grafo perdeu a trava no meio da operação (outro processo a removeu); nada foi gravado, tente de novo');
     salvar(arquivo, novoGrafo);
     return novoGrafo;
   } finally {
-    try { fs.rmSync(trava); } catch { /* já removida */ }
+    try { if (fs.readFileSync(trava, 'utf8') === dono) fs.rmSync(trava); } catch { /* já removida */ }
   }
 }
 

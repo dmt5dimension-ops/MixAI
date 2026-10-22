@@ -119,6 +119,43 @@ test("processos simultâneos na linha de comando não perdem atualização", asy
   assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ["t1", "t2", "t3", "t4", "t5", "t6"]);
 });
 
+test("vários processos partindo de uma trava velha não perdem atualização nem apagam a trava um do outro", async () => {
+  const arq = tmp();
+  fs.writeFileSync(arq + ".lock", "morto");
+  const velho = new Date(Date.now() - 120000);
+  fs.utimesSync(arq + ".lock", velho, velho);
+  const { spawn } = require("node:child_process");
+  const ids = Array.from({ length: 8 }, (_, i) => "p" + i);
+  const rodar = (id) => new Promise((ok) => {
+    const f = spawn(process.execPath, [path.join(RAIZ, "orquestra", "grafo.js"), "add", id, "T " + id, "--arquivo", arq]);
+    f.on("close", (codigo) => ok(codigo));
+  });
+  const codigos = await Promise.all(ids.map(rodar));
+  assert.deepStrictEqual(codigos, ids.map(() => 0));
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas).sort(), ids);
+  assert.ok(!fs.existsSync(arq + ".lock") && !fs.existsSync(arq + ".limpeza"));
+});
+
+test("quem perdeu a trava no meio da operação não grava por cima", () => {
+  const arq = tmp();
+  grafo.atualizar(arq, (g) => grafo.adicionar(g, { id: "a", titulo: "A" }, AGORA));
+  assert.throws(() => grafo.atualizar(arq, (g) => {
+    fs.rmSync(arq + ".lock");
+    fs.writeFileSync(arq + ".lock", "outro-dono");
+    return grafo.adicionar(g, { id: "b", titulo: "B" }, AGORA);
+  }), /perdeu a trava/);
+  assert.deepStrictEqual(Object.keys(grafo.carregar(arq).tarefas), ["a"]);
+  assert.strictEqual(fs.readFileSync(arq + ".lock", "utf8"), "outro-dono", "não pode apagar a trava do outro dono");
+});
+
+test("o tempo de espera vale mesmo com a trava sumindo e voltando", () => {
+  const arq = tmp();
+  fs.writeFileSync(arq + ".lock", "vivo");
+  const t0 = Date.now();
+  assert.throws(() => grafo.atualizar(arq, (g) => g, { esperaMs: 200 }), /travado/);
+  assert.ok(Date.now() - t0 < 3000);
+});
+
 test("adicionar recusa dependência que criaria ciclo", () => {
   let g = exemplo();
   assert.throws(() => grafo.adicionar(g, { id: "d", titulo: "x", depende: ["d"] }, AGORA), /ciclo/);
