@@ -3,3 +3,5 @@ node_modules/
 orquestra/sem-cota.json
 orquestra/grafo.json.lock.*
 orquestra/grafo.json.*.tmp
+docs/memoria/mapa.json
+docs/memoria/mapa.md

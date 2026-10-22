@@ -416,3 +416,31 @@ test("antagonico: a regra só é salva se a resposta do local com ela também pa
   assert.strictEqual(r.regraSalva, null);
   assert.ok(!fs.existsSync(f.regras) || JSON.parse(fs.readFileSync(f.regras, "utf8")).regras.length === 0);
 });
+
+test("infra: local sem resposta (memória/placa) não gasta tentativas, não vira falha de regressão e o grande resolve direto", async () => {
+  const f = pastaTemp();
+  let chamadasLocal = 0;
+  let reinstruiu = false;
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 3, verificarComando: "node confere-alfa",
+    agentes: {
+      local: () => { chamadasLocal += 1; throw new Error("Modelo local não chamado: memória livre 1.2 GB, mínimo 2 GB"); },
+      superiores: [{ nome: "codex", chamar: (p) => { if (p.includes("REINSTRUIR")) reinstruiu = true; return "alfa"; } }],
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.resolvidoPor, "codex");
+  assert.strictEqual(chamadasLocal, 1, "o local só é tentado uma vez; sem memória não adianta repetir");
+  assert.strictEqual(reinstruiu, false, "o grande não é gasto reinstruindo um modelo que nem respondeu");
+  assert.strictEqual(escada.lerCasos(f.falhas).length, 0, "falha de infraestrutura não vira caso de regressão");
+});
+
+test("infra: erro do Qwen de verdade (resposta errada) continua gastando tentativas e vira regressão", async () => {
+  const f = pastaTemp();
+  const r = await escada.resolverComLoop({
+    entrada: "Devolva alfa.", verificar: verifMotivo("alfa"), arquivos: f, maxTentativas: 2, verificarComando: "node confere-alfa",
+    agentes: { local: () => "x", superiores: [{ nome: "codex", chamar: (p) => (p.includes("REINSTRUIR") ? "dica" : "alfa") }] },
+  });
+  assert.strictEqual(r.resolvidoPor, "codex");
+  assert.strictEqual(escada.lerCasos(f.falhas).length, 1);
+});
