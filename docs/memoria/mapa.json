@@ -466,6 +466,12 @@
       "exporta": []
     },
     {
+      "arquivo": "tests/gitattributes.test.js",
+      "descricao": "Evita conflito de mesclagem em listas que todo PR acrescenta (estado.md, ESCADA.md): merge=union mantém as duas metades.",
+      "funcoes": [],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/guarda-testes.test.js",
       "descricao": "Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.",
       "funcoes": [
@@ -589,6 +595,17 @@
       "exporta": []
     },
     {
+      "arquivo": "tests/regras-locais.test.js",
+      "descricao": "Trava as regras que o modelo local (Qwen) aprendeu de verdade: orquestra/regras-locais.json.",
+      "funcoes": [
+        {
+          "nome": "ids",
+          "linha": 23
+        }
+      ],
+      "exporta": []
+    },
+    {
       "arquivo": "tests/smoke.test.js",
       "descricao": "",
       "funcoes": [],
@@ -689,6 +706,12 @@
       "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único)",
       "testes": [
         "tests/canal-coordenacao.test.js"
+      ]
+    },
+    {
+      "o_que": "Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo`",
+      "testes": [
+        "tests/regras-locais.test.js"
       ]
     },
     {
