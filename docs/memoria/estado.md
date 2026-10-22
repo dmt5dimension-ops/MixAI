@@ -19,7 +19,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`) | `tests/escada.test.js` |
 | Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`) | `tests/escada.test.js` |
 | Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`) | `tests/escada.test.js` e `tests/falhas-escada.test.js` |
-| Paralelismo pelo uso do PC (etapa 5): 1 agente usando o PC, sobe um por vez parado até o teto (modo, placa 8 GB, memória), `--paralelo auto`, `OLLAMA_NUM_PARALLEL` pelo modo (`orquestra/paralelismo.js`, `local/uso-windows.ps1`) | `tests/paralelismo.test.js` (leituras simuladas) |
+| Paralelismo pelo uso do PC (etapa 5): 1 agente usando o PC, sobe um por vez parado até o teto (modo, placa 8 GB, memória), `--paralelo auto`, vaga só reaproveitada com o processo abortado morto, limite 0 aceito, `OLLAMA_NUM_PARALLEL` pelo modo (`orquestra/paralelismo.js`, `local/uso-windows.ps1`) | `tests/paralelismo.test.js` (leituras simuladas) |
 
 ## Em andamento
 

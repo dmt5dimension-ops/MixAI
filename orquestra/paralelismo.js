@@ -24,7 +24,8 @@ function capacidade({ modo, memoriaLivreGB, modos = modosPadrao(), config = conf
     memoria: Math.floor((memoriaLivreGB - memoriaMinimaGB) / config.ramPorAgenteGB),
     absoluto: config.maximoAbsoluto,
   };
-  const max = Math.max(1, Math.min(...Object.values(limites)));
+  // Zero é resposta válida: sem espaço na memória ou na placa, nenhum agente local agora (o lote espera abrir vaga).
+  const max = Math.max(0, Math.min(...Object.values(limites)));
   const limitante = Object.entries(limites).sort((a, b) => a[1] - b[1])[0][0];
   return { max, limites, limitante };
 }
@@ -62,9 +63,10 @@ function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
 function decidir({ leitura, modo, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
   const motivos = motivosDeUso(leitura, config);
   const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, modos, config, memoriaMinimaGB });
-  const antes = anterior?.alvo >= 1 ? anterior.alvo : 1;
+  const antes = Number.isInteger(anterior?.alvo) && anterior.alvo >= 0 ? anterior.alvo : 1;
   if (motivos.length) {
-    return { alvo: 1, regime: 1, motivo: `usando o PC: ${motivos.join('; ')}`, estado: { alvo: 1, subiuEm: agora }, capacidade: cap };
+    const alvo = Math.min(1, cap.max);
+    return { alvo, regime: alvo, motivo: `usando o PC: ${motivos.join('; ')}${alvo === 0 ? ` (sem espaço para agente local: ${cap.limitante})` : ''}`, estado: { alvo, subiuEm: agora }, capacidade: cap };
   }
   if (antes > cap.max) {
     return { alvo: cap.max, regime: cap.max, motivo: `limite caiu para ${cap.max} (${cap.limitante})`, estado: { alvo: cap.max, subiuEm: agora }, capacidade: cap };

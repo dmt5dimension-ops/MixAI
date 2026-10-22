@@ -49,7 +49,7 @@ test("o modo dia tem teto menor que o da noite, e o teto sempre respeita placa, 
   assert.ok(par.capacidade({ modo: "dia", memoriaLivreGB: 10, modos, config, memoriaMinimaGB: 2 }).max < par.capacidade({ modo: "noite", memoriaLivreGB: 10, modos, config, memoriaMinimaGB: 2 }).max);
   const placaPequena = { ...config, placa: { ...config.placa, vramGB: 6.5 } };
   const c = par.capacidade({ modo: "noite", memoriaLivreGB: 10, modos, config: placaPequena, memoriaMinimaGB: 2 });
-  assert.strictEqual(c.max, 1);
+  assert.strictEqual(c.max, 0, "placa sem espaço para um agente: 0, não 1 à força");
   assert.strictEqual(c.limitante, "placa");
   const semRam = par.capacidade({ modo: "noite", memoriaLivreGB: 2.6, modos, config, memoriaMinimaGB: 2 });
   assert.strictEqual(semRam.max, 1);
@@ -307,26 +307,93 @@ test("quando o dono volta ao PC, agentes locais em andamento são tirados (sem s
   assert.strictEqual(picoDepoisDeReduzir, 1, "depois de reduzir, só 1 agente por vez");
 });
 
-test("uma microtarefa não é tirada mais de 3 vezes (senão o dono mexendo no PC a deixaria para sempre sem terminar)", async () => {
-  let abortos = 0;
-  let limite = 2;
-  let alterna = 0;
+test("a vaga só é reaproveitada depois que o processo abortado confirma que morreu (mesmo se demorar a morrer)", async () => {
+  const ids = ["a", "b", "c"];
+  let limite = 3;
+  let vivos = 0;
+  const violacoes = [];
   const local = (prompt, signal) => new Promise((ok, no) => {
-    const fim = setTimeout(() => ok("ok"), 40);
-    signal.addEventListener("abort", () => { clearTimeout(fim); abortos += 1; no(new Error("abortado")); });
+    vivos += 1;
+    if (limite === 1 && vivos > 3) violacoes.push(`vivos ${vivos}`);
+    const fim = setTimeout(() => { vivos -= 1; ok("ok"); }, 80);
+    // morre devagar: 100 ms depois do pedido
+    signal.addEventListener("abort", () => { clearTimeout(fim); setTimeout(() => { vivos -= 1; no(new Error("abortado")); }, 100); });
   });
-  const t = setInterval(() => { limite = alterna++ % 2 === 0 ? 1 : 2; }, 15);
+  let nascidosEnquantoMorriam = 0;
+  setTimeout(() => { limite = 1; }, 20);
+  const sonda = setInterval(() => { if (limite === 1 && vivos > 3) nascidosEnquantoMorriam += 1; }, 5);
+  const r = await escada.lote({
+    microtarefas: ids.map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(),
+    agentes: { local, superiores: [] },
+  });
+  clearInterval(sonda);
+  assert.ok(r.every((x) => x.ok), JSON.stringify(r));
+  assert.deepStrictEqual(violacoes, []);
+  assert.strictEqual(nascidosEnquantoMorriam, 0);
+});
+
+test("limite oscilando 2 -> 0 -> 1 -> 2: com 0 nada novo nasce, com 1 só nasce com ninguém vivo (inclusive morrendo); todas terminam", async () => {
+  let limite = 2;
+  let vivos = 0;
+  const violacoes = [];
+  let partidas = 0;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    vivos += 1;
+    partidas += 1;
+    if (limite === 0) violacoes.push("nasceu com limite 0");
+    if (limite === 1 && vivos > 1) violacoes.push(`nasceu com limite 1 e ${vivos} vivos`);
+    const fim = setTimeout(() => { vivos -= 1; ok("ok"); }, 60);
+    signal.addEventListener("abort", () => { clearTimeout(fim); setTimeout(() => { vivos -= 1; no(new Error("abortado")); }, 15); });
+  });
+  for (const [t, v] of [[25, 0], [140, 1], [300, 2]]) setTimeout(() => { limite = v; }, t);
   const r = await escada.lote({
     microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 5, arquivos: arquivosTemp(),
     agentes: { local, superiores: [] },
   });
-  clearInterval(t);
   assert.ok(r.every((x) => x.ok), JSON.stringify(r));
-  assert.ok(abortos <= 3, `abortos ${abortos}`);
+  assert.deepStrictEqual(violacoes, []);
+  assert.ok(partidas >= 4, `as duas foram tiradas e recomeçaram (${partidas} partidas)`);
 });
 
-test("limite dinâmico inválido é recusado em vez de travar o lote", async () => {
-  await assert.rejects(escada.lote({ microtarefas: [{ id: "a", instrucao: "x", contexto: "c", escopo: ["a.js"], verificar: "true" }], verificadorDe: () => () => true, paralelismo: () => 0, agentes: { local: () => "x", superiores: [] } }), /inteiro maior que zero/);
+test("chamarComando: ao abortar, só termina depois do processo morrer de verdade", async () => {
+  const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
+  const ctl = new AbortController();
+  const chamada = escada.chamarComando(comando)("x", ctl.signal);
+  const inicio = Date.now();
+  setTimeout(() => ctl.abort(), 150);
+  await assert.rejects(chamada);
+  assert.ok(Date.now() - inicio < 10000, "não esperou o processo acabar sozinho (30 s)");
+});
+
+test("capacidade pode ser 0 (memória ou placa sem espaço) e o alvo acompanha, mesmo com o dono usando o PC", () => {
+  const semRam = par.capacidade({ modo: "noite", memoriaLivreGB: 1.5, modos, config, memoriaMinimaGB: 2 });
+  assert.strictEqual(semRam.max, 0);
+  assert.strictEqual(semRam.limitante, "memoria");
+  const semPlaca = par.capacidade({ modo: "noite", memoriaLivreGB: 10, modos, config: { ...config, placa: { ...config.placa, vramGB: 5 } }, memoriaMinimaGB: 2 });
+  assert.strictEqual(semPlaca.max, 0);
+  const parada = { ociosoSegundos: 99999, gpuOutrosPct: 0, cpuOutrosPct: 0, videoDecodePct: 0, memoriaLivreGB: 1.5 };
+  assert.strictEqual(par.decidir({ leitura: parada, modo: "noite", modos, config, memoriaMinimaGB: 2 }).alvo, 0);
+  assert.strictEqual(par.decidir({ leitura: { ...parada, ociosoSegundos: 1 }, modo: "noite", modos, config, memoriaMinimaGB: 2 }).alvo, 0, "usando o PC e sem espaço: 0, não 1");
+  const livre = { ...parada, memoriaLivreGB: 10 };
+  assert.strictEqual(par.decidir({ leitura: livre, modo: "noite", anterior: { alvo: 0, subiuEm: 0 }, agora: 30000, modos, config, memoriaMinimaGB: 2 }).alvo, 0, "ainda não passou o tempo mínimo de subida");
+  assert.strictEqual(par.decidir({ leitura: livre, modo: "noite", anterior: { alvo: 0, subiuEm: 0 }, agora: 61000, modos, config, memoriaMinimaGB: 2 }).alvo, 1, "volta a subir quando abre espaço");
+});
+
+test("o lote aceita limite dinâmico 0: não inicia nada e espera abrir vaga; limite fixo 0 ou inválido é recusado", async () => {
+  let limite = 0;
+  let iniciou = 0;
+  setTimeout(() => { limite = 1; }, 80);
+  const t0 = Date.now();
+  const r = await escada.lote({
+    microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(),
+    agentes: { local: () => { iniciou = Date.now() - t0; return "ok"; }, superiores: [] },
+  });
+  assert.ok(r[0].ok);
+  assert.ok(iniciou >= 70, `só começou depois de abrir vaga (${iniciou} ms)`);
+  for (const n of [0, -1, 1.5]) {
+    await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: n, agentes: { local: () => "x", superiores: [] } }), /inteiro maior que zero/, String(n));
+  }
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: () => -1, agentes: { local: () => "x", superiores: [] } }), /dinâmico/);
 });
 
 test("o modo.ps1 liga o paralelismo do Ollama pelo modo e guarda o modo ligado; o uso-windows.ps1 devolve os campos que o decisor lê", () => {

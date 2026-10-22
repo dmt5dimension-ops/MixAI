@@ -167,10 +167,14 @@ function chamarComando(comando) {
   // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
   // reduzir agentes locais quando o dono volta a usar o PC.
   return (prompt, signal) => new Promise((resolve, reject) => {
-    const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS });
+    const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS, detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
     const parar = () => {
-      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
-      else filho.kill('SIGKILL');
+      if (process.platform === 'win32') {
+        const r = spawnSync('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
+        if (r.error || r.status !== 0) filho.kill(); // taskkill não funcionou: pelo menos o processo principal
+      } else {
+        try { process.kill(-filho.pid, 'SIGKILL'); } catch { filho.kill('SIGKILL'); }
+      }
     };
     if (signal) {
       if (signal.aborted) parar();
@@ -189,8 +193,6 @@ function chamarComando(comando) {
 }
 
 const TEMPO_MAXIMO_MS = 10 * 60 * 1000;
-// Quantas vezes o lote pode tirar uma microtarefa do local para abrir espaço, antes de deixá-la terminar.
-const MAX_ADIAMENTOS = 3;
 
 const COMANDOS = {
   // Passa pelo rodar-local.js, que confere a memória livre antes de carregar o modelo.
@@ -330,36 +332,42 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
   const dinamico = typeof paralelismo === 'function';
   const limiteAgora = () => {
     const n = dinamico ? paralelismo() : paralelismo;
-    if (!Number.isInteger(n) || n < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
+    // Zero só vale no limite dinâmico (memória ou placa sem espaço agora): o lote espera abrir vaga.
+    if (!Number.isInteger(n) || n < (dinamico ? 0 : 1)) throw new Error(dinamico ? 'paralelismo dinâmico precisa devolver um número inteiro maior que zero ou zero.' : 'paralelismo precisa ser um número inteiro maior que zero.');
     return n;
   };
   limiteAgora();
   const resultados = new Map();
   const pendentes = [...microtarefas];
   const rodando = new Map();
-  const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal }
-  const adiamentos = new Map();
+  const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
+  const encerrando = []; // { m, fim }: abortadas cujo processo ainda não confirmou que morreu; a vaga e o escopo seguem ocupados
 
-  while (pendentes.length || rodando.size) {
+  while (pendentes.length || rodando.size || encerrando.length) {
     // O dono voltou ao PC: tira agentes locais em andamento (os mais novos primeiro) e devolve a microtarefa à fila.
     // Só tira quem está esperando o modelo local; quem já passou para o Codex/Claude ou para a conferência termina.
+    // A vaga só é reaproveitada quando o processo abortado de fato terminou (o `fim` da chamada ao local).
     const limite = limiteAgora();
     while (rodando.size > limite) {
-      const alvo = [...rodando.keys()].reverse().find((m) => estados.get(m).emLocal && (adiamentos.get(m) || 0) < MAX_ADIAMENTOS);
+      const alvo = [...rodando.keys()].reverse().find((m) => estados.get(m).emLocal);
       if (!alvo) break;
       const e = estados.get(alvo);
       e.abandonada = true; // a execução antiga nunca mais responde: não sobe para o Codex nem registra resultado
+      const morte = { m: alvo, fim: e.fim.then(() => { encerrando.splice(encerrando.indexOf(morte), 1); }) };
+      encerrando.push(morte);
       e.ctl.abort();
       rodando.delete(alvo);
       pendentes.unshift(alvo);
-      adiamentos.set(alvo, (adiamentos.get(alvo) || 0) + 1);
     }
-    while (rodando.size < limiteAgora()) {
-      const i = pendentes.findIndex((m) => ![...rodando.keys()].some((r) => sobrepoe(r.escopo, m.escopo)));
+    while (rodando.size + encerrando.length < limiteAgora()) {
+      const ocupados = () => [...rodando.keys(), ...encerrando.map((x) => x.m)];
+      const i = pendentes.findIndex((m) => !ocupados().some((r) => sobrepoe(r.escopo, m.escopo)));
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
-      const e = { ctl: new AbortController(), abandonada: false, emLocal: false };
+      const e = { ctl: new AbortController(), abandonada: false, emLocal: false, fim: null };
+      let liberar;
+      e.fim = new Promise((ok) => { liberar = ok; });
       estados.set(m, e);
       const agentesDaMicro = {
         ...agentes,
@@ -367,8 +375,8 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
           if (e.abandonada) return;
           e.emLocal = true;
           Promise.resolve().then(() => agentes.local(prompt, e.ctl.signal)).then(
-            (r) => { e.emLocal = false; if (!e.abandonada) ok(r); },
-            (erro) => { e.emLocal = false; if (!e.abandonada) no(erro); },
+            (r) => { e.emLocal = false; liberar(); if (!e.abandonada) ok(r); },
+            (erro) => { e.emLocal = false; liberar(); if (!e.abandonada) no(erro); },
           );
         }),
       };
@@ -388,7 +396,7 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
     // e para tirar agentes quando o dono voltar.
     let relogio;
     const acordar = dinamico && (pendentes.length || rodando.size > 1) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
-    await Promise.race([...rodando.values(), ...acordar]);
+    await Promise.race([...rodando.values(), ...encerrando.map((x) => x.fim), ...acordar]);
     clearTimeout(relogio);
   }
   return microtarefas.map((m) => resultados.get(m.id));
@@ -459,7 +467,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
