@@ -45,7 +45,7 @@ node orquestra/escada.js lote plano.json --paralelo 2
 - Plano mal delimitado é recusado: cada microtarefa precisa de instrução, escopo (arquivos que pode tocar), comando de verificação e contexto pequeno.
 - Cada agente local recebe só a sua microtarefa. Microtarefas com escopo que se sobrepõe nunca rodam juntas.
 - Uma que falha sobe a escada normal (Codex, depois Claude) e não derruba as outras.
-- Paralelismo padrão 1 (`paralelismoPadrao` em `escada.json`). Com 8 GB de placa, o `OLLAMA_NUM_PARALLEL` do modo dia está em 1, então mais agentes só enfileiram no Ollama; subir isso e ajustar pelo uso do PC é a etapa 5.
+- Paralelismo padrão 1 (`paralelismoPadrao` em `escada.json`). Com 8 GB de placa, o `OLLAMA_NUM_PARALLEL` do modo dia está em 1, então mais agentes só enfileiram no Ollama; isso é ajustado pelo uso do PC na etapa 5 (abaixo).
 
 ## Loop de tentativas (etapa 2)
 
@@ -55,3 +55,14 @@ node orquestra/escada.js lote plano.json --paralelo 2
 - Estourou o limite de tentativas: o grande resolve direto.
 - Cada falha que acabou resolvida vira um caso de regressão em `orquestra/falhas/falhas.jsonl` (resposta certa e o comando que confere). `tests/falhas-escada.test.js` confere para sempre que a resposta certa continua passando. Falha que ninguém resolveu vai para `orquestra/falhas/pendentes.jsonl`, que não entra nos testes.
 - Com `--antagonico`, a resposta só vale se outro agente grande (nunca o que produziu) não achar defeito. O modelo local nunca faz esse papel. Se nenhum outro grande puder conferir (sem cota), a resposta não vale e a tarefa fica em `pendentes.jsonl`.
+
+## Paralelismo pelo uso do PC (etapa 5)
+
+`node orquestra/escada.js lote plano.json --paralelo auto` deixa o número de agentes locais por conta de `orquestra/paralelismo.js`:
+
+- **Usando o PC: 1 agente.** Conta como "usando": mexeu no teclado ou mouse há menos de 90 s, outro programa usa mais de 30% da placa ou 60% do processador (o próprio Ollama não conta), vídeo tocando, ou a leitura do Windows falhou (na dúvida, 1). Volta a 1 na hora.
+- **Parado: sobe um por vez**, no mínimo 60 s entre uma subida e outra, até o teto. Nunca começa acima de 1.
+- **Teto = o menor de**: `agentesMax` do modo em `local/modos.json` (dia 2, noite 3), o que cabe na placa (8 GB menos pesos do modelo, reserva do Windows e cache de contexto de cada agente, números em `orquestra/paralelismo.json`), a memória livre acima do mínimo de `local/protecao.json` (0,5 GB por agente) e `maximoAbsoluto`.
+- `local/modo.ps1` agora liga `OLLAMA_NUM_PARALLEL` com o `agentesMax` do modo (antes era sempre 1, então mais agentes só enfileiravam) e grava o modo ligado em `%LOCALAPPDATA%\Ollama\mixai-modo.txt`; sem esse arquivo o paralelismo assume o dia. Para ver o que ele decidiria agora: `node orquestra/paralelismo.js`.
+- A proteção de `local/rodar-local.js` continua valendo por cima: memória livre abaixo do mínimo ou modelo fora da placa recusa a chamada, e a tarefa sobe na escada.
+- A leitura do Windows (`local/uso-windows.ps1`) fica atrás de um leitor (`{ ler() }`); os testes usam leituras simuladas. **O script do Windows ainda não foi rodado no PC do dono** (a nuvem não tem PowerShell): rodar uma vez e conferir os números antes de confiar nele.

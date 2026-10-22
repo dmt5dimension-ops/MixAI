@@ -311,16 +311,22 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 
 // O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
-async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
-  if (!Number.isInteger(paralelismo) || paralelismo < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
-  const limite = paralelismo;
+  // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
+  const dinamico = typeof paralelismo === 'function';
+  const limiteAgora = () => {
+    const n = dinamico ? paralelismo() : paralelismo;
+    if (!Number.isInteger(n) || n < 1) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
+    return n;
+  };
+  limiteAgora();
   const resultados = new Map();
   const pendentes = [...microtarefas];
   const rodando = new Map();
 
   while (pendentes.length || rodando.size) {
-    while (rodando.size < limite) {
+    while (rodando.size < limiteAgora()) {
       const i = pendentes.findIndex((m) => ![...rodando.keys()].some((r) => sobrepoe(r.escopo, m.escopo)));
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
@@ -333,7 +339,11 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, max
         .then((r) => { resultados.set(m.id, { id: m.id, ...r }); rodando.delete(m); });
       rodando.set(m, feito);
     }
-    await Promise.race(rodando.values());
+    // Com limite dinâmico, acorda de tempos em tempos para abrir vaga quando o PC ficar parado.
+    let relogio;
+    const acordar = dinamico && pendentes.length ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
+    await Promise.race([...rodando.values(), ...acordar]);
+    clearTimeout(relogio);
   }
   return microtarefas.map((m) => resultados.get(m.id));
 }
@@ -358,7 +368,9 @@ async function principal(argumentos) {
     const resultados = await lote({
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
-      paralelismo: ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
+      paralelismo: ip >= 0 && resto[ip + 1] === 'auto'
+        ? require('./paralelismo.js').criarControle({ aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
+        : ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
       maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : undefined,
       antagonico: resto.includes('--antagonico'),
       agentes: {

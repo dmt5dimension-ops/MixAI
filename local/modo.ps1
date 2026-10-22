@@ -12,7 +12,7 @@ $variaveis = @{
   OLLAMA_CONTEXT_LENGTH    = "$($config.contexto)"
   OLLAMA_KEEP_ALIVE        = $config.manterNaMemoria
   OLLAMA_MAX_LOADED_MODELS = '1'
-  OLLAMA_NUM_PARALLEL      = '1'
+  OLLAMA_NUM_PARALLEL      = "$($config.agentesMax)"
 }
 foreach ($v in $variaveis.GetEnumerator()) {
   [Environment]::SetEnvironmentVariable($v.Key, $v.Value, 'User')
@@ -46,5 +46,8 @@ Get-Process 'ollama', 'ollama app' -ErrorAction SilentlyContinue | ForEach-Objec
 
 # Nome fixo "mixai-local" apontando para o modelo do modo. Para com erro se o Ollama falhar.
 & (Join-Path $PSScriptRoot 'criar-apelido.ps1') -Modelo $config.modelo -Contexto $config.contexto -Nucleos $config.nucleos
+
+# Guarda o modo ligado, para orquestra/paralelismo.js saber o teto de agentes.
+Set-Content (Join-Path $env:LOCALAPPDATA 'Ollama\mixai-modo.txt') $Modo
 
 Write-Host "Modo $Modo ligado: $($config.modelo), $($config.nucleos) nucleos, contexto $($config.contexto), prioridade $($config.prioridade)."
