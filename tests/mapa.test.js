@@ -34,6 +34,38 @@ test("o mapa lista funções com arquivo, linha e descrição, e ignora node_mod
   assert.ok(!m.arquivos.some((a) => a.arquivo.includes("node_modules")));
 });
 
+test("o mapa acha funções com recuo, métodos, arrows aninhadas, e não confunde string com module.exports", () => {
+  const raiz = repoFalso();
+  fs.writeFileSync(path.join(raiz, "src/fundo.js"), [
+    "async function externa() {",
+    "  const julgar = async (saida, produtor) => {",
+    "    if (saida) { return 1; }",
+    "    for (const x of saida) {}",
+    "  };",
+    "  function interna(a) {}",
+    "  const simples = x => x;",
+    "}",
+    "class Caixa {",
+    "  constructor(a) {}",
+    "  static criar() {}",
+    "  async ler(x) {}",
+    "}",
+    "const obj = {",
+    "  gancho: (e) => e,",
+    "  outro(a) { return a; },",
+    "};",
+    "const texto = \"module.exports = { falso };\";",
+    "module.exports = { externa };",
+    "",
+  ].join("\n"));
+  const f = mapa.construir(raiz).arquivos.find((a) => a.arquivo === "src/fundo.js");
+  const nomes = f.funcoes.map((x) => x.nome);
+  for (const n of ["externa", "julgar", "interna", "simples", "constructor", "criar", "ler", "gancho", "outro"]) assert.ok(nomes.includes(n), `faltou ${n}: ${nomes}`);
+  for (const n of ["if", "for", "obj", "texto"]) assert.ok(!nomes.includes(n), `sobrou ${n}`);
+  assert.strictEqual(f.funcoes.find((x) => x.nome === "julgar").linha, 2);
+  assert.deepStrictEqual(f.exporta, ["externa"]);
+});
+
 test("o mapa guarda o que já foi feito e qual teste trava cada coisa", () => {
   const m = mapa.construir(repoFalso());
   assert.deepStrictEqual(m.feitos, [

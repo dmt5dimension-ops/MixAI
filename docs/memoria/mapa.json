@@ -212,6 +212,10 @@
           "linha": 126
         },
         {
+          "nome": "ok",
+          "linha": 128
+        },
+        {
           "nome": "chamarComando",
           "linha": 166
         },
@@ -230,6 +234,18 @@
         {
           "nome": "resolverComLoop",
           "linha": 217
+        },
+        {
+          "nome": "julgar",
+          "linha": 225
+        },
+        {
+          "nome": "ok",
+          "linha": 239
+        },
+        {
+          "nome": "concluir",
+          "linha": 240
         },
         {
           "nome": "validarPlano",
@@ -258,6 +274,10 @@
         {
           "nome": "principal",
           "linha": 348
+        },
+        {
+          "nome": "verificadorDe",
+          "linha": 360
         }
       ],
       "exporta": [
@@ -291,31 +311,31 @@
         },
         {
           "nome": "lerFeitos",
-          "linha": 50
+          "linha": 55
         },
         {
           "nome": "construir",
-          "linha": 65
+          "linha": 70
         },
         {
           "nome": "emTexto",
-          "linha": 69
+          "linha": 74
         },
         {
           "nome": "gerar",
-          "linha": 80
+          "linha": 85
         },
         {
           "nome": "conferir",
-          "linha": 88
+          "linha": 93
         },
         {
           "nome": "buscar",
-          "linha": 98
+          "linha": 103
         },
         {
           "nome": "principal",
-          "linha": 109
+          "linha": 114
         }
       ],
       "exporta": [
@@ -355,6 +375,30 @@
           "linha": 17
         },
         {
+          "nome": "local",
+          "linha": 59
+        },
+        {
+          "nome": "codex",
+          "linha": 63
+        },
+        {
+          "nome": "verificar",
+          "linha": 81
+        },
+        {
+          "nome": "codex",
+          "linha": 90
+        },
+        {
+          "nome": "codex",
+          "linha": 139
+        },
+        {
+          "nome": "codex",
+          "linha": 163
+        },
+        {
           "nome": "esperar",
           "linha": 183
         },
@@ -369,6 +413,34 @@
         {
           "nome": "verifMotivo",
           "linha": 254
+        },
+        {
+          "nome": "local",
+          "linha": 262
+        },
+        {
+          "nome": "local",
+          "linha": 276
+        },
+        {
+          "nome": "local",
+          "linha": 314
+        },
+        {
+          "nome": "local",
+          "linha": 337
+        },
+        {
+          "nome": "codex",
+          "linha": 370
+        },
+        {
+          "nome": "local",
+          "linha": 389
+        },
+        {
+          "nome": "local",
+          "linha": 407
         }
       ],
       "exporta": []
@@ -376,7 +448,12 @@
     {
       "arquivo": "tests/falhas-escada.test.js",
       "descricao": "Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta",
-      "funcoes": [],
+      "funcoes": [
+        {
+          "nome": "rodar",
+          "linha": 16
+        }
+      ],
       "exporta": []
     },
     {
@@ -386,6 +463,14 @@
         {
           "nome": "rodar",
           "linha": 12
+        },
+        {
+          "nome": "git",
+          "linha": 14
+        },
+        {
+          "nome": "mudar",
+          "linha": 54
         }
       ],
       "exporta": []
@@ -412,12 +497,21 @@
         {
           "nome": "repoFalso",
           "linha": 12
+        },
+        {
+          "nome": "grava",
+          "linha": 14
+        },
+        {
+          "nome": "grava",
+          "linha": 18
+        },
+        {
+          "nome": "grava",
+          "linha": 20
         }
       ],
-      "exporta": [
-        "somar",
-        "dobrar"
-      ]
+      "exporta": []
     },
     {
       "arquivo": "tests/modelo-local.test.js",
@@ -443,6 +537,18 @@
         {
           "nome": "ler",
           "linha": 8
+        },
+        {
+          "nome": "cobre",
+          "linha": 22
+        },
+        {
+          "nome": "titulos",
+          "linha": 44
+        },
+        {
+          "nome": "rodar",
+          "linha": 150
         }
       ],
       "exporta": []
@@ -492,12 +598,28 @@
           "linha": 12
         },
         {
+          "nome": "git",
+          "linha": 14
+        },
+        {
           "nome": "rodar",
           "linha": 32
         },
         {
           "nome": "escopo",
           "linha": 44
+        },
+        {
+          "nome": "padroes",
+          "linha": 115
+        },
+        {
+          "nome": "git",
+          "linha": 152
+        },
+        {
+          "nome": "git",
+          "linha": 181
         }
       ],
       "exporta": []

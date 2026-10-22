@@ -52,11 +52,15 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `tentar` (linha 104)
   - `aprenderRegra` (linha 114)
   - `resolver` (linha 126)
+  - `ok` (linha 128)
   - `chamarComando` (linha 166)
   - `verificadorPorComando` (linha 189)
   - `promptReinstruir` (linha 196)
   - `promptAntagonista` (linha 205)
   - `resolverComLoop` (linha 217)
+  - `julgar` (linha 225)
+  - `ok` (linha 239)
+  - `concluir` (linha 240)
   - `validarPlano` (linha 286)
   - `normaliza` (linha 300)
   - `sobrepoe` (linha 301)
@@ -64,40 +68,63 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `lote` (linha 314)
   - `exportar` (linha 341)
   - `principal` (linha 348)
+  - `verificadorDe` (linha 360)
 - `orquestra/mapa.js` — Mapa do código e da memória: onde fica cada função e o que já foi feito.
   - `listar` (linha 10)
   - `descricao` (linha 23)
   - `lerArquivo` (linha 29)
-  - `lerFeitos` (linha 50)
-  - `construir` (linha 65)
-  - `emTexto` (linha 69)
-  - `gerar` (linha 80)
-  - `conferir` (linha 88)
-  - `buscar` (linha 98)
-  - `principal` (linha 109)
+  - `lerFeitos` (linha 55)
+  - `construir` (linha 70)
+  - `emTexto` (linha 74)
+  - `gerar` (linha 85)
+  - `conferir` (linha 93)
+  - `buscar` (linha 103)
+  - `principal` (linha 114)
 - `orquestra/trocar.ps1` — Troca manualmente quem está sem cota.
 - `tests/canal-coordenacao.test.js` — Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.
   - `ler` (linha 8)
 - `tests/escada.test.js` — Testa a escada: tarefa vai primeiro ao modelo local; se falhar sobe para Codex/Claude;
   - `pastaTemp` (linha 11)
   - `verificar` (linha 17)
+  - `local` (linha 59)
+  - `codex` (linha 63)
+  - `verificar` (linha 81)
+  - `codex` (linha 90)
+  - `codex` (linha 139)
+  - `codex` (linha 163)
   - `esperar` (linha 183)
   - `micro` (linha 184)
   - `verificadorDe` (linha 185)
   - `verifMotivo` (linha 254)
+  - `local` (linha 262)
+  - `local` (linha 276)
+  - `local` (linha 314)
+  - `local` (linha 337)
+  - `codex` (linha 370)
+  - `local` (linha 389)
+  - `local` (linha 407)
 - `tests/falhas-escada.test.js` — Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta
+  - `rodar` (linha 16)
 - `tests/guarda-testes.test.js` — Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.
   - `rodar` (linha 12)
+  - `git` (linha 14)
+  - `mudar` (linha 54)
 - `tests/instalar.test.js` — Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:
   - `achar` (linha 51)
   - `rodarComFalsos` (linha 57)
 - `tests/mapa.test.js` — Testa o mapa do código e da memória (orquestra/mapa.js): índice de onde fica cada função e do que já foi feito.
   - `repoFalso` (linha 12)
+  - `grava` (linha 14)
+  - `grava` (linha 18)
+  - `grava` (linha 20)
 - `tests/modelo-local.test.js` — Testa a configuração dos modos dia/noite do modelo local (local/modos.json e local/modo.ps1).
   - `criarApelidoComOllamaFalso` (linha 14)
 - `tests/papeis.test.js` — Testa a troca de papéis entre Claude, Codex e o modelo local (orquestra/).
 - `tests/preparar-repo.test.js` — Testa o kit que leva as regras do MixAI para o repositório de outro app (ferramentas/preparar-repo.ps1).
   - `ler` (linha 8)
+  - `cobre` (linha 22)
+  - `titulos` (linha 44)
+  - `rodar` (linha 150)
 - `tests/protecao-local.test.js` — Testa as proteções do modelo local: nunca cair para o processador, conferir a memória
   - `pastaTemporaria` (linha 16)
   - `ollamaFalso` (linha 21)
@@ -107,8 +134,12 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - `tests/smoke.test.js`
 - `tests/trava-de-escopo.test.js` — Testa a trava de escopo (.github/scripts/trava_de_escopo.py) num repositório git temporário.
   - `repoCom` (linha 12)
+  - `git` (linha 14)
   - `rodar` (linha 32)
   - `escopo` (linha 44)
+  - `padroes` (linha 115)
+  - `git` (linha 152)
+  - `git` (linha 181)
 
 ## Já feito e o teste que trava
 

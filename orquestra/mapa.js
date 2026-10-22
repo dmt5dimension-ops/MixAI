@@ -29,9 +29,14 @@ function descricao(linhas, marca) {
 function lerArquivo(raiz, rel) {
   const linhas = fs.readFileSync(path.join(raiz, rel), 'utf8').split(/\r?\n/);
   const js = rel.endsWith('.js');
+  const palavras = 'if|for|while|switch|catch|function|return|else|do|try|with';
   const regras = js
-    ? [/^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/, /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/]
-    : [/^function\s+([\w-]+)/i];
+    ? [
+        /^\s*(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/,
+        /^\s*(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*[=:]\s*(?:async\s*)?(?:function\b[^(]*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?:=>|\{)/,
+        new RegExp(`^\\s+(?:static\\s+)?(?:async\\s+)?(?!(?:${palavras})\\b)([A-Za-z_$][\\w$]*)\\s*\\([^)]*\\)\\s*\\{`),
+      ]
+    : [/^\s*function\s+([\w-]+)/i];
   const funcoes = [];
   linhas.forEach((l, i) => {
     for (const r of regras) {
@@ -41,7 +46,7 @@ function lerArquivo(raiz, rel) {
   });
   const item = { arquivo: rel, descricao: descricao(linhas, js ? '//' : '#'), funcoes };
   if (js) {
-    const m = /module\.exports\s*=\s*\{([^}]*)\}/.exec(linhas.join('\n'));
+    const m = /^module\.exports\s*=\s*\{([^}]*)\}/m.exec(linhas.join('\n'));
     item.exporta = m ? m[1].split(',').map((s) => s.split(':')[0].trim()).filter(Boolean) : [];
   }
   return item;
