@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn, spawnSync, execFile } = require('node:child_process');
 
 const pasta = __dirname;
 const ARQUIVOS = {
@@ -164,51 +164,77 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   return { ok: true, resolvidoPor: nome, saida, regrasUsadas: ids, regraSalva };
 }
 
-// Pids do processo e de todos os descendentes (uma foto tirada ENQUANTO o processo principal ainda existe), pelo
-// PowerShell. `null` se não deu para ler. É a única forma de saber, depois, se algum descendente ficou vivo: o
-// `taskkill /T` só acha filhos pelo pai, e um descendente cujo pai já morreu fica órfão e não é mais encontrado.
-function arvoreDe(pid, executar = spawnSync, raizCriacao = null) {
-  const r = executar('powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$($_.CreationDate.ToFileTimeUtc())" }'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
-  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
-  const linhasDe = new Map(); // pid -> { pid, pai, criacao }
-  const filhos = new Map();
-  let linhas = 0;
-  for (const linha of r.stdout.split(/\r?\n/)) {
+// --- Árvore de processos no Windows ---------------------------------------------------------------------------
+// Cada processo é identificado por PID + hora de criação (CIM `CreationDate`): um PID reaproveitado por outro programa
+// tem outra hora e nunca é confundido com o nosso, e o `taskkill` só é chamado logo depois de uma leitura que mostrou
+// pid e hora batendo.
+const CAMPOS_CIM = '-Property ProcessId,ParentProcessId,CreationDate';
+const FORMATO_CIM = 'ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$($_.CreationDate.ToFileTimeUtc())" }';
+const comandoCim = (pids) => `Get-CimInstance Win32_Process ${CAMPOS_CIM}${pids ? ` -Filter "${pids.map((p) => `ProcessId=${Number(p)}`).join(' OR ')}"` : ''} | ${FORMATO_CIM}`;
+const argsPowerShell = (pids) => ['-NoProfile', '-NonInteractive', '-Command', comandoCim(pids)];
+const OPCOES_PS = { encoding: 'utf8', timeout: 20000, windowsHide: true };
+
+// Texto do PowerShell -> Map pid -> { pid, pai, criacao }. `criacao` '' = linha sem hora.
+function linhasDe(stdout) {
+  const mapa = new Map();
+  for (const linha of String(stdout).split(/\r?\n/)) {
     const m = /^(\d+),(\d+)(?:,(\d*))?$/.exec(linha.trim());
-    if (!m) continue;
-    linhas += 1;
-    const item = { pid: Number(m[1]), pai: Number(m[2]), criacao: m[3] ?? '' };
-    linhasDe.set(item.pid, item);
-    filhos.set(item.pai, [...(filhos.get(item.pai) || []), item]);
+    if (m) mapa.set(Number(m[1]), { pid: Number(m[1]), pai: Number(m[2]), criacao: m[3] ?? '' });
   }
-  // Saída vazia ou sem nenhuma linha válida (a consulta falhou sem dar erro) é inconclusiva, não "só a raiz".
-  if (!linhas) return null;
-  const raiz = linhasDe.get(pid);
-  // A raiz fica fixada pela primeira foto (pid + hora de criação). Se hoje o pid tem OUTRA hora, ele foi reaproveitado
-  // por outro programa: não é a nossa raiz, e os filhos dele não são nossos.
-  if (raiz && raizCriacao && raiz.criacao !== String(raizCriacao)) return [];
+  return mapa;
+}
+
+// Lê os processos (todos, ou só os `pids`). null = a leitura falhou. Leitura COMPLETA sem nenhuma linha é falha
+// silenciosa da consulta; leitura filtrada sem linhas é válida (os pids não existem mais).
+function lerProcessos(executar = spawnSync, pids = null) {
+  const r = executar('powershell', argsPowerShell(pids), OPCOES_PS);
+  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
+  const mapa = linhasDe(r.stdout);
+  if (!pids && !mapa.size) return null;
+  return mapa;
+}
+
+// Identidade do processo principal, lida logo depois do spawn (com o shell ainda vivo): { pid, criacao }; `undefined` =
+// leitura válida e o processo já não existe (comando rápido que acabou); `null` = a leitura falhou ou veio sem hora.
+function lerRaiz(pid, executar = spawnSync) {
+  const mapa = lerProcessos(executar, [pid]);
+  if (!mapa) return null;
+  const r = mapa.get(pid);
+  if (!r) return undefined;
+  return r.criacao ? { pid, criacao: r.criacao } : null;
+}
+
+// Árvore a partir das linhas lidas. A raiz é a da PRIMEIRA leitura (`raizCriacao`); se hoje o pid tem outra hora, foi
+// reaproveitado por outro programa: nada daquilo é nosso (devolve []). Descendente só vale se o pai bate pelo pid E o
+// filho foi criado depois do pai. Sem a hora da raiz (`raizCriacao` vazio) nada é aceito. Linha sem hora, na árvore,
+// torna a leitura inconclusiva (null).
+function arvoreDeLinhas(linhas, pid, raizCriacao) {
+  if (!raizCriacao) return [];
+  const raiz = linhas.get(pid);
+  if (raiz && raiz.criacao !== String(raizCriacao)) return [];
+  const filhos = new Map();
+  for (const l of linhas.values()) filhos.set(l.pai, [...(filhos.get(l.pai) || []), l]);
   const resultado = [];
-  if (raiz) {
-    if (raiz.criacao === '') return null; // linha sem hora de criação: não dá para identificar o processo
-    resultado.push(raiz);
-  }
-  // Descendente só vale se o pai bate pelo pid E pela hora: o filho foi criado depois do pai (um filho "anterior" ao pai
-  // é de um pai antigo cujo pid foi reaproveitado). Sem a raiz na tabela, usa a hora fixada da primeira foto.
-  const horaDoPai = new Map([[pid, raiz ? raiz.criacao : raizCriacao ? String(raizCriacao) : null]]);
+  if (raiz) resultado.push(raiz);
   for (let i = -1; i < resultado.length; i++) {
     const paiPid = i < 0 ? pid : resultado[i].pid;
-    const horaPai = i < 0 ? horaDoPai.get(pid) : resultado[i].criacao;
+    const horaPai = i < 0 ? String(raizCriacao) : resultado[i].criacao;
     for (const f of filhos.get(paiPid) || []) {
       if (f.pid === pid || resultado.some((x) => x.pid === f.pid)) continue;
-      if (f.criacao === '') return null; // descendente sem hora de criação: inconclusivo
-      if (horaPai && BigInt(f.criacao) < BigInt(horaPai)) continue; // mais velho que o pai: o pai é outro processo
+      if (f.criacao === '') return null;
+      if (BigInt(f.criacao) < BigInt(horaPai)) continue; // mais velho que o pai: o pai é outro processo
       resultado.push(f);
     }
   }
-  // Leitura válida sem a raiz e sem descendentes: o comando já acabou e não deixou nada (comando rápido normal). É
-  // "limpo" ([]), não inconclusivo; `null` fica só para a leitura que falhou de verdade.
   return resultado.map((e) => ({ pid: e.pid, criacao: e.criacao }));
 }
+
+// Versão direta (lê e monta a árvore), usada nos testes e na foto periódica.
+function arvoreDe(pid, executar = spawnSync, raizCriacao = null) {
+  const linhas = lerProcessos(executar);
+  return linhas ? arvoreDeLinhas(linhas, pid, raizCriacao) : null;
+}
+
 const chaveDe = (e) => `${e.pid}:${e.criacao}`;
 const juntarPids = (a, b) => {
   if (!a && !b) return null;
@@ -217,35 +243,41 @@ const juntarPids = (a, b) => {
   return [...por.values()];
 };
 
-// Soma uma leitura da árvore ao que o filho já guarda e fixa a raiz (pid + hora) na primeira vez que ela aparece.
+// Soma uma leitura da árvore ao que o filho já guarda.
 function registrarFoto(filho, leitura) {
-  if (leitura && !filho.raiz) { const r = leitura.find((e) => e.pid === filho.pid); if (r?.criacao) filho.raiz = r; }
   filho.arvore = juntarPids(filho.arvore, leitura);
   return filho.arvore;
 }
 
-// Mata o processo e os filhos dele. No Windows tira antes uma foto da árvore (com o processo principal ainda vivo),
-// roda `taskkill /T /F` e só dá por morta quando CADA processo da foto (pid + hora de criação) não existe mais (o código
-// 128 e o código 0 do taskkill só falam do pid do shell; descendente órfão não é achado por `/T`); os que sobrarem levam
-// `taskkill /F` um a um, e só se pid e hora de criação baterem (nunca um programa do usuário que herdou o pid).
-// Sem a foto (PowerShell falhou) não há como confirmar: devolve false. Raiz sumida com leitura válida e nada achado é
-// limpo. A raiz é a da primeira foto (pid + hora); pid reaproveitado depois não vira raiz nova. Nunca mata
-// só o processo principal. `executar` e `vivo(pid, criacao)` existem para os testes.
-function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3, vivo = processoVivoComCriacao(executar, plataforma) } = {}) {
+// Fixa a identidade da raiz (primeira leitura, logo depois do spawn). `raizEstado`: 'conhecida' | 'perdida' (o processo
+// já tinha acabado) | 'falhou' (não deu para ler: nada será morto por pid, e a morte não se confirma).
+function fixarRaiz(filho, executar = spawnSync) {
+  const r = lerRaiz(filho.pid, executar);
+  if (r) { filho.raiz = r; filho.raizEstado = 'conhecida'; registrarFoto(filho, [r]); } else filho.raizEstado = r === undefined ? 'perdida' : 'falhou';
+}
+
+const mesmo = (linhas, e) => linhas.get(e.pid)?.criacao === e.criacao;
+
+// Mata o processo e os filhos dele. Windows: lê a árvore de agora (UMA leitura completa), soma às fotos periódicas,
+// e chama UM `taskkill /F /T` só para os processos que essa leitura mostrou com pid E hora de criação batendo (nunca um
+// pid reaproveitado); depois confere com uma leitura filtrada que nenhum deles existe mais. Nem o código 0 nem o 128 do
+// taskkill provam nada. Raiz nunca capturada: nunca se adota o pid de hoje como raiz; se o processo já tinha acabado
+// antes da primeira leitura não há o que matar (true), se a leitura falhou não há como confirmar (false).
+// `executar` existe para os testes.
+function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3 } = {}) {
   if (plataforma === 'win32') {
+    if (!filho.raiz) return filho.raizEstado === 'perdida';
     const opcoes = { timeout: 15000, windowsHide: true };
-    // Foto de agora, somada às fotos periódicas da execução (um intermediário que já morreu deixou o órfão fora da foto
-    // de agora, mas ele aparece nas anteriores).
-    registrarFoto(filho, arvoreDe(filho.pid, executar, filho.raiz?.criacao));
-    // vivo() devolve true (existe e a hora bate: pode matar), false (morreu ou o pid é de outro programa) ou null (não deu para saber).
-    const naoMortos = () => filho.arvore.filter((e) => vivo(e.pid, e.criacao) !== false);
-    if (filho.arvore) {
-      for (let i = 0; i < tentativas; i++) {
-        const raiz = filho.arvore.find((e) => e.pid === filho.pid);
-        if (raiz && vivo(raiz.pid, raiz.criacao) === true) executar('taskkill', ['/pid', String(filho.pid), '/T', '/F'], opcoes);
-        for (const e of filho.arvore) if (vivo(e.pid, e.criacao) === true) executar('taskkill', ['/pid', String(e.pid), '/F'], opcoes);
-        if (!naoMortos().length) return true;
-      }
+    for (let i = 0; i < tentativas; i++) {
+      const linhas = lerProcessos(executar);
+      if (!linhas) continue;
+      const agora = arvoreDeLinhas(linhas, filho.pid, filho.raiz.criacao);
+      if (agora === null) continue; // linha sem hora na árvore: inconclusivo, tenta de novo
+      registrarFoto(filho, agora);
+      const vivos = filho.arvore.filter((e) => mesmo(linhas, e)); // leitura imediatamente antes do taskkill
+      if (vivos.length) executar('taskkill', ['/F', '/T', ...vivos.flatMap((e) => ['/pid', String(e.pid)])], opcoes);
+      const depois = lerProcessos(executar, filho.arvore.map((e) => e.pid));
+      if (depois && !filho.arvore.some((e) => mesmo(depois, e))) return true;
     }
     console.error(`não consegui confirmar a morte da árvore do processo ${filho.pid}; o lote vai parar se não conseguir`);
     return false;
@@ -254,21 +286,21 @@ function matarArvore(filho, { plataforma = process.platform, executar = spawnSyn
   return true;
 }
 
-// O processo `pid` existe E foi criado na hora `criacao`? (Windows: consulta CIM por pid; outros: só o pid.)
-function processoVivoComCriacao(executar = spawnSync, plataforma = process.platform) {
-  return (pid, criacao) => {
-    if (plataforma !== 'win32') return processoVivoNoSistema(pid);
-    if (!criacao) return null; // sem hora de criação não dá para identificar o processo
-    const r = executar('powershell', ['-NoProfile', '-NonInteractive', '-Command', `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}"; if ($p) { $p.CreationDate.ToFileTimeUtc() }`], { encoding: 'utf8', timeout: 15000, windowsHide: true });
-    if (r.error || r.status !== 0) return null; // não deu para saber: não conta como morto e nunca é morto sem a hora bater
-    const atual = String(r.stdout || '').trim();
-    return atual !== '' && atual === String(criacao ?? '');
-  };
+// Foto periódica SEM bloquear o Node (a leitura do CIM leva segundos): devolve uma promessa com a árvore, ou null.
+function fotografarAssincrono(filho) {
+  return new Promise((resolve) => {
+    if (!filho.raiz) return resolve(null);
+    execFile('powershell', argsPowerShell(null), OPCOES_PS, (erro, stdout) => {
+      if (erro) return resolve(null);
+      const linhas = linhasDe(stdout);
+      resolve(linhas.size ? arvoreDeLinhas(linhas, filho.pid, filho.raiz.criacao) : null);
+    });
+  });
 }
 
 // Depois que o shell fechou: sobrou algum descendente vivo (sem pipe, que o 'close' não enxerga)? Mata e confere.
 // Devolve a lista dos que continuam vivos (vazia = limpo) ou `null` se não deu para conferir (Windows sem leitura da
-// árvore). Windows: fotos periódicas + a de agora (descendentes guardam o pid do pai); outros: o grupo de processos.
+// árvore). Windows: fotos periódicas + a leitura de agora, só com pid e hora batendo; outros sistemas: o grupo.
 // Há processo vivo no grupo? Zumbi (morto que ninguém recolheu) não conta; onde existe /proc lê o estado de cada um.
 function grupoTemVivos(pgid) {
   try {
@@ -285,13 +317,19 @@ function grupoTemVivos(pgid) {
   }
 }
 
-function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSync, vivo = processoVivoComCriacao(executar, plataforma) } = {}) {
+function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSync } = {}) {
   if (plataforma === 'win32') {
-    registrarFoto(filho, arvoreDe(filho.pid, executar, filho.raiz?.criacao));
-    if (!filho.arvore) return null; // não deu para ler a árvore: inconclusivo, quem chamou trata como morte não confirmada
-    const resto = filho.arvore.filter((e) => e.pid !== filho.pid && vivo(e.pid, e.criacao) !== false);
-    for (const e of resto) if (vivo(e.pid, e.criacao) === true) executar('taskkill', ['/pid', String(e.pid), '/T', '/F'], { timeout: 15000, windowsHide: true });
-    return resto.filter((e) => vivo(e.pid, e.criacao) !== false).map((e) => e.pid);
+    if (!filho.raiz) return filho.raizEstado === 'perdida' ? [] : null; // sem a identidade da raiz nada é morto por pid
+    const linhas = lerProcessos(executar);
+    if (!linhas) return null;
+    const agora = arvoreDeLinhas(linhas, filho.pid, filho.raiz.criacao);
+    if (agora === null) return null;
+    registrarFoto(filho, agora);
+    const vivos = filho.arvore.filter((e) => e.pid !== filho.pid && mesmo(linhas, e)); // leitura imediatamente antes do taskkill
+    if (vivos.length) executar('taskkill', ['/F', '/T', ...vivos.flatMap((e) => ['/pid', String(e.pid)])], { timeout: 15000, windowsHide: true });
+    const depois = lerProcessos(executar, vivos.map((e) => e.pid));
+    if (!depois) return null;
+    return vivos.filter((e) => mesmo(depois, e)).map((e) => e.pid);
   }
   const grupoVivo = () => grupoTemVivos(filho.pid);
   if (!grupoVivo()) return [];
@@ -302,7 +340,7 @@ function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSyn
 }
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
-function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fotografar = (f) => arvoreDe(f.pid, spawnSync, f.raiz?.criacao), fotoMs = 2000, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fotografar = fotografarAssincrono, fixar = fixarRaiz, fotoMs = 5000, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS } = {}) {
   // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
   // reduzir agentes locais quando o dono volta a usar o PC. Se a árvore não morrer (taskkill falhando), repete a
   // cada `reintentoMs`; esgotadas as tentativas, a chamada termina com erro `naoConfirmado`: o processo pode
@@ -354,10 +392,17 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fot
     };
     // O tempo máximo também mata a árvore pelo mesmo caminho (o `timeout` do spawn mataria só o shell).
     const limiteDeTempo = setTimeout(() => { estourou = true; parar(); }, tempoMaximoMs);
-    // Windows: fotografa a árvore de tempos em tempos, para o órfão de um intermediário que morreu ainda constar da lista.
+    // Windows: lê a identidade do processo principal (pid + hora) logo depois do spawn, com o shell ainda vivo, e depois
+    // fotografa a árvore de tempos em tempos SEM bloquear o Node, para o órfão de um intermediário que morreu ainda
+    // constar da lista. Sem a identidade da raiz nenhuma foto é feita e nada será morto por pid.
     if (plataforma === 'win32') {
-      const foto = () => { try { registrarFoto(filho, fotografar(filho)); } catch { /* a próxima tenta */ } };
-      foto(); // logo depois do spawn, com o shell ainda vivo: um comando rápido pode fechar antes da foto periódica
+      try { fixar(filho); } catch { filho.raizEstado = 'falhou'; }
+      let emVoo = false;
+      const foto = () => {
+        if (emVoo || terminou) return;
+        emVoo = true;
+        Promise.resolve().then(() => fotografar(filho)).then((leitura) => { if (leitura) registrarFoto(filho, leitura); }, () => {}).finally(() => { emVoo = false; });
+      };
       fotos = setInterval(foto, fotoMs);
       fotos.unref?.();
     }
@@ -711,7 +756,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, matarArvore, processoVivoComCriacao, orfaosVivos, arvoreDe, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, matarArvore, orfaosVivos, arvoreDe, arvoreDeLinhas, lerRaiz, fixarRaiz, lerProcessos, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
