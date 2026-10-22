@@ -22,3 +22,10 @@ test("CLAUDE.md obriga o Claude a ler e escrever no canal antes e depois de cada
   assert.ok(/antes e depois de cada passo/i.test(texto), "falta 'antes e depois de cada passo'");
   assert.ok(/nunca (termine|terminar) (um|o) turno/i.test(texto), "falta a regra de nunca terminar o turno sem checar o canal");
 });
+
+test("só existe UM ponto de comunicação: o arquivo do repositório é apenas um ponteiro para o canal fixo", () => {
+  const texto = ler(path.join("docs", "memoria", "coordenacao.md"));
+  assert.ok(texto.includes(CANAL), "o ponteiro não cita o caminho fixo do canal");
+  assert.ok(texto.split(/\r?\n/).filter((l) => l.trim()).length <= 6, "o arquivo do repositório deve ser só um ponteiro (máx. 6 linhas), não uma segunda cópia da conversa");
+  assert.ok(!/^###\s/m.test(texto), "não pode haver mensagens (### ...) no arquivo do repositório");
+});
