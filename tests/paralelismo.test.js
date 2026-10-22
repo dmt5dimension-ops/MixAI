@@ -20,22 +20,31 @@ const config = JSON.parse(fs.readFileSync(path.join(RAIZ, "orquestra", "paraleli
 const PARADO = { ociosoSegundos: 600, gpuOutrosPct: 2, cpuOutrosPct: 5, videoDecodePct: 0, memoriaLivreGB: 6 };
 const RECEM_PARADO = { ...PARADO, ociosoSegundos: 100 };
 const decide = (leitura, modo, anterior, agora) => par.decidir({ leitura, modo, anterior, agora, modos, config, memoriaMinimaGB: 2 });
+// Sem o campo de memória na leitura, a decisão usa a memória livre do próprio sistema (os.freemem): o teste fixa esse número,
+// senão o resultado depende de quanta memória o PC de quem roda tem livre naquele instante.
+const comMemoriaDoSO = (gb, corpo) => {
+  const original = os.freemem;
+  os.freemem = () => gb * 1024 ** 3;
+  try { return corpo(); } finally { os.freemem = original; }
+};
 
 test("usando o PC (mexeu há pouco, placa ou processador ocupados, vídeo, leitura faltando) o alvo é 1", () => {
-  const casos = [
-    [{ ...PARADO, ociosoSegundos: 10 }, /mexeu no PC/],
-    [{ ...PARADO, gpuOutrosPct: 80 }, /placa/],
-    [{ ...PARADO, cpuOutrosPct: 90 }, /processador/],
-    [{ ...PARADO, videoDecodePct: 18.5 }, /vídeo/],
-    [{ ...PARADO, videoDecodePct: null }, /indisponível/],
-    [null, /indisponível/],
-    [{ ...PARADO, memoriaLivreGB: undefined }, /indisponível/],
-  ];
-  for (const [leitura, texto] of casos) {
-    const d = decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
-    assert.strictEqual(d.alvo, 1, String(texto));
-    assert.match(d.motivo, texto);
-  }
+  comMemoriaDoSO(6, () => {
+    const casos = [
+      [{ ...PARADO, ociosoSegundos: 10 }, /mexeu no PC/],
+      [{ ...PARADO, gpuOutrosPct: 80 }, /placa/],
+      [{ ...PARADO, cpuOutrosPct: 90 }, /processador/],
+      [{ ...PARADO, videoDecodePct: 18.5 }, /vídeo/],
+      [{ ...PARADO, videoDecodePct: null }, /indisponível/],
+      [null, /indisponível/],
+      [{ ...PARADO, memoriaLivreGB: undefined }, /indisponível/],
+    ];
+    for (const [leitura, texto] of casos) {
+      const d = decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
+      assert.strictEqual(d.alvo, 1, String(texto));
+      assert.match(d.motivo, texto);
+    }
+  });
 });
 
 test("parado, sobe um por vez, só depois do tempo mínimo, até o teto do modo", () => {
@@ -134,26 +143,28 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
 });
 
 test("falha de leitura NUNCA vira PC parado: null, texto, negativo, NaN, fora de faixa e campo faltando contam como em uso", () => {
-  const campos = ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoDecodePct", "memoriaLivreGB"];
-  const ruins = [null, undefined, "0", "", NaN, -1, Infinity, {}, [], true];
-  for (const campo of campos) {
-    for (const ruim of ruins) {
-      const d = decide({ ...PARADO, [campo]: ruim }, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
-      assert.strictEqual(d.alvo, 1, `${campo}=${String(ruim)}`);
-      assert.match(d.motivo, /indisponível/, `${campo}=${String(ruim)}`);
+  comMemoriaDoSO(6, () => {
+    const campos = ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoDecodePct", "memoriaLivreGB"];
+    const ruins = [null, undefined, "0", "", NaN, -1, Infinity, {}, [], true];
+    for (const campo of campos) {
+      for (const ruim of ruins) {
+        const d = decide({ ...PARADO, [campo]: ruim }, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
+        assert.strictEqual(d.alvo, 1, `${campo}=${String(ruim)}`);
+        assert.match(d.motivo, /indisponível/, `${campo}=${String(ruim)}`);
+      }
+      const sem = { ...PARADO };
+      delete sem[campo];
+      assert.strictEqual(decide(sem, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, `sem ${campo}`);
     }
-    const sem = { ...PARADO };
-    delete sem[campo];
-    assert.strictEqual(decide(sem, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, `sem ${campo}`);
-  }
-  assert.strictEqual(decide(PARADO, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: tudo válido e parado mantém");
-  // pela saída do script: contador que falhou vem null
-  const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [0, 1, 2].map((i) => ({ i, n: "pid_1_engtype_video codec 0", v: 0 })), memoriaLivreGB: 6 };
-  for (const quebra of [{ ociosoSegundos: null }, { gpuOutrosPct: null }, { cpuTotalPct: null }, { cpuMeuPct: null }, { nucleos: null }, { videoAmostras: 0 }, { videoMotores: [] }, { memoriaLivreGB: null }]) {
-    const leitura = par.lerSaida(JSON.stringify({ ...base, ...quebra }));
-    assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, JSON.stringify(quebra));
-  }
-  assert.strictEqual(decide(par.lerSaida(JSON.stringify(base)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: saída completa e parada mantém");
+    assert.strictEqual(decide(PARADO, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: tudo válido e parado mantém");
+    // pela saída do script: contador que falhou vem null
+    const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [0, 1, 2].map((i) => ({ i, n: "pid_1_engtype_video codec 0", v: 0 })), memoriaLivreGB: 6 };
+    for (const quebra of [{ ociosoSegundos: null }, { gpuOutrosPct: null }, { cpuTotalPct: null }, { cpuMeuPct: null }, { nucleos: null }, { videoAmostras: 0 }, { videoMotores: [] }, { memoriaLivreGB: null }]) {
+      const leitura = par.lerSaida(JSON.stringify({ ...base, ...quebra }));
+      assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, JSON.stringify(quebra));
+    }
+    assert.strictEqual(decide(par.lerSaida(JSON.stringify(base)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: saída completa e parada mantém");
+  });
 });
 
 test("CPU de outros programas: cada processo do Ollama conta uma vez, dividido pelos núcleos; o script não usa curinga por nome", () => {
@@ -746,16 +757,17 @@ test("matarArvore no Windows mata pela alça do Node (sem ler PID): aceito = tru
 test("chamarComando (Windows simulado): aborta, termina logo, e não chama o PowerShell nem o taskkill para ler ou conferir árvore", async () => {
   const { spawn } = require("node:child_process");
   const lancados = [];
-  const lancar = (comando, fd) => { lancados.push(comando); return spawn(comando, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true }); };
+  // sem shell: no Windows de verdade, matar o cmd.exe não mataria o node dentro dele (quem cuida disso é o Job Object, que este teste não usa)
+  const lancar = (comando, fd) => { lancados.push(comando); return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] }); };
   const ctl = new AbortController();
   const inicio = Date.now();
-  const chamada = escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { plataforma: "win32", lancar, orfaos: undefined })("x", ctl.signal);
+  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar, matar: (f) => escada.matarArvore(f, { plataforma: "win32" }), orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32" }) })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada);
   assert.ok(Date.now() - inicio < 5000);
   assert.strictEqual(lancados.length, 1);
   // comando normal termina sem conferência alguma de descendentes
-  assert.strictEqual(await escada.chamarComando(`"${process.execPath}" -e "process.stdout.write('ok')"`, { plataforma: "win32", lancar })("x"), "ok");
+  assert.strictEqual(await escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: (f) => escada.orfaosVivos(f, { plataforma: "win32" }) })("x"), "ok");
   assert.deepStrictEqual(escada.orfaosVivos({ pid: 1 }, { plataforma: "win32" }), [], "o job já cuidou dos descendentes");
 });
 
