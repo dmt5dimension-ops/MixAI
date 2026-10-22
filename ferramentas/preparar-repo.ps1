@@ -115,12 +115,14 @@ try {
     )
     foreach ($l in $labels) {
         gh label create $l[0] --color $l[1] --description $l[2] --force | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "gh nao conseguiu criar a label $($l[0]) (codigo $LASTEXITCODE)." }
         Write-Ok $l[0]
     }
 
     if ($ComandoTeste) {
         Write-Passo 'Comando de regressao no CI'
         gh variable set REGRESSION_CMD --body $ComandoTeste
+        if ($LASTEXITCODE -ne 0) { throw "gh nao conseguiu definir REGRESSION_CMD (codigo $LASTEXITCODE)." }
         Write-Ok "variavel REGRESSION_CMD = $ComandoTeste"
     }
 

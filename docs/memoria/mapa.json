@@ -1,0 +1,781 @@
+{
+  "arquivos": [
+    {
+      "arquivo": "ferramentas/instalar.ps1",
+      "descricao": "Instala as ferramentas do orquestrador no Windows 11.",
+      "funcoes": [
+        {
+          "nome": "Write-Passo",
+          "linha": 15
+        },
+        {
+          "nome": "Write-Ok",
+          "linha": 16
+        },
+        {
+          "nome": "Write-Aviso",
+          "linha": 17
+        },
+        {
+          "nome": "Test-Comando",
+          "linha": 19
+        },
+        {
+          "nome": "Update-Path",
+          "linha": 23
+        },
+        {
+          "nome": "Install-ViaWinget",
+          "linha": 29
+        }
+      ]
+    },
+    {
+      "arquivo": "ferramentas/preparar-repo.ps1",
+      "descricao": "Prepara um repositorio para o orquestrador: regras dos agentes, CI de regressao,",
+      "funcoes": [
+        {
+          "nome": "Write-Passo",
+          "linha": 22
+        },
+        {
+          "nome": "Write-Ok",
+          "linha": 23
+        },
+        {
+          "nome": "Write-Aviso",
+          "linha": 24
+        },
+        {
+          "nome": "Aplicar-ComandoTeste",
+          "linha": 28
+        },
+        {
+          "nome": "Copiar-Arquivo",
+          "linha": 38
+        }
+      ]
+    },
+    {
+      "arquivo": "local/criar-apelido.ps1",
+      "descricao": "Aponta o nome fixo \"mixai-local\" para o modelo do modo (não baixa nem copia nada).",
+      "funcoes": []
+    },
+    {
+      "arquivo": "local/iniciar-vigia.ps1",
+      "descricao": "Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.",
+      "funcoes": []
+    },
+    {
+      "arquivo": "local/modo.ps1",
+      "descricao": "Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).",
+      "funcoes": []
+    },
+    {
+      "arquivo": "local/rodar-local.js",
+      "descricao": "Porta de entrada única para o modelo local: a escada e o chamar.js passam por aqui.",
+      "funcoes": [
+        {
+          "nome": "minimoGB",
+          "linha": 23
+        },
+        {
+          "nome": "memoriaSuficiente",
+          "linha": 28
+        },
+        {
+          "nome": "carregar",
+          "linha": 37
+        },
+        {
+          "nome": "foraDaPlaca",
+          "linha": 47
+        },
+        {
+          "nome": "descarregar",
+          "linha": 63
+        },
+        {
+          "nome": "chamarOllama",
+          "linha": 71
+        },
+        {
+          "nome": "principal",
+          "linha": 86
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "local/vigia-prioridade.ps1",
+      "descricao": "Roda escondido, aberto pelo modo.ps1. O Ollama abre o processo do modelo (llama-server)",
+      "funcoes": []
+    },
+    {
+      "arquivo": "orquestra/aplicar.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "normalizar",
+          "linha": 4
+        },
+        {
+          "nome": "entradasDoEscopo",
+          "linha": 14
+        },
+        {
+          "nome": "permitido",
+          "linha": 26
+        },
+        {
+          "nome": "conferirAlterados",
+          "linha": 34
+        },
+        {
+          "nome": "dentroDaRaiz",
+          "linha": 39
+        },
+        {
+          "nome": "caminhoComCaixaExistente",
+          "linha": 44
+        },
+        {
+          "nome": "aplicarResposta",
+          "linha": 64
+        }
+      ],
+      "exporta": [
+        "aplicarResposta",
+        "conferirAlterados"
+      ]
+    },
+    {
+      "arquivo": "orquestra/chamar.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "detectarLimite",
+          "linha": 10
+        },
+        {
+          "nome": "limiteNaSaida",
+          "linha": 14
+        },
+        {
+          "nome": "ultimoJson",
+          "linha": 34
+        },
+        {
+          "nome": "falhouSemCota",
+          "linha": 45
+        },
+        {
+          "nome": "marcarSemCota",
+          "linha": 49
+        },
+        {
+          "nome": "escolher",
+          "linha": 56
+        },
+        {
+          "nome": "lerEstado",
+          "linha": 65
+        },
+        {
+          "nome": "salvarEstado",
+          "linha": 79
+        },
+        {
+          "nome": "uso",
+          "linha": 83
+        },
+        {
+          "nome": "principal",
+          "linha": 88
+        }
+      ],
+      "exporta": [
+        "detectarLimite",
+        "limiteNaSaida",
+        "falhouSemCota",
+        "marcarSemCota",
+        "escolher"
+      ]
+    },
+    {
+      "arquivo": "orquestra/escada.js",
+      "descricao": "Escada do modelo local: tarefa bem delimitada vai primeiro ao mixai-local.",
+      "funcoes": [
+        {
+          "nome": "lerRegras",
+          "linha": 18
+        },
+        {
+          "nome": "salvarRegra",
+          "linha": 29
+        },
+        {
+          "nome": "escolherRegras",
+          "linha": 46
+        },
+        {
+          "nome": "montarPrompt",
+          "linha": 52
+        },
+        {
+          "nome": "promptRegra",
+          "linha": 65
+        },
+        {
+          "nome": "lerRegraGerada",
+          "linha": 75
+        },
+        {
+          "nome": "registrarCaso",
+          "linha": 89
+        },
+        {
+          "nome": "lerCasos",
+          "linha": 94
+        },
+        {
+          "nome": "paraTreino",
+          "linha": 100
+        },
+        {
+          "nome": "tentar",
+          "linha": 104
+        },
+        {
+          "nome": "aprenderRegra",
+          "linha": 114
+        },
+        {
+          "nome": "resolver",
+          "linha": 126
+        },
+        {
+          "nome": "ok",
+          "linha": 128
+        },
+        {
+          "nome": "chamarComando",
+          "linha": 166
+        },
+        {
+          "nome": "verificadorPorComando",
+          "linha": 189
+        },
+        {
+          "nome": "promptReinstruir",
+          "linha": 196
+        },
+        {
+          "nome": "promptAntagonista",
+          "linha": 205
+        },
+        {
+          "nome": "resolverComLoop",
+          "linha": 217
+        },
+        {
+          "nome": "julgar",
+          "linha": 225
+        },
+        {
+          "nome": "ok",
+          "linha": 239
+        },
+        {
+          "nome": "concluir",
+          "linha": 240
+        },
+        {
+          "nome": "validarPlano",
+          "linha": 286
+        },
+        {
+          "nome": "normaliza",
+          "linha": 300
+        },
+        {
+          "nome": "sobrepoe",
+          "linha": 301
+        },
+        {
+          "nome": "promptMicro",
+          "linha": 306
+        },
+        {
+          "nome": "lote",
+          "linha": 314
+        },
+        {
+          "nome": "exportar",
+          "linha": 341
+        },
+        {
+          "nome": "principal",
+          "linha": 348
+        },
+        {
+          "nome": "verificadorDe",
+          "linha": 360
+        }
+      ],
+      "exporta": [
+        "lote",
+        "resolverComLoop",
+        "escolherRegras",
+        "montarPrompt",
+        "lerRegraGerada",
+        "registrarCaso",
+        "lerCasos",
+        "paraTreino",
+        "resolver",
+        "exportar"
+      ]
+    },
+    {
+      "arquivo": "orquestra/mapa.js",
+      "descricao": "Mapa do código e da memória: onde fica cada função e o que já foi feito.",
+      "funcoes": [
+        {
+          "nome": "listar",
+          "linha": 10
+        },
+        {
+          "nome": "descricao",
+          "linha": 23
+        },
+        {
+          "nome": "semTextos",
+          "linha": 31
+        },
+        {
+          "nome": "lerArquivo",
+          "linha": 74
+        },
+        {
+          "nome": "lerFeitos",
+          "linha": 102
+        },
+        {
+          "nome": "construir",
+          "linha": 117
+        },
+        {
+          "nome": "emTexto",
+          "linha": 121
+        },
+        {
+          "nome": "gerar",
+          "linha": 132
+        },
+        {
+          "nome": "conferir",
+          "linha": 140
+        },
+        {
+          "nome": "buscar",
+          "linha": 150
+        },
+        {
+          "nome": "principal",
+          "linha": 161
+        }
+      ],
+      "exporta": [
+        "construir",
+        "gerar",
+        "conferir",
+        "buscar",
+        "emTexto"
+      ]
+    },
+    {
+      "arquivo": "orquestra/trocar.ps1",
+      "descricao": "Troca manualmente quem está sem cota.",
+      "funcoes": []
+    },
+    {
+      "arquivo": "tests/aplicar.test.js",
+      "descricao": "",
+      "funcoes": [
+        {
+          "nome": "emRaizTemporaria",
+          "linha": 9
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/canal-coordenacao.test.js",
+      "descricao": "Trava a regra do canal de coordenação entre Claude e Codex: os dois arquivos de regras precisam apontar para o mesmo canal.",
+      "funcoes": [
+        {
+          "nome": "ler",
+          "linha": 8
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/escada.test.js",
+      "descricao": "Testa a escada: tarefa vai primeiro ao modelo local; se falhar sobe para Codex/Claude;",
+      "funcoes": [
+        {
+          "nome": "pastaTemp",
+          "linha": 11
+        },
+        {
+          "nome": "verificar",
+          "linha": 17
+        },
+        {
+          "nome": "local",
+          "linha": 59
+        },
+        {
+          "nome": "codex",
+          "linha": 63
+        },
+        {
+          "nome": "verificar",
+          "linha": 81
+        },
+        {
+          "nome": "codex",
+          "linha": 90
+        },
+        {
+          "nome": "codex",
+          "linha": 139
+        },
+        {
+          "nome": "codex",
+          "linha": 163
+        },
+        {
+          "nome": "esperar",
+          "linha": 183
+        },
+        {
+          "nome": "micro",
+          "linha": 184
+        },
+        {
+          "nome": "verificadorDe",
+          "linha": 185
+        },
+        {
+          "nome": "verifMotivo",
+          "linha": 254
+        },
+        {
+          "nome": "local",
+          "linha": 262
+        },
+        {
+          "nome": "local",
+          "linha": 276
+        },
+        {
+          "nome": "local",
+          "linha": 314
+        },
+        {
+          "nome": "local",
+          "linha": 337
+        },
+        {
+          "nome": "codex",
+          "linha": 370
+        },
+        {
+          "nome": "local",
+          "linha": 389
+        },
+        {
+          "nome": "local",
+          "linha": 407
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/falhas-escada.test.js",
+      "descricao": "Regressão permanente da escada: cada falha que já aconteceu (orquestra/falhas/falhas.jsonl) guarda a resposta",
+      "funcoes": [
+        {
+          "nome": "rodar",
+          "linha": 16
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/guarda-testes.test.js",
+      "descricao": "Testa o guarda de testes (.github/scripts/guarda_testes.py) num repositório git temporário.",
+      "funcoes": [
+        {
+          "nome": "rodar",
+          "linha": 12
+        },
+        {
+          "nome": "git",
+          "linha": 14
+        },
+        {
+          "nome": "mudar",
+          "linha": 54
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/instalar.test.js",
+      "descricao": "Confere o instalador do Windows (ferramentas/instalar.ps1) sem precisar do PowerShell:",
+      "funcoes": [
+        {
+          "nome": "achar",
+          "linha": 51
+        },
+        {
+          "nome": "rodarComFalsos",
+          "linha": 57
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/mapa.test.js",
+      "descricao": "Testa o mapa do código e da memória (orquestra/mapa.js): índice de onde fica cada função e do que já foi feito.",
+      "funcoes": [
+        {
+          "nome": "repoFalso",
+          "linha": 12
+        },
+        {
+          "nome": "grava",
+          "linha": 14
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/modelo-local.test.js",
+      "descricao": "Testa a configuração dos modos dia/noite do modelo local (local/modos.json e local/modo.ps1).",
+      "funcoes": [
+        {
+          "nome": "criarApelidoComOllamaFalso",
+          "linha": 14
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/papeis.test.js",
+      "descricao": "Testa a troca de papéis entre Claude, Codex e o modelo local (orquestra/).",
+      "funcoes": [],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/preparar-repo.test.js",
+      "descricao": "Testa o kit que leva as regras do MixAI para o repositório de outro app (ferramentas/preparar-repo.ps1).",
+      "funcoes": [
+        {
+          "nome": "ler",
+          "linha": 8
+        },
+        {
+          "nome": "cobre",
+          "linha": 22
+        },
+        {
+          "nome": "titulos",
+          "linha": 44
+        },
+        {
+          "nome": "rodar",
+          "linha": 150
+        },
+        {
+          "nome": "prepararComGhFalso",
+          "linha": 164
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/protecao-local.test.js",
+      "descricao": "Testa as proteções do modelo local: nunca cair para o processador, conferir a memória",
+      "funcoes": [
+        {
+          "nome": "pastaTemporaria",
+          "linha": 16
+        },
+        {
+          "nome": "ollamaFalso",
+          "linha": 21
+        },
+        {
+          "nome": "rodar",
+          "linha": 35
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/regra-modelo-local.test.js",
+      "descricao": "Trava a regra do AGENTS.md que diz quando o planejador pode mandar tarefa para o modelo local.",
+      "funcoes": [
+        {
+          "nome": "secao",
+          "linha": 9
+        }
+      ],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/smoke.test.js",
+      "descricao": "",
+      "funcoes": [],
+      "exporta": []
+    },
+    {
+      "arquivo": "tests/trava-de-escopo.test.js",
+      "descricao": "Testa a trava de escopo (.github/scripts/trava_de_escopo.py) num repositório git temporário.",
+      "funcoes": [
+        {
+          "nome": "repoCom",
+          "linha": 12
+        },
+        {
+          "nome": "git",
+          "linha": 14
+        },
+        {
+          "nome": "rodar",
+          "linha": 32
+        },
+        {
+          "nome": "escopo",
+          "linha": 44
+        },
+        {
+          "nome": "padroes",
+          "linha": 115
+        },
+        {
+          "nome": "git",
+          "linha": 152
+        },
+        {
+          "nome": "git",
+          "linha": 181
+        }
+      ],
+      "exporta": []
+    }
+  ],
+  "feitos": [
+    {
+      "o_que": "Portões do CI: regressão, guarda de testes, revisão cruzada",
+      "testes": [
+        "tests/smoke.test.js"
+      ]
+    },
+    {
+      "o_que": "Trava de escopo do PR",
+      "testes": [
+        "tests/trava-de-escopo.test.js"
+      ]
+    },
+    {
+      "o_que": "Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows)",
+      "testes": [
+        "tests/trava-de-escopo.test.js"
+      ]
+    },
+    {
+      "o_que": "Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`)",
+      "testes": [
+        "tests/modelo-local.test.js"
+      ]
+    },
+    {
+      "o_que": "O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho",
+      "testes": [
+        "tests/modelo-local.test.js"
+      ]
+    },
+    {
+      "o_que": "Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js)",
+      "testes": [
+        "tests/papeis.test.js"
+      ]
+    },
+    {
+      "o_que": "Regra de quando mandar tarefa para o modelo local (`AGENTS.md`)",
+      "testes": [
+        "tests/regra-modelo-local.test.js"
+      ]
+    },
+    {
+      "o_que": "Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor",
+      "testes": [
+        "tests/protecao-local.test.js"
+      ]
+    },
+    {
+      "o_que": "Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`)",
+      "testes": [
+        "tests/preparar-repo.test.js"
+      ]
+    },
+    {
+      "o_que": "Preparação do repo para se o GitHub CLI falhar ao criar uma label ou definir `REGRESSION_CMD`; não anuncia sucesso falso",
+      "testes": [
+        "tests/preparar-repo.test.js"
+      ]
+    },
+    {
+      "o_que": "Canal de coordenação Claude↔Codex fora do git (`D:\\MixAI-coordenacao\\coordenacao.md`), citado em `AGENTS.md` e `CODEX.md`",
+      "testes": [
+        "tests/canal-coordenacao.test.js"
+      ]
+    },
+    {
+      "o_que": "Escada do modelo local: tenta no local, sobe para Codex/Claude, vira regra, registra caso para treino (`orquestra/escada.js`)",
+      "testes": [
+        "tests/escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Microtarefas em paralelo no Qwen, com escopo, verificador e limite de agentes (`escada.js lote`)",
+      "testes": [
+        "tests/escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Loop de tentativas com reinstrução do modelo grande, checagem antagônica (também na regra aprendida) e falhas resolvidas viram regressão (`orquestra/falhas/`)",
+      "testes": [
+        "tests/escada.test.js",
+        "tests/falhas-escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo",
+      "testes": [
+        "tests/aplicar.test.js"
+      ]
+    },
+    {
+      "o_que": "Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, para os modelos grandes não relerem o projeto (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`)",
+      "testes": [
+        "tests/mapa.test.js"
+      ]
+    }
+  ]
+}
