@@ -174,12 +174,15 @@ const comandoCim = (pids) => `Get-CimInstance Win32_Process ${CAMPOS_CIM}${pids 
 const argsPowerShell = (pids) => ['-NoProfile', '-NonInteractive', '-Command', comandoCim(pids)];
 const OPCOES_PS = { encoding: 'utf8', timeout: 20000, windowsHide: true };
 
-// Texto do PowerShell -> Map pid -> { pid, pai, criacao }. `criacao` '' = linha sem hora.
+// Texto do PowerShell -> Map pid -> { pid, pai, criacao }. `criacao` '' = linha sem hora. Uma linha que não tem o
+// formato esperado torna a leitura inteira inconclusiva (null): descartar em silêncio poderia esconder um processo.
 function linhasDe(stdout) {
   const mapa = new Map();
   for (const linha of String(stdout).split(/\r?\n/)) {
+    if (!linha.trim()) continue;
     const m = /^(\d+),(\d+)(?:,(\d*))?$/.exec(linha.trim());
-    if (m) mapa.set(Number(m[1]), { pid: Number(m[1]), pai: Number(m[2]), criacao: m[3] ?? '' });
+    if (!m) return null;
+    mapa.set(Number(m[1]), { pid: Number(m[1]), pai: Number(m[2]), criacao: m[3] ?? '' });
   }
   return mapa;
 }
@@ -190,7 +193,7 @@ function lerProcessos(executar = spawnSync, pids = null) {
   const r = executar('powershell', argsPowerShell(pids), OPCOES_PS);
   if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return null;
   const mapa = linhasDe(r.stdout);
-  if (!pids && !mapa.size) return null;
+  if (!mapa || (!pids && !mapa.size)) return null;
   return mapa;
 }
 
@@ -204,30 +207,54 @@ function lerRaiz(pid, executar = spawnSync) {
   return r.criacao ? { pid, criacao: r.criacao } : null;
 }
 
-// Árvore a partir das linhas lidas. A raiz é a da PRIMEIRA leitura (`raizCriacao`); se hoje o pid tem outra hora, foi
-// reaproveitado por outro programa: nada daquilo é nosso (devolve []). Descendente só vale se o pai bate pelo pid E o
-// filho foi criado depois do pai. Sem a hora da raiz (`raizCriacao` vazio) nada é aceito. Linha sem hora, na árvore,
-// torna a leitura inconclusiva (null).
-function arvoreDeLinhas(linhas, pid, raizCriacao) {
-  if (!raizCriacao) return [];
+// Árvore a partir das linhas lidas. Três situações:
+//  - raiz presente com a hora da PRIMEIRA leitura (`raizCriacao`): a árvore sai dela. Hora diferente = o pid foi
+//    reaproveitado por outro programa (nada é nosso, []); raiz sem hora na leitura de agora = inconclusivo (null).
+//  - raiz ausente mas conhecida: só vale o que já tínhamos identificado (`conhecidos`, pid + hora) e o que descende
+//    deles; um filho cujo pai tem o número da raiz antiga NÃO entra (o número pode ser de outro programa).
+//  - raiz que nunca foi lida (o shell acabou antes da primeira leitura; `inicio` = hora do spawn): valem os filhos do
+//    pid criados depois do spawn. Limite: um pid reaproveitado por outro programa dentro desses segundos seria
+//    confundido; é o único jeito de conferir descendentes sem ter lido a raiz.
+// Descendente só vale se o pai bate pelo pid E o filho foi criado depois do pai. Linha sem hora na árvore: null.
+function arvoreDeLinhas(linhas, pid, raizCriacao, conhecidos = [], inicio = null) {
   const raiz = linhas.get(pid);
-  if (raiz && raiz.criacao !== String(raizCriacao)) return [];
+  const resultado = [];
+  const pais = [];
+  if (raizCriacao) {
+    if (raiz) {
+      if (raiz.criacao === '') return null;
+      if (raiz.criacao !== String(raizCriacao)) return [];
+      resultado.push(raiz);
+      pais.push({ pid, hora: String(raizCriacao) });
+    } else {
+      for (const c of conhecidos) {
+        const l = linhas.get(c.pid);
+        if (c.pid === pid || !l) continue;
+        if (l.criacao === '') return null;
+        if (l.criacao !== c.criacao) continue;
+        resultado.push(l);
+        pais.push({ pid: l.pid, hora: l.criacao });
+      }
+    }
+  } else if (inicio) {
+    pais.push({ pid, hora: String(inicio) });
+  } else return [];
   const filhos = new Map();
   for (const l of linhas.values()) filhos.set(l.pai, [...(filhos.get(l.pai) || []), l]);
-  const resultado = [];
-  if (raiz) resultado.push(raiz);
-  for (let i = -1; i < resultado.length; i++) {
-    const paiPid = i < 0 ? pid : resultado[i].pid;
-    const horaPai = i < 0 ? String(raizCriacao) : resultado[i].criacao;
-    for (const f of filhos.get(paiPid) || []) {
+  for (let i = 0; i < pais.length; i++) {
+    for (const f of filhos.get(pais[i].pid) || []) {
       if (f.pid === pid || resultado.some((x) => x.pid === f.pid)) continue;
       if (f.criacao === '') return null;
-      if (BigInt(f.criacao) < BigInt(horaPai)) continue; // mais velho que o pai: o pai é outro processo
+      if (BigInt(f.criacao) < BigInt(pais[i].hora)) continue; // mais velho que o pai: o pai é outro processo
       resultado.push(f);
+      pais.push({ pid: f.pid, hora: f.criacao });
     }
   }
   return resultado.map((e) => ({ pid: e.pid, criacao: e.criacao }));
 }
+
+// Árvore a partir da identidade que o `filho` já guarda (raiz, fotos e hora do spawn).
+const arvoreDoFilho = (linhas, filho) => arvoreDeLinhas(linhas, filho.pid, filho.raiz?.criacao ?? null, filho.arvore || [], filho.inicioFt ?? null);
 
 // Versão direta (lê e monta a árvore), usada nos testes e na foto periódica.
 function arvoreDe(pid, executar = spawnSync, raizCriacao = null) {
@@ -258,6 +285,9 @@ function fixarRaiz(filho, executar = spawnSync) {
 
 const mesmo = (linhas, e) => linhas.get(e.pid)?.criacao === e.criacao;
 
+// Limite do Windows, que não dá para fechar: entre a leitura que confere pid e hora e o `taskkill` há alguns
+// milissegundos em que o programa que herdaria um pid reaproveitado poderia aparecer; o sistema não oferece "matar
+// só se a hora for esta".
 // Mata o processo e os filhos dele. Windows: lê a árvore de agora (UMA leitura completa), soma às fotos periódicas,
 // e chama UM `taskkill /F /T` só para os processos que essa leitura mostrou com pid E hora de criação batendo (nunca um
 // pid reaproveitado); depois confere com uma leitura filtrada que nenhum deles existe mais. Nem o código 0 nem o 128 do
@@ -266,14 +296,15 @@ const mesmo = (linhas, e) => linhas.get(e.pid)?.criacao === e.criacao;
 // `executar` existe para os testes.
 function matarArvore(filho, { plataforma = process.platform, executar = spawnSync, tentativas = 3 } = {}) {
   if (plataforma === 'win32') {
-    if (!filho.raiz) return filho.raizEstado === 'perdida';
+    if (!filho.raiz && filho.raizEstado !== 'perdida') return false; // leitura da raiz falhou: nada se mata por pid, nada se confirma
     const opcoes = { timeout: 15000, windowsHide: true };
     for (let i = 0; i < tentativas; i++) {
       const linhas = lerProcessos(executar);
       if (!linhas) continue;
-      const agora = arvoreDeLinhas(linhas, filho.pid, filho.raiz.criacao);
+      const agora = arvoreDoFilho(linhas, filho);
       if (agora === null) continue; // linha sem hora na árvore: inconclusivo, tenta de novo
       registrarFoto(filho, agora);
+      if (!filho.arvore?.length) { filho.mortoConfirmado = true; return true; } // leitura válida: nada nosso existe
       const vivos = filho.arvore.filter((e) => mesmo(linhas, e)); // leitura imediatamente antes do taskkill
       if (vivos.length) executar('taskkill', ['/F', '/T', ...vivos.flatMap((e) => ['/pid', String(e.pid)])], opcoes);
       const depois = lerProcessos(executar, filho.arvore.map((e) => e.pid));
@@ -293,7 +324,7 @@ function fotografarAssincrono(filho) {
     execFile('powershell', argsPowerShell(null), OPCOES_PS, (erro, stdout) => {
       if (erro) return resolve(null);
       const linhas = linhasDe(stdout);
-      resolve(linhas.size ? arvoreDeLinhas(linhas, filho.pid, filho.raiz.criacao) : null);
+      resolve(linhas && linhas.size ? arvoreDoFilho(linhas, filho) : null);
     });
   });
 }
@@ -319,13 +350,14 @@ function grupoTemVivos(pgid) {
 
 function orfaosVivos(filho, { plataforma = process.platform, executar = spawnSync } = {}) {
   if (plataforma === 'win32') {
-    if (!filho.raiz) return filho.raizEstado === 'perdida' ? [] : null; // sem a identidade da raiz nada é morto por pid
+    if (!filho.raiz && filho.raizEstado !== 'perdida') return null; // sem a identidade da raiz nada é morto por pid
     const linhas = lerProcessos(executar);
     if (!linhas) return null;
-    const agora = arvoreDeLinhas(linhas, filho.pid, filho.raiz.criacao);
+    const agora = arvoreDoFilho(linhas, filho);
     if (agora === null) return null;
     registrarFoto(filho, agora);
-    const vivos = filho.arvore.filter((e) => e.pid !== filho.pid && mesmo(linhas, e)); // leitura imediatamente antes do taskkill
+    const vivos = (filho.arvore || []).filter((e) => e.pid !== filho.pid && mesmo(linhas, e)); // leitura imediatamente antes do taskkill
+    if (!vivos.length) return [];
     if (vivos.length) executar('taskkill', ['/F', '/T', ...vivos.flatMap((e) => ['/pid', String(e.pid)])], { timeout: 15000, windowsHide: true });
     const depois = lerProcessos(executar, vivos.map((e) => e.pid));
     if (!depois) return null;
@@ -359,6 +391,8 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, fot
         filho = spawn(comando, { shell: true, stdio: [fdEntrada, 'pipe', 'pipe'], detached: process.platform !== 'win32' }); // fora do Windows, grupo próprio: matar o grupo leva os filhos do shell
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { apagarEntrada(); throw e; }
+    // Hora do spawn em FILETIME (100 ns desde 1601), com 2 s de folga: limite para os filhos de uma raiz que nunca foi lida.
+    filho.inicioFt = String((BigInt(Date.now() - 2000) * 10000n) + 116444736000000000n);
     let terminou = false;
     let relogio = null;
     let estourou = false;
