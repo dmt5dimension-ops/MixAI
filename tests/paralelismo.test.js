@@ -571,11 +571,12 @@ test("estado salvo de uma execução antiga expira: um lote novo não herda o al
   const controle = par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
   assert.strictEqual(controle(), 1, "estado de 10 h atrás é ignorado");
   controle.liberar(); // o lote acabou: devolve a vaga reservada (senão o lote seguinte dividiria o teto com ele)
-  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora - 1000, gravadoEm: agora - 1000 }));
-  const recente = par.criarControle({ leitor: { ler: () => PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
-  assert.strictEqual(recente(), 3, "estado recente vale");
+  // com a leitura "recém parado" e SEM estado, a subida inicial dá 1; com estado recente do mesmo modo o 3 só pode vir do estado
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora - 1000, gravadoEm: agora - 1000, modo: "noite" }));
+  const recente = par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
+  assert.strictEqual(recente(), 3, "estado recente (do mesmo modo) vale: prova a reutilização, não a subida inicial");
   recente.liberar();
-  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora }));
+  fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora, modo: "noite" }));
   assert.strictEqual(par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 1, "sem data de gravação: ignorado");
 });
 
@@ -1433,7 +1434,7 @@ test("uso-windows.ps1 (texto): VRAM só do adaptador do MixAI (luid), adaptadore
   assert.match(uso, /\$amostrasAdaptador\.Count -eq 0\) \{ \$valido = \$false \}/, "CounterSamples vazio do adaptador dá null");
   assert.doesNotMatch(uso, /\$totalVram \+= /, "não soma todos os adaptadores");
   assert.match(uso, /Measure-Object PrivatePageCount -Sum/, "só memória privada");
-  assert.match(uso, /\$_\.Name -match 'llama\|runner'/, "só os runners do modelo");
+  assert.match(uso, /\$_\.Name -match '\^\(llama-server\|ollama_llama_server\|ollama-runner\)/, "só os runners do modelo, pelo nome exato");
   assert.doesNotMatch(uso, /Measure-Object WorkingSetSize/, "o working set inteiro não é crédito");
   assert.match(uso, /\$playersCpu = \$null/);
   assert.match(uso, /vlc\|mpv\|mpc-hc/);
@@ -1699,4 +1700,28 @@ test("Windows de verdade: jobVivoPadrao encerra e confere um Job nomeado criado 
     assert.notStrictEqual(filho.exitCode ?? filho.signalCode, null, "o processo dentro do Job morreu");
     assert.strictEqual(par.jobVivoPadrao(`Local\\MixAI-inexistente-${Date.now()}`), false, "Job que não existe mais");
   } finally { try { filho.kill(); } catch { /* já foi */ } }
+});
+
+test("GPU/RAM: o coletor só conta como runner o nome exato do runner, nunca o ollama.exe do servidor", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /-match '\^\(llama-server\|ollama_llama_server\|ollama-runner\)\(\\\.exe\)\?\$'/);
+  assert.doesNotMatch(uso, /-match 'llama\|runner'/);
+  const re = /^(llama-server|ollama_llama_server|ollama-runner)(\.exe)?$/i;
+  for (const ok of ["llama-server.exe", "ollama_llama_server.exe", "ollama-runner.exe", "LLAMA-SERVER.EXE"]) assert.ok(re.test(ok), ok);
+  for (const ruim of ["ollama.exe", "ollama app.exe", "llama-quantize.exe", "runner.exe", "my-runner.exe"]) assert.ok(!re.test(ruim), ruim);
+});
+
+test("chamada ainda pendente quando o lote desiste de esperar: a retenção guarda o Job e o PID dessa chamada, não só o id da microtarefa", async () => {
+  const { spawn } = require("node:child_process");
+  let filho;
+  const arquivos = arquivosTemp();
+  let recebido;
+  const paralelismo = Object.assign(() => 2, { liberar: (r) => { recebido = r; } });
+  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] })), matar: () => true, orfaos: () => [], reintentoMs: 50, tentativasDeMatar: 100, prazoDeFechamentoMs: 600000 });
+  // a parada é aceita mas a chamada nunca termina (descendente segurando): fica pendente
+  // a microtarefa "b" falha com morte não confirmada (sem identificador); a "a" está pendente e é abortada sem nunca terminar
+  const local = (prompt, signal) => (prompt.includes("contexto de b") ? new Promise((ok, no) => setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 150)) : chamada(prompt, signal));
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a"), microDe("b")], verificadorDe: verificadorOk, paralelismo, tempoParaConfirmarMs: 400, arquivos, agentes: { local, superiores: [] } }), /o lote parou/);
+  try { filho.kill("SIGKILL"); } catch { /* já foi */ }
+  assert.ok(recebido?.itens?.some((i) => i.pid === filho.pid && /^Local\\MixAI-/.test(i.jobNome)), JSON.stringify(recebido));
 });

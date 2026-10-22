@@ -49,9 +49,9 @@ if (Test-Path $arquivoOllama) {
         $novos = @($todos | Where-Object { $pidsMeus -contains [int]$_.ParentProcessId -and $pidsMeus -notcontains [int]$_.ProcessId } | ForEach-Object { [int]$_.ProcessId })
         $pidsMeus += $novos
       } while ($novos.Count -gt 0)
-      # Só a parte RECUPERÁVEL conta: a memória PRIVADA dos runners do modelo (llama-server / ollama runner), que some quando eles
+      # Só a parte RECUPERÁVEL conta: a memória PRIVADA dos runners do modelo (llama-server / ollama_llama_server / ollama-runner, nome exato; o ollama.exe do servidor fica de fora), que some quando eles
       # fecham. O working set inteiro do Ollama inclui o servidor e arquivos mapeados do modelo, que não voltam para os agentes.
-      $runners = @($todos | Where-Object { $pidsMeus -contains [int]$_.ProcessId -and $_.Name -match 'llama|runner' })
+      $runners = @($todos | Where-Object { $pidsMeus -contains [int]$_.ProcessId -and $_.Name -match '^(llama-server|ollama_llama_server|ollama-runner)(\.exe)?$' })
       if ($runners.Count -eq 0) { $ramMeuGB = 0 }
       else {
         $somaRam = ($runners | Measure-Object PrivatePageCount -Sum).Sum

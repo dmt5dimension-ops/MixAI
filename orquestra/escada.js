@@ -249,6 +249,11 @@ function garantirPastaPrivada(pasta) {
   }
 }
 
+// Processos de comando ainda sem a morte confirmada, por sinal de aborto (o sinal é da microtarefa): quando o lote desiste de
+// esperar uma chamada pendente, ele sabe quais Jobs/PIDs reter. Saem daqui quando a chamada termina com a morte confirmada.
+const ativosPorSinal = new WeakMap();
+const ativosDoSinal = (signal) => (signal && ativosPorSinal.get(signal) ? [...ativosPorSinal.get(signal)].map((a) => ({ ...a })) : []);
+
 function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = null } = {}) {
   // `signal` (opcional): ao ser abortado, mata o comando e tudo que ele criou. Usado pelo lote para reduzir agentes
   // locais quando o dono volta a usar o PC. A parada repete o pedido a cada `reintentoMs` até a chamada terminar:
@@ -284,6 +289,8 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { apagarEntrada(); throw e; }
     filho.jobNome = jobNome;
+    const ativo = { pid: filho.pid, jobNome };
+    if (signal) { if (!ativosPorSinal.has(signal)) ativosPorSinal.set(signal, new Set()); ativosPorSinal.get(signal).add(ativo); }
     let terminou = false;
     let relogio = null;
     let estourou = false;
@@ -294,6 +301,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const fim = (f, valor) => {
       if (terminou) return;
       terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
+      if (signal && !valor?.naoConfirmado) ativosPorSinal.get(signal)?.delete(ativo); // morte confirmada: nada a reter
       if (tirarOuvinteDeAborto) tirarOuvinteDeAborto(); // só sai depois da conferência: um aborto durante ela ainda conta
       apagarEntrada();
       f(valor);
@@ -556,8 +564,12 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
   const rodando = new Map();
   const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
   const naoConfirmados = []; // ids de microtarefas cujo processo não teve a morte confirmada
-  const identificadores = new Map(); // id da microtarefa -> { pid, jobNome } do processo sem morte confirmada (quando se sabe)
-  const marcarFatal = (f) => { f.naoConfirmados = [...new Set(naoConfirmados)]; f.itensNaoConfirmados = f.naoConfirmados.map((id) => ({ ...(identificadores.get(id) ?? {}) })); return f; };
+  const identificadores = new Map(); // id da microtarefa -> [{ pid, jobNome }] dos processos sem morte confirmada (quando se sabe)
+  const anotar = (id, item) => { if (!identificadores.has(id)) identificadores.set(id, []); identificadores.get(id).push(item); };
+  const marcarFatal = (f) => { f.naoConfirmados = [...new Set(naoConfirmados)]; f.itensNaoConfirmados = f.naoConfirmados.flatMap((id) => {
+    const itens = (identificadores.get(id) ?? []).filter((x, i, l) => l.findIndex((y) => y.jobNome === x.jobNome && y.pid === x.pid) === i);
+    return itens.length ? itens : [{}]; // sem identificador: a reserva vale pelo prazo
+  }); return f; };
   let fatal = null; // processo abortado que não deu para confirmar que morreu: o lote inteiro para com erro claro
   const encerrando = []; // { m, fim }: abortadas cujo processo ainda não confirmou que morreu; a vaga e o escopo seguem ocupados
   // A vaga é de agente LOCAL: quem já subiu para o Codex/Claude (`ocupa` falso: subiu, ou está só conferindo a resposta) não usa o modelo local nem a placa e não conta.
@@ -592,7 +604,13 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
       await Promise.race([Promise.all(esperas.map((w) => w.fim)), new Promise((ok) => { corte = setTimeout(ok, tempoParaConfirmarMs); })]);
       clearTimeout(corte);
       // Quem ainda não terminou depois do prazo não teve a morte confirmada.
-      for (const w of esperas) if (!w.acabou && !naoConfirmados.includes(w.id)) naoConfirmados.push(w.id);
+      for (const w of esperas) {
+        if (w.acabou) continue;
+        naoConfirmados.includes(w.id) || naoConfirmados.push(w.id);
+        // chamada ainda pendente: guarda o Job/PID dos processos dela (não só o id da microtarefa)
+        const dela = [...estados].find(([m]) => m.id === w.id)?.[1];
+        for (const a of ativosDoSinal(dela?.ctl.signal)) anotar(w.id, a);
+      }
       const semCitar = [...new Set(naoConfirmados)].filter((id) => !fatal.message.includes(`"${id}"`)); // mesmo com 1 só id, se a mensagem ainda não o cita
       if (semCitar.length) fatal = new Error(`${fatal.message} Também não foi confirmada a morte de: ${semCitar.join(', ')}.`);
       throw marcarFatal(fatal);
@@ -639,7 +657,7 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
         e.verFim = p.then(() => true, (erro) => erro?.naoConfirmado !== true);
         try { return await p; } catch (erro) {
           if (erro?.naoConfirmado) {
-            naoConfirmados.push(m.id); identificadores.set(m.id, { pid: erro.pid, jobNome: erro.jobNome });
+            naoConfirmados.push(m.id); anotar(m.id, { pid: erro.pid, jobNome: erro.jobNome });
             fatal = fatal || new Error(`o lote parou: não consegui confirmar que o comando de verificação da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
             avisarMudanca();
           }
@@ -659,7 +677,7 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
             // Morte não confirmada de um superior (Codex/Claude) também é fatal: nunca vira falha comum que segue o lote.
             return p.catch((erro) => {
               if (erro?.naoConfirmado) {
-                naoConfirmados.push(m.id); identificadores.set(m.id, { pid: erro.pid, jobNome: erro.jobNome });
+                naoConfirmados.push(m.id); anotar(m.id, { pid: erro.pid, jobNome: erro.jobNome });
                 fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do superior "${sup.nome}" da microtarefa "${m.id}" morreu (${erro.message}). Veja os processos no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
                 avisarMudanca();
               }
@@ -690,7 +708,7 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
               if (erro?.naoConfirmado) {
                 // Morte não confirmada (ao abortar, no tempo máximo ou com descendente sobrando): nunca vira erro comum
                 // que sobe para o Codex. O lote inteiro para, e esta chamada não responde mais.
-                naoConfirmados.push(m.id); identificadores.set(m.id, { pid: erro.pid, jobNome: erro.jobNome });
+                naoConfirmados.push(m.id); anotar(m.id, { pid: erro.pid, jobNome: erro.jobNome });
                 fatal = fatal || new Error(`o lote parou: não consegui confirmar que o processo do agente local "${m.id}" morreu (${erro.message}). Veja os processos do modelo local no Gerenciador de Tarefas, encerre-os à mão e rode o lote de novo.`);
                 avisarMudanca(); liberar(false); // terminou, mas a morte NÃO foi confirmada
                 return;
@@ -789,7 +807,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, ativosDoSinal, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
