@@ -278,12 +278,13 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const entrada = path.join(pastaDosPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
-      try { fs.rmSync(entrada, { force: true }); } catch {
+      try { fs.rmSync(liberacao, { force: true }); fs.rmSync(entrada, { force: true }); } catch {
         if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
         else console.error(`não consegui apagar o arquivo temporário do prompt (apague à mão): ${entrada}`);
       }
     };
     const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
+    const liberacao = `${entrada}.liberar`; // barreira do wrapper: só é criado depois de a reserva gravar o PID e o Job
     const ativo = { pid: undefined, jobNome };
     const esquecerAtivo = () => { if (signal) ativosPorSinal.get(signal)?.delete(ativo); };
     let filho;
@@ -296,13 +297,15 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
         if (signal) { if (!ativosPorSinal.has(signal)) ativosPorSinal.set(signal, new Set()); ativosPorSinal.get(signal).add(ativo); }
         avisarJob({ fase: 'antes', signal, jobNome });
         if (lancar) filho = lancar(comando, fdEntrada);
-        else filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
+        else filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome, MIXAI_LIBERAR: liberacao }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
       } finally { fs.closeSync(fdEntrada); }
     } catch (e) { esquecerAtivo(); apagarEntrada(); throw e; }
     filho.jobNome = jobNome;
     ativo.pid = filho.pid;
     let erroDeReserva = null;
-    try { avisarJob({ fase: 'depois', signal, jobNome, pid: filho.pid }); } catch (e) { erroDeReserva = e; } // grava o PID do wrapper (cobre a janela antes de o Job existir)
+    try { avisarJob({ fase: 'depois', signal, jobNome, pid: filho.pid }); } catch (e) { erroDeReserva = e; } // grava o PID do wrapper na reserva
+    // Só agora o wrapper pode iniciar o comando (barreira): PID e nome do Job já estão na reserva. Sem isto ele sai sem rodar nada.
+    if (!erroDeReserva && !lancar) { try { fs.writeFileSync(liberacao, '1', { mode: 0o600, flag: 'wx' }); } catch (e) { erroDeReserva = e; } }
     let terminou = false;
     let relogio = null;
     let estourou = false;
