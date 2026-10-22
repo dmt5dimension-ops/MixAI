@@ -29,11 +29,19 @@ function capacidade({ modo, memoriaLivreGB, modos = modosPadrao(), config = conf
   return { max, limites, limitante };
 }
 
-// Motivos pelos quais o dono está usando o PC. Leitura que faltou conta como "usando" (o seguro).
+// Motivos pelos quais o dono está usando o PC. Leitura que faltou, não é número ou está fora do possível
+// conta como "usando" (o lado seguro): falha nunca pode virar "PC parado".
+function numeroValido(v, minimo, maximo = Infinity) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= minimo && v <= maximo;
+}
 function motivosDeUso(leitura, config) {
   const o = config.ocupado;
-  const campos = ['ociosoSegundos', 'gpuOutrosPct', 'cpuOutrosPct', 'videoDecodePct', 'memoriaLivreGB'];
-  if (!leitura || campos.some((c) => leitura[c] === undefined || leitura[c] === null)) return ['leitura do Windows indisponível'];
+  const indisponivel = ['leitura do Windows indisponível'];
+  if (!leitura || typeof leitura !== 'object') return indisponivel;
+  const ok = numeroValido(leitura.ociosoSegundos, 0) && numeroValido(leitura.gpuOutrosPct, 0, 100.0001)
+    && numeroValido(leitura.cpuOutrosPct, 0, 100.0001) && numeroValido(leitura.videoDecodePct, 0, 100.0001)
+    && numeroValido(leitura.memoriaLivreGB, 0);
+  if (!ok) return indisponivel;
   const motivos = [];
   if (leitura.ociosoSegundos < o.ociosoAbaixoDeSegundos) motivos.push(`mexeu no PC há ${leitura.ociosoSegundos}s`);
   if (leitura.gpuOutrosPct > o.gpuOutrosAcimaDePct) motivos.push(`outro programa usa ${leitura.gpuOutrosPct}% da placa`);
@@ -42,11 +50,18 @@ function motivosDeUso(leitura, config) {
   return motivos;
 }
 
+// CPU de outros programas: total da máquina menos a parte do Ollama. O contador por processo vai de 0 a 100 POR
+// NÚCLEO, então a parte do Ollama é dividida pelo número de núcleos. Falta de qualquer número vira null.
+function cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }) {
+  if (!numeroValido(cpuTotalPct, 0) || !numeroValido(cpuMeuPct, 0) || !Number.isInteger(nucleos) || nucleos < 1) return null;
+  return Math.round(Math.min(100, Math.max(0, cpuTotalPct - cpuMeuPct / nucleos)) * 10) / 10;
+}
+
 // Decide o alvo agora. `anterior` é { alvo, subiuEm } da última decisão (ou null). Sobe no máximo um por vez.
 // `regime` é onde o alvo chega se o PC continuar parado (o teto), para quem só quer olhar.
 function decidir({ leitura, modo, anterior = null, agora = Date.now(), modos, config = configPadrao(), memoriaMinimaGB }) {
   const motivos = motivosDeUso(leitura, config);
-  const cap = capacidade({ modo, memoriaLivreGB: leitura?.memoriaLivreGB ?? os.freemem() / 1024 ** 3, modos, config, memoriaMinimaGB });
+  const cap = capacidade({ modo, memoriaLivreGB: numeroValido(leitura?.memoriaLivreGB, 0) ? leitura.memoriaLivreGB : os.freemem() / 1024 ** 3, modos, config, memoriaMinimaGB });
   const antes = anterior?.alvo >= 1 ? anterior.alvo : 1;
   if (motivos.length) {
     return { alvo: 1, regime: 1, motivo: `usando o PC: ${motivos.join('; ')}`, estado: { alvo: 1, subiuEm: agora }, capacidade: cap };
@@ -99,8 +114,12 @@ function lerSaida(texto) {
   let l;
   try { l = JSON.parse(String(texto).trim().split(/\r?\n/).pop()); } catch { return null; }
   if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
-  const { videoAmostras, videoMotores, ...resto } = l;
-  return { ...resto, videoDecodePct: resto.videoDecodePct ?? videoDecodeDe({ amostras: videoAmostras, motores: videoMotores }) };
+  const { videoAmostras, videoMotores, cpuTotalPct, cpuMeuPct, nucleos, ...resto } = l;
+  return {
+    ...resto,
+    cpuOutrosPct: resto.cpuOutrosPct ?? cpuOutrosDe({ cpuTotalPct, cpuMeuPct, nucleos }),
+    videoDecodePct: resto.videoDecodePct ?? videoDecodeDe({ amostras: videoAmostras, motores: videoMotores }),
+  };
 }
 
 // Leitor para testes: devolve as leituras da lista, na ordem (a última se repete).
@@ -132,7 +151,7 @@ function criarControle({ leitor = leitorWindows(), modo = modoAtual(), arquivoEs
   };
 }
 
-module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, leitorSimulado, modoAtual, criarControle };
+module.exports = { capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, leitorSimulado, modoAtual, criarControle };
 
 if (require.main === module) {
   const i = process.argv.indexOf('--modo');

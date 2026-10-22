@@ -125,6 +125,46 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   assert.match(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/);
 });
 
+test("falha de leitura NUNCA vira PC parado: null, texto, negativo, NaN, fora de faixa e campo faltando contam como em uso", () => {
+  const campos = ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoDecodePct", "memoriaLivreGB"];
+  const ruins = [null, undefined, "0", "", NaN, -1, Infinity, {}, [], true];
+  for (const campo of campos) {
+    for (const ruim of ruins) {
+      const d = decide({ ...PARADO, [campo]: ruim }, "noite", { alvo: 3, subiuEm: 0 }, 1e6);
+      assert.strictEqual(d.alvo, 1, `${campo}=${String(ruim)}`);
+      assert.match(d.motivo, /indisponível/, `${campo}=${String(ruim)}`);
+    }
+    const sem = { ...PARADO };
+    delete sem[campo];
+    assert.strictEqual(decide(sem, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, `sem ${campo}`);
+  }
+  assert.strictEqual(decide(PARADO, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: tudo válido e parado mantém");
+  // pela saída do script: contador que falhou vem null
+  const base = { ociosoSegundos: 900, gpuOutrosPct: 1, cpuTotalPct: 10, cpuMeuPct: 5, nucleos: 8, videoAmostras: 3, videoMotores: [{ i: 0, n: "pid_1_engtype_video codec 0", v: 0 }], memoriaLivreGB: 6 };
+  for (const quebra of [{ ociosoSegundos: null }, { gpuOutrosPct: null }, { cpuTotalPct: null }, { cpuMeuPct: null }, { nucleos: null }, { videoAmostras: 0 }, { videoMotores: [] }, { memoriaLivreGB: null }]) {
+    const leitura = par.lerSaida(JSON.stringify({ ...base, ...quebra }));
+    assert.strictEqual(decide(leitura, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1, JSON.stringify(quebra));
+  }
+  assert.strictEqual(decide(par.lerSaida(JSON.stringify(base)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "controle: saída completa e parada mantém");
+});
+
+test("CPU de outros programas: cada processo do Ollama conta uma vez, dividido pelos núcleos; o script não usa curinga por nome", () => {
+  // total 30%; o Ollama usa 80% de UM núcleo (de 8) => 10% da máquina => outros programas: 20%
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 30, cpuMeuPct: 80, nucleos: 8 }), 20);
+  // Ollama com 3 processos (50 + 30 + 20 de núcleo) somados uma vez só
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 30, cpuMeuPct: 100, nucleos: 8 }), 17.5);
+  // nunca negativo nem acima de 100
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 20, nucleos: 8 }), 2.5);
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 5, cpuMeuPct: 9000, nucleos: 8 }), 0);
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 100, cpuMeuPct: 0, nucleos: 8 }), 100);
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: 30, cpuMeuPct: 80, nucleos: 0 }), null);
+  assert.strictEqual(par.cpuOutrosDe({ cpuTotalPct: null, cpuMeuPct: 80, nucleos: 8 }), null);
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /\\Process\(\*\)/);
+  assert.doesNotMatch(uso, /\\Process\(\$/, "curinga por nome contava o mesmo processo mais de uma vez");
+  assert.match(uso, /-replace '#\\d\+\$', ''/);
+});
+
 test("sem histórico, o tempo que o PC já está parado conta como subida (parado há horas não começa em 1); mostra o regime", () => {
   const horas = decide({ ...PARADO, ociosoSegundos: 5 * 3600 }, "dia", null, 0);
   assert.strictEqual(horas.alvo, modos.dia.agentesMax);
@@ -170,26 +210,79 @@ test("modoAtual usa a variável MIXAI_MODO, o arquivo que o modo.ps1 deixa, e ca
   assert.strictEqual(par.modoAtual({ LOCALAPPDATA: base }), "noite");
 });
 
-test("o lote acompanha o limite dinâmico: abre vagas quando o PC fica parado e fecha quando o dono volta", async () => {
-  const esperar = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const esperar = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const microDe = (id) => ({ id, instrucao: "x", contexto: `contexto de ${id}`, escopo: [`src/${id}.js`], verificar: "true" });
+const arquivosTemp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "esc-")); return { regras: path.join(d, "r.json"), casos: path.join(d, "casos.jsonl"), treino: path.join(d, "t.jsonl"), falhas: path.join(d, "falhas.jsonl"), pendentes: path.join(d, "p.jsonl") }; };
+// O verificador do lote devolve { ok }; devolver só um booleano reprova tudo sem ninguém perceber.
+const verificadorOk = () => (saida) => ({ ok: saida === "ok" });
+
+test("o lote acompanha o limite dinâmico: abre vagas quando o PC fica parado, e TODAS as microtarefas terminam certas pelo local", async () => {
   const ids = ["a", "b", "c", "d", "e", "f"];
-  const micro = (id) => ({ id, instrucao: "x", contexto: `contexto de ${id}`, escopo: [`src/${id}.js`], verificar: "true" });
-  const arquivos = (() => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "esc-")); return { regras: path.join(d, "r.json"), casos: path.join(d, "casos.jsonl"), treino: path.join(d, "t.jsonl"), falhas: path.join(d, "falhas.jsonl"), pendentes: path.join(d, "p.jsonl") }; })();
   const limites = [1, 1, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2];
   let chamada = 0;
   let agora = 0;
   let pico = 0;
   const picos = [];
-  await escada.lote({
-    microtarefas: ids.map(micro),
-    verificadorDe: () => (saida) => saida === "ok",
+  let superior = 0;
+  const r = await escada.lote({
+    microtarefas: ids.map(microDe),
+    verificadorDe: verificadorOk,
     paralelismo: () => limites[Math.min(chamada++, limites.length - 1)],
     reavaliarMs: 5,
-    arquivos,
-    agentes: { local: async () => { agora += 1; pico = Math.max(pico, agora); picos.push(agora); await esperar(20); agora -= 1; return "ok"; }, superiores: [] },
+    arquivos: arquivosTemp(),
+    agentes: { local: async () => { agora += 1; pico = Math.max(pico, agora); picos.push(agora); await esperar(20); agora -= 1; return "ok"; }, superiores: [{ nome: "codex", chamar: () => { superior += 1; return "ok"; } }] },
   });
+  assert.deepStrictEqual(r.map((x) => [x.id, x.ok, x.resolvidoPor]), ids.map((id) => [id, true, "local"]));
+  assert.strictEqual(superior, 0, "nada deve subir para o Codex");
   assert.ok(pico >= 2 && pico <= 3, `pico ${pico}`);
   assert.strictEqual(picos[0], 1, "começa com 1");
+});
+
+test("quando o dono volta ao PC, agentes locais em andamento são tirados (sem subir para o Codex) e a microtarefa volta à fila", async () => {
+  const ids = ["a", "b", "c"];
+  let limite = 3;
+  const abortados = [];
+  const iniciadas = [];
+  let simultaneos = 0;
+  let picoDepoisDeReduzir = 0;
+  let reduziu = false;
+  let superior = 0;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    const id = ids.find((i) => prompt.includes(`contexto de ${i}`));
+    iniciadas.push(id);
+    simultaneos += 1;
+    if (reduziu) picoDepoisDeReduzir = Math.max(picoDepoisDeReduzir, simultaneos);
+    const fim = setTimeout(() => { simultaneos -= 1; ok("ok"); }, 120);
+    signal.addEventListener("abort", () => { clearTimeout(fim); simultaneos -= 1; abortados.push(id); no(new Error("abortado")); });
+  });
+  setTimeout(() => { limite = 1; reduziu = true; }, 30);
+  const r = await escada.lote({
+    microtarefas: ids.map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(),
+    agentes: { local, superiores: [{ nome: "codex", chamar: () => { superior += 1; return "ok"; } }] },
+  });
+  assert.deepStrictEqual(r.map((x) => [x.id, x.ok, x.resolvidoPor]), ids.map((id) => [id, true, "local"]));
+  assert.deepStrictEqual(abortados.sort(), ["b", "c"], "tira os mais novos e deixa o mais antigo terminar");
+  assert.strictEqual(superior, 0, "tirar do local não é falha: nada sobe para o Codex");
+  assert.ok(iniciadas.length >= 5, `as duas tiradas recomeçam depois (${iniciadas.join(",")})`);
+  assert.strictEqual(picoDepoisDeReduzir, 1, "depois de reduzir, só 1 agente por vez");
+});
+
+test("uma microtarefa não é tirada mais de 3 vezes (senão o dono mexendo no PC a deixaria para sempre sem terminar)", async () => {
+  let abortos = 0;
+  let limite = 2;
+  let alterna = 0;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    const fim = setTimeout(() => ok("ok"), 40);
+    signal.addEventListener("abort", () => { clearTimeout(fim); abortos += 1; no(new Error("abortado")); });
+  });
+  const t = setInterval(() => { limite = alterna++ % 2 === 0 ? 1 : 2; }, 15);
+  const r = await escada.lote({
+    microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 5, arquivos: arquivosTemp(),
+    agentes: { local, superiores: [] },
+  });
+  clearInterval(t);
+  assert.ok(r.every((x) => x.ok), JSON.stringify(r));
+  assert.ok(abortos <= 3, `abortos ${abortos}`);
 });
 
 test("limite dinâmico inválido é recusado em vez de travar o lote", async () => {
@@ -203,7 +296,7 @@ test("o modo.ps1 liga o paralelismo do Ollama pelo modo e guarda o modo ligado; 
   assert.ok(modo.indexOf("mixai-modo.txt") > modo.indexOf("criar-apelido.ps1"), "só guarda o modo depois de criar o mixai-local");
   for (const m of Object.values(modos)) assert.ok(Number.isInteger(m.agentesMax) && m.agentesMax >= 1);
   const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
-  for (const campo of ["ociosoSegundos", "gpuOutrosPct", "cpuOutrosPct", "videoMotores", "videoAmostras", "memoriaLivreGB"]) assert.ok(uso.includes(campo), campo);
+  for (const campo of ["ociosoSegundos", "gpuOutrosPct", "cpuTotalPct", "cpuMeuPct", "nucleos", "videoMotores", "videoAmostras", "memoriaLivreGB"]) assert.ok(uso.includes(campo), campo);
   assert.match(uso, /MaxSamples 3/);
   assert.doesNotMatch(uso, /powercfg/, "powercfg /requests exige administrador");
   assert.match(uso, /ConvertTo-Json/);

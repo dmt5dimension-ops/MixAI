@@ -164,8 +164,19 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
 }
 
 function chamarComando(comando) {
-  return (prompt) => new Promise((resolve, reject) => {
+  // `signal` (opcional): ao ser abortado, mata o processo (e os filhos dele, no Windows). Usado pelo lote para
+  // reduzir agentes locais quando o dono volta a usar o PC.
+  return (prompt, signal) => new Promise((resolve, reject) => {
     const filho = spawn(comando, { shell: true, timeout: TEMPO_MAXIMO_MS });
+    const parar = () => {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(filho.pid), '/T', '/F']);
+      else filho.kill('SIGKILL');
+    };
+    if (signal) {
+      if (signal.aborted) parar();
+      else signal.addEventListener('abort', parar, { once: true });
+      filho.on('close', () => signal.removeEventListener('abort', parar));
+    }
     let saida = '';
     let erro = '';
     filho.stdout.on('data', (d) => { saida += d; });
@@ -178,6 +189,8 @@ function chamarComando(comando) {
 }
 
 const TEMPO_MAXIMO_MS = 10 * 60 * 1000;
+// Quantas vezes o lote pode tirar uma microtarefa do local para abrir espaço, antes de deixá-la terminar.
+const MAX_ADIAMENTOS = 3;
 
 const COMANDOS = {
   // Passa pelo rodar-local.js, que confere a memória livre antes de carregar o modelo.
@@ -324,24 +337,57 @@ async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, rea
   const resultados = new Map();
   const pendentes = [...microtarefas];
   const rodando = new Map();
+  const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal }
+  const adiamentos = new Map();
 
   while (pendentes.length || rodando.size) {
+    // O dono voltou ao PC: tira agentes locais em andamento (os mais novos primeiro) e devolve a microtarefa à fila.
+    // Só tira quem está esperando o modelo local; quem já passou para o Codex/Claude ou para a conferência termina.
+    const limite = limiteAgora();
+    while (rodando.size > limite) {
+      const alvo = [...rodando.keys()].reverse().find((m) => estados.get(m).emLocal && (adiamentos.get(m) || 0) < MAX_ADIAMENTOS);
+      if (!alvo) break;
+      const e = estados.get(alvo);
+      e.abandonada = true; // a execução antiga nunca mais responde: não sobe para o Codex nem registra resultado
+      e.ctl.abort();
+      rodando.delete(alvo);
+      pendentes.unshift(alvo);
+      adiamentos.set(alvo, (adiamentos.get(alvo) || 0) + 1);
+    }
     while (rodando.size < limiteAgora()) {
       const i = pendentes.findIndex((m) => ![...rodando.keys()].some((r) => sobrepoe(r.escopo, m.escopo)));
       if (i < 0) break;
       const [m] = pendentes.splice(i, 1);
       const entrada = promptMicro(m);
+      const e = { ctl: new AbortController(), abandonada: false, emLocal: false };
+      estados.set(m, e);
+      const agentesDaMicro = {
+        ...agentes,
+        local: (prompt) => new Promise((ok, no) => {
+          if (e.abandonada) return;
+          e.emLocal = true;
+          Promise.resolve().then(() => agentes.local(prompt, e.ctl.signal)).then(
+            (r) => { e.emLocal = false; if (!e.abandonada) ok(r); },
+            (erro) => { e.emLocal = false; if (!e.abandonada) no(erro); },
+          );
+        }),
+      };
       const execucao = maxTentativas !== undefined || antagonico
-        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
-        : resolver({ entrada, cabeNoLocal: true, verificar: verificadorDe(m), agentes, arquivos });
+        ? resolverComLoop({ entrada, verificar: verificadorDe(m), agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
+        : resolver({ entrada, cabeNoLocal: true, verificar: verificadorDe(m), agentes: agentesDaMicro, arquivos });
       const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
-        .then((r) => { resultados.set(m.id, { id: m.id, ...r }); rodando.delete(m); });
+        .then((r) => {
+          if (e.abandonada) return;
+          resultados.set(m.id, { id: m.id, ...r });
+          rodando.delete(m);
+        });
       rodando.set(m, feito);
     }
-    // Com limite dinâmico, acorda de tempos em tempos para abrir vaga quando o PC ficar parado.
+    // Com limite dinâmico, acorda de tempos em tempos: para abrir vaga quando o PC ficar parado
+    // e para tirar agentes quando o dono voltar.
     let relogio;
-    const acordar = dinamico && pendentes.length ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
+    const acordar = dinamico && (pendentes.length || rodando.size > 1) ? [new Promise((ok) => { relogio = setTimeout(ok, reavaliarMs); })] : [];
     await Promise.race([...rodando.values(), ...acordar]);
     clearTimeout(relogio);
   }
