@@ -53,6 +53,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
+- Após o #19, abrir PR próprio para a coleta de uso: a capacidade deve considerar outros lotes e sessões do Ollama (`orquestra/paralelismo.js`); ausência da instância de decodificação de vídeo não pode significar "em uso" para sempre (`orquestra/paralelismo.js`, `local/uso-windows.ps1`); leitura de GPU sem `pid_` não pode virar uso zero (`local/uso-windows.ps1`). Cobrir os três casos com testes antes da correção.
 - Na nuvem (sem PowerShell) 3 testes ficam vermelhos por falta de `pwsh`: `modelo-local.test.js` (2 do `modo.ps1`) e `protecao-local.test.js` (num_gpu 99). Passam no PC do dono; na nuvem, comparar só com a `main`.
 - O texto de `orquestra/ESCADA.md` ainda diz que `tests/mapa.test.js` confere se o arquivo salvo está em dia; atualizar essa frase numa tarefa que inclua o arquivo no escopo.
 - O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
