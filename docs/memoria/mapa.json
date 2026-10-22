@@ -152,27 +152,31 @@
         },
         {
           "nome": "entradasDoEscopo",
-          "linha": 14
+          "linha": 19
+        },
+        {
+          "nome": "comparar",
+          "linha": 31
         },
         {
           "nome": "permitido",
-          "linha": 26
+          "linha": 35
         },
         {
           "nome": "conferirAlterados",
-          "linha": 34
+          "linha": 43
         },
         {
           "nome": "dentroDaRaiz",
-          "linha": 39
+          "linha": 48
         },
         {
           "nome": "caminhoComCaixaExistente",
-          "linha": 44
+          "linha": 53
         },
         {
           "nome": "aplicarResposta",
-          "linha": 64
+          "linha": 73
         }
       ],
       "exporta": [
@@ -836,6 +840,12 @@
       "testes": [
         "tests/escada.test.js",
         "tests/falhas-escada.test.js"
+      ]
+    },
+    {
+      "o_que": "Aplicação de resposta limitada ao escopo: pasta exige `/` final, comparação de maiúsculas segue o sistema, e nomes com `:` ou reservados do Windows são recusados sem gravar",
+      "testes": [
+        "tests/aplicar.test.js"
       ]
     },
     {
