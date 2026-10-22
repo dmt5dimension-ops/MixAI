@@ -726,6 +726,7 @@ test("o wrapper do Job Object: KILL_ON_JOB_CLOSE sem escape, entra no job ANTES 
   assert.deepStrictEqual([...ps.matchAll(/LimitFlags = (0x[0-9a-f]+)/g)].map((m) => m[1]), ["0x2000"], "nenhuma outra flag: sem permissão de escapar do job");
   assert.match(ps, /AssignProcessToJobObject\(job, GetCurrentProcess\(\)\)/, "o próprio wrapper entra no job");
   assert.ok(ps.indexOf("[MixJob]::Entrar()") < ps.indexOf("[System.Diagnostics.Process]::Start"), "entra no job antes de criar o comando");
+  assert.match(ps, /CreateJobObject\(IntPtr\.Zero, null\)/, "alça do job sem atributos de herança: o comando não herda a alça");
   assert.match(ps, /exit 125/, "falha ao criar o job: sai sem rodar o comando");
   assert.match(ps, /\$env:MIXAI_COMANDO/);
   assert.match(ps, /UseShellExecute = \$false/, "o comando herda stdin/stdout/stderr");
@@ -777,4 +778,87 @@ test("Windows de verdade: abortar mata o neto (o comando roda dentro do Job Obje
   let vivo = true;
   for (let i = 0; i < 100 && vivo; i++) { try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 50)); } catch { vivo = false; } }
   assert.strictEqual(vivo, false, "o neto morreu junto com o job");
+});
+
+// --- Contrato de parada: prazo do 'close', saída sem fim, erro depois do spawn, erro do controlador ------------------
+test("pedido de parada aceito mas a chamada não termina (descendente desconhecido segurando o stdout): naoConfirmado depois do prazo, sem ficar pendurado", async () => {
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 30);
+  const t0 = Date.now();
+  let filhoCriado;
+  await assert.rejects(
+    escada.chamarComando(`"${process.execPath}" -e "setTimeout(()=>{},30000)"`, { matar: (f) => { filhoCriado = f; return true; }, orfaos: () => [], prazoDeFechamentoMs: 150 })("x", ctl.signal),
+    (erro) => erro.naoConfirmado === true && /não terminou em/.test(erro.message),
+  );
+  assert.ok(Date.now() - t0 < 3000);
+  matarGrupo(filhoCriado.pid);
+});
+
+test("saída sem fim: passado o limite de bytes a árvore é parada e a chamada falha com mensagem clara (sem esgotar a memória)", async () => {
+  const t0 = Date.now();
+  await assert.rejects(
+    escada.chamarComando(`"${process.execPath}" -e "setInterval(()=>process.stdout.write('x'.repeat(500)),2)"`, { maxSaidaBytes: 2000 })("x"),
+    (erro) => /saída passou de 2000 bytes/.test(erro.message),
+  );
+  assert.ok(Date.now() - t0 < 5000);
+});
+
+test("erro do processo depois de ele nascer passa pelo protocolo de parada: pedido recusado vira naoConfirmado, aceito vira erro normal", async () => {
+  const { EventEmitter } = require("node:events");
+  const falso = (matarOk) => {
+    const f = new EventEmitter();
+    f.pid = 4242; f.exitCode = null; f.stdout = new EventEmitter(); f.stderr = new EventEmitter();
+    f.stdout.destroy = f.stderr.destroy = () => {}; f.unref = () => {};
+    f.kill = () => matarOk;
+    return f;
+  };
+  const rodar = (matarOk) => {
+    const f = falso(matarOk);
+    const chamada = escada.chamarComando("x", { lancar: () => f, matar: () => matarOk, orfaos: () => [] })("p");
+    setTimeout(() => f.emit("error", new Error("EPIPE")), 10);
+    return chamada;
+  };
+  await assert.rejects(rodar(false), (erro) => erro.naoConfirmado === true && /EPIPE/.test(erro.message));
+  await assert.rejects(rodar(true), (erro) => !erro.naoConfirmado && /EPIPE/.test(erro.message));
+});
+
+test("erro do controlador de paralelismo com agentes já rodando: o lote aborta os agentes, espera a morte e rejeita com o erro (não fica pendurado)", async () => {
+  let iniciou = false;
+  let abortado = false;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    iniciou = true;
+    signal.addEventListener("abort", () => { abortado = true; no(new Error("abortado")); });
+  });
+  const inicio = Date.now();
+  await assert.rejects(
+    escada.lote({
+      microtarefas: [microDe("a")], verificadorDe: verificadorOk, reavaliarMs: 10, arquivos: arquivosTemp(),
+      paralelismo: () => { if (iniciou) throw new Error("leitura do PC quebrou"); return 1; },
+      agentes: { local, superiores: [] },
+    }),
+    /leitura do PC quebrou/,
+  );
+  assert.strictEqual(abortado, true, "o agente que já rodava foi abortado");
+  assert.ok(Date.now() - inicio < 5000);
+});
+
+test("morte NÃO confirmada de um agente tirado do local para o lote (a vaga não é reaproveitada) e o fim da chamada não conta como morte", async () => {
+  let limite = 2;
+  let ctlB;
+  const local = (prompt, signal) => new Promise((ok, no) => {
+    if (prompt.includes("contexto de b")) signal.addEventListener("abort", () => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })));
+    else setTimeout(() => ok("ok"), 400);
+  });
+  setTimeout(() => { limite = 1; }, 30);
+  await assert.rejects(
+    escada.lote({
+      microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, reavaliarMs: 10, arquivos: arquivosTemp(),
+      paralelismo: () => limite, agentes: { local, superiores: [] },
+    }),
+    /o lote parou: não consegui confirmar/,
+  );
+});
+
+test("matarArvore (outros sistemas): grupo que não existe mais = já morreu (true)", () => {
+  assert.strictEqual(escada.matarArvore({ pid: 2147483000, exitCode: null, kill: () => false }, { plataforma: "linux" }), true);
 });

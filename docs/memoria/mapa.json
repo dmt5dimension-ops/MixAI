@@ -341,103 +341,115 @@
         },
         {
           "nome": "fim",
-          "linha": 240
+          "linha": 242
         },
         {
           "nome": "largar",
-          "linha": 247
+          "linha": 249
         },
         {
           "nome": "naoConfirmado",
-          "linha": 256
-        },
-        {
-          "nome": "parar",
           "linha": 258
         },
         {
+          "nome": "aguardarFechamento",
+          "linha": 261
+        },
+        {
+          "nome": "parar",
+          "linha": 266
+        },
+        {
+          "nome": "guardar",
+          "linha": 286
+        },
+        {
           "nome": "verificadorPorComando",
-          "linha": 303
+          "linha": 320
         },
         {
           "nome": "promptReinstruir",
-          "linha": 310
+          "linha": 327
         },
         {
           "nome": "promptAntagonista",
-          "linha": 319
+          "linha": 336
         },
         {
           "nome": "resolverComLoop",
-          "linha": 331
+          "linha": 348
         },
         {
           "nome": "julgar",
-          "linha": 339
+          "linha": 356
         },
         {
           "nome": "ok",
-          "linha": 353
+          "linha": 370
         },
         {
           "nome": "concluir",
-          "linha": 354
+          "linha": 371
         },
         {
           "nome": "validarPlano",
-          "linha": 403
+          "linha": 420
         },
         {
           "nome": "normaliza",
-          "linha": 417
+          "linha": 434
         },
         {
           "nome": "sobrepoe",
-          "linha": 418
-        },
-        {
-          "nome": "promptMicro",
-          "linha": 423
-        },
-        {
-          "nome": "lote",
-          "linha": 431
-        },
-        {
-          "nome": "limiteAgora",
           "linha": 435
         },
         {
-          "nome": "locais",
-          "linha": 449
+          "nome": "promptMicro",
+          "linha": 440
         },
         {
-          "nome": "avisarMudanca",
+          "nome": "lote",
+          "linha": 448
+        },
+        {
+          "nome": "limiteBruto",
           "linha": 453
         },
         {
+          "nome": "locais",
+          "linha": 467
+        },
+        {
+          "nome": "limiteAgora",
+          "linha": 468
+        },
+        {
+          "nome": "avisarMudanca",
+          "linha": 479
+        },
+        {
           "nome": "ocupados",
-          "linha": 493
+          "linha": 520
         },
         {
           "nome": "local",
-          "linha": 503
+          "linha": 530
         },
         {
           "nome": "outros",
-          "linha": 505
+          "linha": 532
         },
         {
           "nome": "exportar",
-          "linha": 559
+          "linha": 587
         },
         {
           "nome": "principal",
-          "linha": 566
+          "linha": 594
         },
         {
           "nome": "verificadorDe",
-          "linha": 578
+          "linha": 606
         }
       ],
       "exporta": [
@@ -940,7 +952,31 @@
         },
         {
           "nome": "lancar",
-          "linha": 748
+          "linha": 749
+        },
+        {
+          "nome": "falso",
+          "linha": 808
+        },
+        {
+          "nome": "rodar",
+          "linha": 815
+        },
+        {
+          "nome": "local",
+          "linha": 828
+        },
+        {
+          "nome": "paralelismo",
+          "linha": 836
+        },
+        {
+          "nome": "local",
+          "linha": 848
+        },
+        {
+          "nome": "paralelismo",
+          "linha": 856
         }
       ],
       "exporta": []
