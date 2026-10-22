@@ -33,7 +33,7 @@ function Test-Numero($v) {
 # todos os que descendem dele (pelo ParentProcessId). Um Ollama/llama-server independente (aberto pelo dono ou por outro
 # programa) conta como uso do PC. Sem registro, ou se a lista de processos falhar, nada é "meu" (na dúvida, em uso).
 $pidsMeus = @()
-$ramMeuGB = 0 # memória do Ollama do MixAI (0 = não há; $null = não deu para medir)
+$ramMeuGB = 0 # memória privada dos runners do modelo do MixAI (0 = não há; $null = não deu para medir)
 $arquivoOllama = Join-Path $env:TEMP 'mixai-ollama.pid'
 if (Test-Path $arquivoOllama) {
   $partes = ((Get-Content $arquivoOllama -ErrorAction SilentlyContinue) -join '').Trim().Split('|')
@@ -49,8 +49,14 @@ if (Test-Path $arquivoOllama) {
         $novos = @($todos | Where-Object { $pidsMeus -contains [int]$_.ParentProcessId -and $pidsMeus -notcontains [int]$_.ProcessId } | ForEach-Object { [int]$_.ProcessId })
         $pidsMeus += $novos
       } while ($novos.Count -gt 0)
-      $somaRam = ($todos | Where-Object { $pidsMeus -contains [int]$_.ProcessId } | Measure-Object WorkingSetSize -Sum).Sum
-      $ramMeuGB = if (Test-Numero $somaRam) { [Math]::Round([double]$somaRam / 1GB, 2) } else { $null }
+      # Só a parte RECUPERÁVEL conta: a memória PRIVADA dos runners do modelo (llama-server / ollama runner), que some quando eles
+      # fecham. O working set inteiro do Ollama inclui o servidor e arquivos mapeados do modelo, que não voltam para os agentes.
+      $runners = @($todos | Where-Object { $pidsMeus -contains [int]$_.ProcessId -and $_.Name -match 'llama|runner' })
+      if ($runners.Count -eq 0) { $ramMeuGB = 0 }
+      else {
+        $somaRam = ($runners | Measure-Object PrivatePageCount -Sum).Sum
+        $ramMeuGB = if (Test-Numero $somaRam) { [Math]::Round([double]$somaRam / 1GB, 2) } else { $null }
+      }
     }
   }
 }
@@ -148,25 +154,44 @@ if ($motores -and $motores.amostras -ge 1) {
   }
 }
 
-# Memória de vídeo (VRAM dedicada) ocupada por OUTROS programas: total dos adaptadores menos a parte dos processos do MixAI.
-# Qualquer erro, valor inválido ou resultado impossível (a parte do MixAI maior que o total) deixa $null; sem medida o
-# paralelismo.js usa só a reserva fixa da placa.
+# Memória de vídeo (VRAM dedicada) ocupada por OUTROS programas, SÓ no adaptador que o Ollama do MixAI usa (o luid do adaptador
+# aparece no nome da instância tanto do contador do adaptador quanto do contador de memória por processo): uso dedicado do
+# adaptador menos a parte dos processos do MixAI nele. Sem processo do MixAI na placa (modelo ainda não carregado), usa o
+# adaptador com mais memória dedicada ocupada (a placa de vídeo dedicada, não a integrada). Qualquer erro, valor inválido, lista
+# de adaptadores VAZIA ou resultado impossível (a parte do MixAI maior que o total) deixa $null; sem medida o paralelismo.js usa
+# só a reserva fixa da placa.
 $vramOutrosGB = $null
 $cAdaptador = Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue -ErrorVariable errosAdaptador
 $cProcesso = Get-Counter '\GPU Process Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue -ErrorVariable errosProcessoVram
 if ($cAdaptador -and $cProcesso -and @($errosAdaptador).Count -eq 0 -and @($errosProcessoVram).Count -eq 0) {
-  $totalVram = 0.0
-  $meuVram = 0.0
   $valido = $true
-  foreach ($a in $cAdaptador.CounterSamples) {
+  $porAdaptador = @{}
+  $meuPorAdaptador = @{}
+  $amostrasAdaptador = @($cAdaptador.CounterSamples)
+  if ($amostrasAdaptador.Count -eq 0) { $valido = $false } # sem nenhum adaptador listado não há medida: null, não zero
+  foreach ($a in $amostrasAdaptador) {
     if (($a.Status -ne 0 -and $a.Status -ne 1) -or -not (Test-Numero $a.CookedValue)) { $valido = $false; continue }
-    $totalVram += [double]$a.CookedValue
+    $luid = [regex]::Match($a.InstanceName, 'luid_0x[0-9a-fA-F]+_0x[0-9a-fA-F]+').Value
+    if (-not $luid) { $valido = $false; continue }
+    $porAdaptador[$luid] = [double]$porAdaptador[$luid] + [double]$a.CookedValue
   }
-  foreach ($a in $cProcesso.CounterSamples) {
+  foreach ($a in @($cProcesso.CounterSamples)) {
     if (($a.Status -ne 0 -and $a.Status -ne 1) -or -not (Test-Numero $a.CookedValue)) { $valido = $false; continue }
-    if ($a.InstanceName -match 'pid_(\d+)_' -and $pidsMeus -contains [int]$Matches[1]) { $meuVram += [double]$a.CookedValue }
+    $m = [regex]::Match($a.InstanceName, 'pid_(\d+)_(luid_0x[0-9a-fA-F]+_0x[0-9a-fA-F]+)')
+    if ($m.Success -and $pidsMeus -contains [int]$m.Groups[1].Value) {
+      $luidMeu = $m.Groups[2].Value
+      $meuPorAdaptador[$luidMeu] = [double]$meuPorAdaptador[$luidMeu] + [double]$a.CookedValue
+    }
   }
-  if ($valido -and $totalVram -ge $meuVram) { $vramOutrosGB = [Math]::Round(($totalVram - $meuVram) / 1GB, 2) }
+  if ($valido -and $porAdaptador.Count -gt 0) {
+    $usado = $porAdaptador.GetEnumerator() | Where-Object { $meuPorAdaptador.Count -eq 0 -or $meuPorAdaptador.ContainsKey($_.Key) }
+    $escolha = if ($meuPorAdaptador.Count -gt 0) { $usado | Sort-Object { [double]$meuPorAdaptador[$_.Key] } -Descending | Select-Object -First 1 } else { $usado | Sort-Object Value -Descending | Select-Object -First 1 }
+    if ($escolha) {
+      $totalVram = [double]$escolha.Value
+      $meuVram = [double]$meuPorAdaptador[$escolha.Key]
+      if ($totalVram -ge $meuVram) { $vramOutrosGB = [Math]::Round(($totalVram - $meuVram) / 1GB, 2) }
+    }
+  }
 }
 
 # Processador: pelas classes CIM Win32_PerfFormattedData_*, que têm o mesmo nome em qualquer idioma do Windows
@@ -194,6 +219,20 @@ if ($processos) {
   if ($valido) { $cpuMeu = [Math]::Round($soma, 1) }
 }
 
+# Vídeo por SOFTWARE (o decodificador da placa não mexe): CPU somada de players de vídeo conhecidos (pontos de um núcleo). Só
+# esses processos entram: navegador tocando vídeo NÃO é detectado. Falha ou valor inválido deixa $null (indisponível).
+$playersCpu = $null
+if ($processos) {
+  $somaPlayers = 0
+  $validoPlayers = $true
+  foreach ($p in $processos) {
+    if ($p.Name -match '^(vlc|mpv|mpc-hc|mpc-hc64|mpc-be|mpc-be64|potplayer|potplayermini|potplayermini64|ffplay|wmplayer|video\.ui|microsoft\.media\.player)(#\d+)?$') {
+      if (Test-Numero $p.PercentProcessorTime) { $somaPlayers += [double]$p.PercentProcessorTime } else { $validoPlayers = $false }
+    }
+  }
+  if ($validoPlayers) { $playersCpu = [Math]::Round($somaPlayers, 1) }
+}
+
 $livre = $null
 $so = Get-CimInstance Win32_OperatingSystem
 if ($so -and (Test-Numero $so.FreePhysicalMemory) -and $so.FreePhysicalMemory -gt 0) { $livre = [Math]::Round($so.FreePhysicalMemory / 1MB, 2) }
@@ -215,4 +254,5 @@ if ($null -ne $ocioso) {
   memoriaLivreGB = $livre
   vramOutrosGB   = $vramOutrosGB
   ramMeuGB       = $ramMeuGB
+  playersCpuPct  = $playersCpu
 } | ConvertTo-Json -Compress -Depth 4

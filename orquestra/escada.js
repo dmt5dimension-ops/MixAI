@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn, spawnSync, execFile } = require('node:child_process');
+const { spawn, spawnSync, execFile, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 
 const pasta = __dirname;
@@ -207,8 +207,38 @@ async function orfaosVivos(filho, { executar = execFile } = {}) {
 const processoVivoNoSistema = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 
 const PASTA_DE_PROMPTS = path.join(os.tmpdir(), 'mixai-prompts');
-// Cria (se preciso) a pasta dos prompts temporários e confere que é privada. No Windows o %TEMP% é por usuário e a permissão
-// vem da ACL dele; nos outros sistemas confere o dono e que grupo/outros não têm acesso.
+// Windows: pasta NOVA com nome aleatório, sem herdar permissões (icacls /inheritance:r) e só com o usuário atual
+// ((OI)(CI)F), e a ACL é lida de volta: se aparecer qualquer outro grupo ou usuário, ou se o icacls falhar, recusa.
+// `executar`, `usuario` e `dominio` existem para os testes.
+function criarPastaPrivadaWindows(base = os.tmpdir(), { executar = execFileSync, usuario = process.env.USERNAME, dominio = process.env.USERDOMAIN } = {}) {
+  if (!usuario) throw new Error('não sei o nome do usuário do Windows (USERNAME): não dá para criar a pasta privada dos prompts');
+  const pasta = fs.mkdtempSync(path.join(base, 'mixai-prompts-'));
+  try {
+    executar('icacls', [pasta, '/inheritance:r', '/grant:r', `${usuario}:(OI)(CI)F`], { encoding: 'utf8', windowsHide: true });
+    const saida = String(executar('icacls', [pasta], { encoding: 'utf8', windowsHide: true })).split(pasta).join(''); // tira o caminho (pode ter espaços)
+    // Cada entrada é "<principal>:(permissões)"; só o usuário atual pode aparecer (com ou sem o domínio na frente).
+    const permitidos = new Set([usuario.toLowerCase(), `${dominio ?? ''}\\${usuario}`.toLowerCase()]);
+    const entradas = [...saida.matchAll(/^\s*(\S.*?):\(/gm)].map((m) => m[1].trim().toLowerCase());
+    const alheias = entradas.filter((e) => !permitidos.has(e));
+    if (!entradas.length || alheias.length) throw new Error(`a ACL da pasta dos prompts não é só do usuário (${alheias.join(', ') || 'não consegui ler a ACL'})`);
+  } catch (e) {
+    try { fs.rmSync(pasta, { recursive: true, force: true }); } catch { /* sem o que apagar */ }
+    throw new Error(`não consegui tornar privada a pasta dos prompts temporários: ${e.message}`);
+  }
+  return pasta;
+}
+let pastaPromptsDoProcesso = null;
+// Uma pasta por processo no Windows (criada uma vez, apagada na saída); nos outros sistemas a pasta fixa precisa ser do dono.
+function pastaDePromptsPadrao() {
+  if (process.platform !== 'win32') return PASTA_DE_PROMPTS;
+  if (!pastaPromptsDoProcesso) {
+    pastaPromptsDoProcesso = criarPastaPrivadaWindows();
+    process.once('exit', () => { try { fs.rmSync(pastaPromptsDoProcesso, { recursive: true, force: true }); } catch { /* fica para o sistema limpar */ } });
+  }
+  return pastaPromptsDoProcesso;
+}
+// Confere que a pasta é privada: no Windows ela já nasce com ACL só do usuário (acima); nos outros sistemas confere o dono e
+// que grupo/outros não têm acesso.
 function garantirPastaPrivada(pasta) {
   fs.mkdirSync(pasta, { recursive: true, mode: 0o700 });
   if (process.platform === 'win32') return;
@@ -219,7 +249,7 @@ function garantirPastaPrivada(pasta) {
   }
 }
 
-function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = PASTA_DE_PROMPTS } = {}) {
+function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = null } = {}) {
   // `signal` (opcional): ao ser abortado, mata o comando e tudo que ele criou. Usado pelo lote para reduzir agentes
   // locais quando o dono volta a usar o PC. A parada repete o pedido a cada `reintentoMs` até a chamada terminar:
   // pedido recusado `tentativasDeMatar` vezes, ou aceito mas sem o fim da chamada em `prazoDeFechamentoMs`, termina com
@@ -233,7 +263,8 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     // mantém o Node vivo até o filho morrer, mesmo com destroy() e unref().
     // Pasta própria e privada (só o dono): no Windows o %TEMP% já é do usuário; nos outros sistemas a pasta precisa ser do dono e
     // sem acesso para grupo/outros, senão a chamada é recusada antes de escrever o prompt.
-    const entrada = path.join(pastaPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
+    const pastaDosPrompts = pastaPrompts ?? pastaDePromptsPadrao();
+    const entrada = path.join(pastaDosPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
       try { fs.rmSync(entrada, { force: true }); } catch {
@@ -244,7 +275,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
     let filho;
     try {
-      garantirPastaPrivada(pastaPrompts);
+      garantirPastaPrivada(pastaDosPrompts);
       fs.writeFileSync(entrada, String(prompt), { mode: 0o600, flag: 'wx' }); // só o dono lê; nunca segue um arquivo que já exista
       const fdEntrada = fs.openSync(entrada, 'r');
       try {
@@ -492,7 +523,11 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 
 // O modelo grande (Claude/Codex) planeja; o Qwen só executa microtarefas delimitadas, até `paralelismo` ao mesmo tempo.
 // Microtarefas com escopo que se sobrepõe nunca rodam juntas. Uma que falha não para as outras.
-async function lote({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+// O controle de paralelismo (se for um) devolve a reserva de vagas ao fim do lote, com sucesso ou erro.
+async function lote(opcoes) {
+  try { return await loteSemLiberar(opcoes); } finally { try { opcoes?.paralelismo?.liberar?.(); } catch { /* sem reserva a devolver */ } }
+}
+async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -739,7 +774,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

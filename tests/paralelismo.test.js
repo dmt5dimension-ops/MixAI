@@ -126,7 +126,7 @@ test("a saída do uso-windows.ps1 vira leitura: JSON na última linha, vídeo me
   assert.strictEqual(par.lerSaida("123"), null);
 });
 
-test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode', NVIDIA 'VideoDecode'), ignora jpeg/enhance, tira a média de 3 leituras e usa limiar >= 1%", () => {
+test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode', NVIDIA 'VideoDecode'), ignora jpeg/enhance, tira a média de 3 leituras e usa o limiar da config (acima do ruído de ~5% do 'video codec 0' sem vídeo)", () => {
   const nome = (motor) => `pid_4321_luid_0x00000000_0x0000F0D3_phys_0_eng_5_engtype_${motor}`;
   const leituras = (porAmostra) => porAmostra.flatMap((motores, i) => Object.entries(motores).map(([motor, v]) => ({ i, n: nome(motor), v })));
   // AMD tocando vídeo: o uso aparece em "video codec 0" (0 a 4%), "video decode" fica em 0.
@@ -151,11 +151,15 @@ test("vídeo: lê os nomes reais dos motores (AMD 'video codec 0', 'video decode
   // um pico isolado diluído nas 3 leituras (0,0,2 => 0,67%) não conta; média de 1% ou mais conta
   const pico = leituras([{ "video codec 0": 0 }, { "video codec 0": 0 }, { "video codec 0": 2 }]);
   assert.ok(par.videoDecodeDe({ amostras: 3, motores: pico }) < config.ocupado.videoDecodeAcimaDePct);
-  const limite = leituras([{ "video codec 0": 1 }, { "video codec 0": 1 }, { "video codec 0": 1 }]);
+  const limiar = config.ocupado.videoDecodeAcimaDePct;
+  assert.ok(limiar > 5, "o limiar tem que ficar acima do ruído de ~5% medido no PC sem vídeo tocando");
+  const limite = leituras([{ "video codec 0": limiar }, { "video codec 0": limiar }, { "video codec 0": limiar }]);
+  const ruido = leituras([{ "video codec 0": 5 }, { "video codec 0": 5.5 }, { "video codec 0": 4.5 }]);
   const base = { ociosoSegundos: 700, gpuOutrosPct: 1, cpuOutrosPct: 2, memoriaLivreGB: 6 };
   const bruta = (motores) => JSON.stringify({ ...base, videoAmostras: 3, videoMotores: motores });
   assert.match(decide(par.lerSaida(bruta(limite)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /vídeo tocando/);
   assert.strictEqual(decide(par.lerSaida(bruta(pico)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
+  assert.strictEqual(decide(par.lerSaida(bruta(ruido)), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3, "o ruído de ~5% sem vídeo não vira 'vídeo tocando' permanente");
   // coleta válida (3 amostras) sem nenhum motor de decodificação = sem vídeo: não bloqueia
   assert.strictEqual(decide(par.lerSaida(bruta([])), "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
   // falha de coleta (nenhuma amostra) continua indisponível
@@ -566,8 +570,11 @@ test("estado salvo de uma execução antiga expira: um lote novo não herda o al
   const agora = 10 * 3600 * 1000;
   const controle = par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
   assert.strictEqual(controle(), 1, "estado de 10 h atrás é ignorado");
+  controle.liberar(); // o lote acabou: devolve a vaga reservada (senão o lote seguinte dividiria o teto com ele)
   fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora - 1000, gravadoEm: agora - 1000 }));
-  assert.strictEqual(par.criarControle({ leitor: { ler: () => PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 3, "estado recente vale");
+  const recente = par.criarControle({ leitor: { ler: () => PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config });
+  assert.strictEqual(recente(), 3, "estado recente vale");
+  recente.liberar();
   fs.writeFileSync(arq, JSON.stringify({ alvo: 3, subiuEm: agora }));
   assert.strictEqual(par.criarControle({ leitor: { ler: () => RECEM_PARADO }, modo: "noite", arquivoEstado: arq, relogio: () => agora, modos, config })(), 1, "sem data de gravação: ignorado");
 });
@@ -1272,16 +1279,19 @@ test("estado do controle: gravação atômica com o modo, e estado de outro modo
     controle({ agentesLocais: 0 });
     const gravado = JSON.parse(fs.readFileSync(arquivoEstado, "utf8"));
     assert.strictEqual(gravado.modo, "noite");
-    assert.deepStrictEqual(fs.readdirSync(dir), ["e.json"], "nenhum temporário sobra");
+    assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n !== "e.json.lotes"), ["e.json"], "nenhum temporário sobra (só a pasta das reservas de vagas)");
+    controle.liberar();
     // outro modo: o estado não vale (recomeça pela primeira decisão)
     fs.writeFileSync(arquivoEstado, JSON.stringify({ alvo: 1, subiuEm: 1e6, gravadoEm: 1e6, modo: "dia" }));
     const c2 = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6 + 1000, cacheMs: 0, modos, config });
     assert.ok(c2({ agentesLocais: 0 }) > 1, "estado do modo dia (alvo 1, acabou de subir) não segura o modo noite");
+    c2.liberar();
     // lixo
     for (const lixo of ["", "{", "[]", "null", JSON.stringify({ alvo: "x", subiuEm: 1, gravadoEm: 1e6, modo: "noite" }), JSON.stringify({ alvo: -2, subiuEm: 1, gravadoEm: 1e6, modo: "noite" })]) {
       fs.writeFileSync(arquivoEstado, lixo);
       const c3 = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => 1e6 + 2000, cacheMs: 0, modos, config });
       assert.ok(c3({ agentesLocais: 0 }) > 1, `lixo ignorado: ${lixo}`);
+      c3.liberar();
     }
   });
 });
@@ -1335,4 +1345,97 @@ test("uso-windows.ps1 e modo.ps1 (texto): sessão do console, tempo ocioso plaus
   assert.match(modo, /throw "Não consegui gravar o modo/);
   assert.ok(modo.search(/\$gravadoModo -ne/) > modo.search(/Set-Content \$arquivoModo \$Modo/), "confere depois de gravar");
   assert.ok(modo.search(/Write-Host "Modo \$Modo ligado/) > modo.search(/\$gravadoModo -ne/), "só anuncia depois de conferir");
+});
+
+test("GPU: o motor mais carregado EM CADA amostra e só depois a média (3D e Copy alternando a 90% = placa a 90%)", () => {
+  const linhas = [{ i: 0, t: "3D", v: 90 }, { i: 0, t: "Copy", v: 0 }, { i: 1, t: "3D", v: 0 }, { i: 1, t: "Copy", v: 90 }, { i: 2, t: "3D", v: 90 }, { i: 2, t: "Copy", v: 0 }];
+  assert.strictEqual(par.gpuOutrosDe({ amostras: 3, linhas }), 90, "a média por tipo daria 60");
+});
+
+test("player de vídeo conhecido ativo (CPU) conta como vídeo por software; ausente não muda nada; inválido é leitura indisponível", () => {
+  assert.strictEqual(decide({ ...PARADO, playersCpuPct: 0 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 3);
+  assert.match(decide({ ...PARADO, playersCpuPct: 12 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /player de vídeo ativo/);
+  assert.strictEqual(decide({ ...PARADO, playersCpuPct: 12 }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).alvo, 1);
+  for (const ruim of [null, NaN, -1, "3"]) assert.match(decide({ ...PARADO, playersCpuPct: ruim }, "noite", { alvo: 3, subiuEm: 0 }, 1e6).motivo, /indisponível/, String(ruim));
+});
+
+test("dois lotes juntos nunca passam do teto: o segundo fica com o que sobra, a vaga volta ao liberar, e reserva de lote morto ou sem batimento é descartada", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lotes-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  let agora = 1e6;
+  const mais = () => par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: () => agora, cacheMs: 0, modos, config });
+  const teto = modos.noite.agentesMax;
+  const a = mais();
+  const b = mais();
+  const alvoA = a({ agentesLocais: 0 });
+  assert.strictEqual(alvoA, teto, "o primeiro lote reserva até o teto");
+  assert.strictEqual(b({ agentesLocais: 0 }), 0, "o segundo não tem vaga: o teto inteiro está reservado");
+  for (let i = 0; i < 5; i++) { const x = a({ agentesLocais: 1 }); const y = b({ agentesLocais: 0 }); assert.ok(x + y <= teto, `${x} + ${y} <= ${teto}`); }
+  a.liberar();
+  assert.strictEqual(b({ agentesLocais: 0 }), teto, "o primeiro acabou: a vaga volta");
+  // lote com agentes vivos (morrendo) continua reservando mesmo que o alvo caia
+  const c = mais();
+  assert.strictEqual(c({ agentesLocais: 0 }), 0, "o segundo (b) segura o teto");
+  b.liberar();
+  // reserva de PID inexistente e reserva velha demais não contam
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.writeFileSync(path.join(pasta, "morto.json"), JSON.stringify({ reservado: 3, pid: 2147483000, em: agora }));
+  fs.writeFileSync(path.join(pasta, "velho.json"), JSON.stringify({ reservado: 3, pid: process.pid, em: agora - 120000 }));
+  fs.writeFileSync(path.join(pasta, "lixo.json"), "{");
+  assert.strictEqual(c({ agentesLocais: 0 }), teto, "nada disso reserva vaga");
+  assert.deepStrictEqual(fs.readdirSync(pasta).filter((n) => !n.startsWith(`${process.pid}-`)), [], "as reservas inválidas foram apagadas");
+  c.liberar();
+}));
+
+test("o lote devolve a reserva de vagas ao terminar (também com erro)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lotes-"));
+  let liberou = 0;
+  const controle = Object.assign(() => 1, { liberar: () => { liberou += 1; } });
+  await escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local: () => "ok", superiores: [] } });
+  assert.strictEqual(liberou, 1);
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: Object.assign(() => { throw new Error("quebrou"); }, { liberar: () => { liberou += 1; } }), arquivos: arquivosTemp(), agentes: { local: () => "ok", superiores: [] } }));
+  assert.strictEqual(liberou, 2);
+});
+
+test("pasta privada do prompt no Windows: pasta nova aleatória, icacls sem herança com só o usuário, ACL lida de volta; qualquer outro principal ou falha do icacls recusa e apaga a pasta", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "acl base "));
+  const chamadas = [];
+  const fingir = (listaDoIcacls) => (cmd, args) => { chamadas.push([cmd, ...args]); return args.length === 1 ? `${args[0]} ${listaDoIcacls}\n\nSuccessfully processed 1 files; Failed processing 0 files\n` : "Successfully processed 1 files; Failed processing 0 files\n"; };
+  const ok = escada.criarPastaPrivadaWindows(base, { executar: fingir("PC\\maria:(OI)(CI)(F)"), usuario: "maria", dominio: "PC" });
+  assert.ok(ok.startsWith(path.join(base, "mixai-prompts-")) && fs.existsSync(ok), "pasta nova com nome aleatório");
+  assert.deepStrictEqual(chamadas[0].slice(0, 1).concat(chamadas[0].slice(2)), ["icacls", "/inheritance:r", "/grant:r", "maria:(OI)(CI)F"]);
+  const outra = escada.criarPastaPrivadaWindows(base, { executar: fingir("PC\\maria:(OI)(CI)(F)"), usuario: "maria", dominio: "PC" });
+  assert.notStrictEqual(outra, ok, "cada pasta tem nome diferente");
+  // ACL com outro principal (herdado, Users, Everyone...) é recusada e a pasta some
+  for (const extra of ["PC\\maria:(OI)(CI)(F)\n                          BUILTIN\\Users:(I)(OI)(CI)(RX)", "Everyone:(OI)(CI)(F)", "BUILTIN\\Administrators:(OI)(CI)(F)"]) {
+    const antes = fs.readdirSync(base).length;
+    assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: fingir(extra), usuario: "maria", dominio: "PC" }), /não é só do usuário/);
+    assert.strictEqual(fs.readdirSync(base).length, antes, "a pasta recusada foi apagada");
+  }
+  assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: () => { throw new Error("icacls: acesso negado"); }, usuario: "maria" }), /não consegui tornar privada.*acesso negado/);
+  assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: fingir("sem acl legível"), usuario: "maria" }), /não consegui ler a ACL/);
+  assert.throws(() => escada.criarPastaPrivadaWindows(base, { executar: fingir(""), usuario: "" }), /USERNAME/);
+});
+
+test("Windows de verdade: a pasta privada do prompt criada pelo icacls real tem ACL só do usuário e dá para escrever nela", () => {
+  if (process.platform !== "win32") return;
+  const pasta = escada.criarPastaPrivadaWindows();
+  try {
+    fs.writeFileSync(path.join(pasta, "teste.txt"), "x");
+    assert.strictEqual(fs.readFileSync(path.join(pasta, "teste.txt"), "utf8"), "x");
+  } finally { fs.rmSync(pasta, { recursive: true, force: true }); }
+});
+
+test("uso-windows.ps1 (texto): VRAM só do adaptador do MixAI (luid), adaptadores vazios = null, RAM só dos runners (memória privada), players de vídeo conhecidos", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /luid_0x\[0-9a-fA-F\]\+_0x\[0-9a-fA-F\]\+/, "o luid liga o adaptador ao processo");
+  assert.match(uso, /\$meuPorAdaptador\[\$luidMeu\]/);
+  assert.match(uso, /\$amostrasAdaptador\.Count -eq 0\) \{ \$valido = \$false \}/, "CounterSamples vazio do adaptador dá null");
+  assert.doesNotMatch(uso, /\$totalVram \+= /, "não soma todos os adaptadores");
+  assert.match(uso, /Measure-Object PrivatePageCount -Sum/, "só memória privada");
+  assert.match(uso, /\$_\.Name -match 'llama\|runner'/, "só os runners do modelo");
+  assert.doesNotMatch(uso, /Measure-Object WorkingSetSize/, "o working set inteiro não é crédito");
+  assert.match(uso, /\$playersCpu = \$null/);
+  assert.match(uso, /vlc\|mpv\|mpc-hc/);
+  assert.match(uso, /playersCpuPct\s+= \$playersCpu/);
 });
