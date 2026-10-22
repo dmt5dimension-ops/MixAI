@@ -59,6 +59,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
 
 - `local/uso-windows.ps1` e o `OLLAMA_NUM_PARALLEL` pelo modo foram conferidos no PC do dono em 2026-10-22 (JSON com os campos, vídeo detectado, suíte verde). Falta conferir de novo a versão que veio depois da revisão: contadores que falham viram `null`, CPU do Ollama por processo, e o `taskkill` do `lote` ao reduzir agentes (rodar `node orquestra/paralelismo.js` e um lote com `--paralelo auto`, voltando a mexer no PC no meio).
+- Acompanhamento após o #19: `orquestra/paralelismo.js` recebe o número de agentes do lote atual, sem uma contagem global entre lotes ou sessões do Ollama. Medir e testar dois lotes simultâneos antes de definir um limite global em PR próprio.
 - Na nuvem (sem PowerShell) 3 testes ficam vermelhos por falta de `pwsh`: `modelo-local.test.js` (2 do `modo.ps1`) e `protecao-local.test.js` (num_gpu 99). Passam no PC do dono; na nuvem, comparar só com a `main`.
 - O texto de `orquestra/ESCADA.md` ainda diz que `tests/mapa.test.js` confere se o arquivo salvo está em dia; atualizar essa frase numa tarefa que inclua o arquivo no escopo.
 - O teste do acento na trava foi relatado como vermelho no Windows do dono, mas não se reproduziu quando o Codex rodou na `main` (57/57). A saída em UTF-8 é endurecimento: não se sabe de onde veio aquele vermelho. Se voltar, guardar o texto da falha antes de mexer.
