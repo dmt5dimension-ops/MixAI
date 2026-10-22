@@ -477,7 +477,7 @@ test("matarArvore no Windows repete o taskkill, aceita 'já não existe' e, se f
   try {
     assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: () => ({ status: 1 }) }), false);
   } finally { console.error = err; }
-  assert.ok(filho.mortoSo, "ao menos o processo principal");
+  assert.ok(!filho.mortoSo, "não mata só o processo principal (o close pareceria um fim limpo com descendentes vivos)");
   assert.match(avisos[0], /não consegui matar/);
   assert.strictEqual(escada.matarArvore(filho, { plataforma: "win32", executar: () => ({ error: new Error("sem taskkill") }), tentativas: 1 }), false);
 });
@@ -534,29 +534,31 @@ test("abortar mata também o processo descendente (neto), em qualquer sistema", 
   assert.strictEqual(vivo, false, "o processo descendente morreu");
 });
 
-test("se não dá para confirmar a morte do processo (taskkill falhando), a chamada termina com naoConfirmado e o lote bloqueia vaga e escopo em vez de reaproveitar", async () => {
+test("se não dá para confirmar a morte do processo (taskkill falhando), a chamada termina com naoConfirmado e o lote inteiro para com erro claro", async () => {
   const ctl = new AbortController();
   const comando = `"${process.execPath}" -e "setTimeout(()=>{},30000)"`;
   const chamada = escada.chamarComando(comando, { matar: () => false, reintentoMs: 10, tentativasDeMatar: 3 })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 100);
   await assert.rejects(chamada, (erro) => erro.naoConfirmado === true && /não morreu/.test(erro.message));
 
+  // No lote: quando um processo abortado não dá para confirmar que morreu, o lote INTEIRO para com erro claro
+  // (nada de bloquear vaga na memória: um lote novo não herdaria o bloqueio).
   let limite = 2;
-  let vivos = 0;
-  const violacoes = [];
+  const abortados = [];
   const local = (prompt, signal) => new Promise((ok, no) => {
-    const id = prompt.includes("contexto de a") ? "a" : "b";
-    vivos += 1;
-    if (limite === 1 && vivos > 2) violacoes.push(`${id}: ${vivos} vivos`);
-    if (id === "a") return setTimeout(() => { vivos -= 1; ok("ok"); }, 200);
-    signal.addEventListener("abort", () => setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 20));
+    const id = prompt.includes("contexto de a") ? "a" : prompt.includes("contexto de b") ? "b" : "c";
+    signal.addEventListener("abort", () => {
+      abortados.push(id);
+      if (id === "b") setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 20);
+    });
+    if (id === "c") setTimeout(() => ok("ok"), 10);
   });
   setTimeout(() => { limite = 1; }, 50);
-  const r = await escada.lote({ microtarefas: ["a", "b"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } });
-  assert.strictEqual(r[0].ok, true);
-  assert.strictEqual(r[1].ok, false);
-  assert.match(r[1].erro, /não morreu/);
-  assert.deepStrictEqual(violacoes, []);
+  await assert.rejects(
+    escada.lote({ microtarefas: ["a", "b", "c"].map(microDe), verificadorDe: verificadorOk, paralelismo: () => limite, reavaliarMs: 10, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }),
+    /o lote parou.*"b".*taskkill/,
+  );
+  assert.ok(abortados.includes("a"), "os outros agentes locais também são interrompidos (melhor esforço)");
 });
 
 test("voltando do Codex para o local, a microtarefa espera haver vaga dentro do limite (não fura o limite)", async () => {
