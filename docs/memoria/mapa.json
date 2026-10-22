@@ -62,6 +62,11 @@
       "funcoes": []
     },
     {
+      "arquivo": "local/iniciar-vigia.ps1",
+      "descricao": "Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.",
+      "funcoes": []
+    },
+    {
       "arquivo": "local/modo.ps1",
       "descricao": "Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).",
       "funcoes": []
@@ -896,6 +901,12 @@
     },
     {
       "o_que": "Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`)",
+      "testes": [
+        "tests/modelo-local.test.js"
+      ]
+    },
+    {
+      "o_que": "O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho",
       "testes": [
         "tests/modelo-local.test.js"
       ]

@@ -18,6 +18,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
   - `Aplicar-ComandoTeste` (linha 28)
   - `Copiar-Arquivo` (linha 38)
 - `local/criar-apelido.ps1` — Aponta o nome fixo "mixai-local" para o modelo do modo (não baixa nem copia nada).
+- `local/iniciar-vigia.ps1` — Inicia o vigia sem perder o caminho do script quando a pasta do projeto tem espacos.
 - `local/modo.ps1` — Troca o modelo local entre o modo dia (pouco uso do PC) e o modo noite (força total).
 - `local/rodar-local.js` — Porta de entrada única para o modelo local: a escada e o chamar.js passam por aqui.
   - `minimoGB` (linha 23)
@@ -204,6 +205,7 @@ Gerado por `node orquestra/mapa.js gerar`. Não edite à mão.
 - Trava de escopo do PR — `tests/trava-de-escopo.test.js`
 - Trava e guarda escrevem a saída em UTF-8 (nomes com acento ficam certos mesmo com `PYTHONIOENCODING=cp1252`, o padrão do Windows) — `tests/trava-de-escopo.test.js`
 - Modelo local com modos dia/noite (`local/modo.ps1 dia` ou `noite`) — `tests/modelo-local.test.js`
+- O vigia de prioridade inicia mesmo quando a pasta do projeto tem espaços no caminho — `tests/modelo-local.test.js`
 - Papéis trocáveis quando a cota acaba (orquestra/trocar.ps1, orquestra/chamar.js) — `tests/papeis.test.js`
 - Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) — `tests/regra-modelo-local.test.js`
 - Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor — `tests/protecao-local.test.js`
