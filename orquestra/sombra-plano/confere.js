@@ -1,6 +1,7 @@
 // Verificadores mecânicos do plano da sombra. Leem a resposta do Qwen na entrada padrão e saem com 0 se estiver certa.
 //   node confere.js igual "<esperado>"          resposta (sem espaço nas pontas e sem crases/aspas) igual ao esperado
 //   node confere.js regex <arquivo.json>         { "bons": [...], "ruins": [...] }: re.fullmatch em JS, ancorada
+//   node confere.js regex64 <base64 do json>     o mesmo, com os dados dentro do próprio comando (o plano não depende de arquivo)
 const fs = require('node:fs');
 
 function limpar(texto) {
@@ -11,8 +12,8 @@ function limpar(texto) {
 function conferir(modo, argumento, resposta) {
   const r = limpar(resposta);
   if (modo === 'igual') return r === argumento;
-  if (modo === 'regex') {
-    const { bons, ruins } = JSON.parse(fs.readFileSync(argumento, 'utf8'));
+  if (modo === 'regex' || modo === 'regex64') {
+    const { bons, ruins } = JSON.parse(modo === 'regex64' ? Buffer.from(argumento, 'base64').toString('utf8') : fs.readFileSync(argumento, 'utf8'));
     let re;
     try { re = new RegExp(`^(?:${r})$`); } catch { return false; }
     return r !== '' && bons.every((s) => re.test(s)) && !ruins.some((s) => re.test(s));

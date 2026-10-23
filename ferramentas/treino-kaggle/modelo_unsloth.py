@@ -1,11 +1,24 @@
 """Modelo real (Qwen2.5-Coder 7B em 4 bits + LoRA) para o laço de ciclo.py. Só roda em GPU NVIDIA (Kaggle/Colab).
 ATENÇÃO: este arquivo ainda não foi executado numa GPU; na primeira rodada, use --rodadas 1 --lote 4 para conferir.
 """
+import inspect
 import os
 
 BASE = "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit"
 ALVOS = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 SISTEMA = "Você é um assistente de programação. Responda de forma curta e exata."
+
+
+def montar_trainer(SFTTrainer, SFTConfig, modelo, tok, dados, max_seq, epocas, lr):
+    """Monta o treinador com os nomes certos da versão instalada do TRL (processing_class/max_length ou tokenizer/max_seq_length).
+    Separado da classe para poder ser conferido sem GPU."""
+    cfg = inspect.signature(SFTConfig).parameters
+    pars = inspect.signature(SFTTrainer.__init__).parameters
+    config = SFTConfig(dataset_text_field="text", per_device_train_batch_size=2, gradient_accumulation_steps=4,
+                       num_train_epochs=epocas, learning_rate=lr, output_dir="/tmp/saida-treino", report_to="none",
+                       save_strategy="no", **{("max_length" if "max_length" in cfg else "max_seq_length"): max_seq})
+    return SFTTrainer(model=modelo, train_dataset=dados, args=config,
+                      **{("processing_class" if "processing_class" in pars else "tokenizer"): tok})
 
 
 class ModeloUnsloth:
@@ -53,10 +66,7 @@ class ModeloUnsloth:
         self.FLM.for_training(self.modelo)
         dados = Dataset.from_list([{"text": self.tok.apply_chat_template(
             [{"role": "system", "content": SISTEMA}] + e["messages"], tokenize=False)} for e in exemplos])
-        SFTTrainer(model=self.modelo, tokenizer=self.tok, train_dataset=dados,
-                   args=SFTConfig(dataset_text_field="text", max_seq_length=self.max_seq, per_device_train_batch_size=2,
-                                  gradient_accumulation_steps=4, num_train_epochs=self.epocas, learning_rate=self.lr,
-                                  output_dir="/tmp/saida-treino", report_to="none", save_strategy="no")).train()
+        montar_trainer(SFTTrainer, SFTConfig, self.modelo, self.tok, dados, self.max_seq, self.epocas, self.lr).train()
 
     def salvar(self, pasta):
         os.makedirs(pasta, exist_ok=True)

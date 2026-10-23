@@ -47,3 +47,28 @@ test("veredito compara só os acertos", () => {
   assert.strictEqual(veredito({ acertos: 2 }, { acertos: 2 }), "neutra");
   assert.strictEqual(veredito({ acertos: 3 }, { acertos: 2 }), "piora");
 });
+
+test("a medida usa as OUTRAS regras que disparam junto: A+B interferem, A não 'ajuda' e B 'piora'", async () => {
+  const regras = [regra("A", ["alfa"]), regra("B", ["alfa"])];
+  const ex = exemplos(6, "alfa");
+  // acerta só com A sozinha no prompt; com A e B juntas (o que a escada realmente monta) erra
+  const agente = async (prompt) => (prompt.includes("regra A") && !prompt.includes("regra B") ? respostaDe(prompt) : "errado");
+  const por = Object.fromEntries((await medirRegras({ regras, exemplos: ex, agente })).map((i) => [i.id, i]));
+  assert.strictEqual(por.A.veredito, "neutra");
+  assert.deepStrictEqual([por.A.sem, por.A.com], [0, 0]);
+  assert.strictEqual(por.B.veredito, "piora");
+  assert.deepStrictEqual([por.B.sem, por.B.com], [6, 0]);
+});
+
+test("agente que falha (memória/placa) deixa a regra 'sem medida', nunca 'piora'", async () => {
+  const regras = [regra("boa", ["alfa"])];
+  let n = 0;
+  const agente = async (prompt) => {
+    if (++n > 8) throw new Error("sem memória");
+    return prompt.includes("regra boa") ? respostaDe(prompt) : "errado";
+  };
+  const [item] = await medirRegras({ regras, exemplos: exemplos(6, "alfa"), agente });
+  assert.strictEqual(item.veredito, "sem medida");
+  assert.ok(item.falhas > 0);
+  assert.strictEqual(item.sem, undefined);
+});

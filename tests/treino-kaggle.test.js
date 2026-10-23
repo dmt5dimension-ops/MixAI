@@ -6,10 +6,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+// No Windows "python3" costuma ser só o atalho da Microsoft Store: usa o primeiro que responde "Python x.y".
+function acharPython() {
+  for (const nome of ["python3", "python", "py"]) {
+    const r = spawnSync(nome, ["--version"], { encoding: "utf8" });
+    if (r.status === 0 && /^Python \d/.test(`${r.stdout}${r.stderr}`.trim())) return nome;
+  }
+  return null;
+}
+
 const PASTA = path.resolve(__dirname, "..", "ferramentas", "treino-kaggle");
 
 test("geradores, verificadores e laço de rodadas passam (python)", { timeout: 300000 }, () => {
-  const r = spawnSync("python3", ["-W", "error::ResourceWarning", path.join(PASTA, "test_ciclo.py")], { encoding: "utf8", timeout: 280000, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
+  const py = acharPython();
+  assert.ok(py, "precisa de Python no PC para provar o treino sem supervisão");
+  const r = spawnSync(py, ["-W", "error::ResourceWarning", path.join(PASTA, "test_ciclo.py")], { encoding: "utf8", timeout: 280000, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
   assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}`);
 });
 
