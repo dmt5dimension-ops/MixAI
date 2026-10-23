@@ -41,6 +41,9 @@ if (Test-Path $arquivoOllama) {
   if ($partes.Count -eq 2 -and [int]::TryParse($partes[0], [ref]$raizMeu) -and $raizMeu -gt 0) {
     $todos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
     if ($todos.Count -eq 0) { $ramMeuGB = $null } # a lista de processos falhou: não dá para dizer o que é meu
+    # Linha malformada (sem número do processo, do pai ou nome) não é descartada em silêncio: não dá para saber se ela era filha
+    # do MixAI, então a memória do MixAI fica desconhecida ($null) em vez de subcontada.
+    $malformadas = @($todos | Where-Object { $null -eq $_.ProcessId -or $null -eq $_.ParentProcessId -or -not $_.Name })
     # O PID e a data de criação têm que bater: PID reaproveitado por outro processo faz o arquivo valer como ausente.
     $raizProc = $todos | Where-Object { $_.ProcessId -eq $raizMeu -and $_.Name -eq 'cmd.exe' -and $_.CreationDate -and $_.CreationDate.ToUniversalTime().ToString('o') -eq $partes[1] } | Select-Object -First 1
     if ($raizProc) {
@@ -52,7 +55,8 @@ if (Test-Path $arquivoOllama) {
       # Só a parte RECUPERÁVEL conta: a memória PRIVADA dos runners do modelo (llama-server / ollama_llama_server / ollama-runner, nome exato; o ollama.exe do servidor fica de fora), que some quando eles
       # fecham. O working set inteiro do Ollama inclui o servidor e arquivos mapeados do modelo, que não voltam para os agentes.
       $runners = @($todos | Where-Object { $pidsMeus -contains [int]$_.ProcessId -and $_.Name -match '^(llama-server|ollama_llama_server|ollama-runner)(\.exe)?$' })
-      if ($runners.Count -eq 0) { $ramMeuGB = 0 }
+      if ($malformadas.Count -gt 0) { $ramMeuGB = $null }
+      elseif ($runners.Count -eq 0) { $ramMeuGB = 0 }
       else {
         $somaRam = ($runners | Measure-Object PrivatePageCount -Sum).Sum
         $ramMeuGB = if (Test-Numero $somaRam) { [Math]::Round([double]$somaRam / 1GB, 2) } else { $null }
@@ -106,7 +110,11 @@ function Ler-Cim {
   for ($i = 0; $i -lt 3; $i++) {
     $cim = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue -ErrorVariable errosCim
     if (-not $cim -or @($errosCim).Count -gt 0) { return $null }
-    foreach ($a in $cim) { $leituras += [pscustomobject]@{ i = $i; n = $a.Name; v = $a.UtilizationPercentage } }
+    foreach ($a in $cim) {
+      # Linha sem nome ou sem valor numérico invalida a leitura inteira (null); não entra como "motor parado".
+      if (-not $a.Name -or -not (Test-Numero $a.UtilizationPercentage)) { return $null }
+      $leituras += [pscustomobject]@{ i = $i; n = $a.Name; v = $a.UtilizationPercentage }
+    }
     $n++
     if ($i -lt 2) { Start-Sleep -Seconds 1 }
   }
@@ -211,6 +219,8 @@ if ($processos) {
   $valido = $true
   $vistosCpu = @{}
   foreach ($p in $processos) {
+    # Linha sem número de processo não prova que não era do MixAI: CPU do MixAI desconhecida ($null).
+    if ($null -eq $p.IDProcess) { $valido = $false; continue }
     if ($pidsMeus -contains [int]$p.IDProcess) {
       $vistosCpu[[int]$p.IDProcess] = $true
       if (Test-Numero $p.PercentProcessorTime) { $soma += [double]$p.PercentProcessorTime } else { $valido = $false }
