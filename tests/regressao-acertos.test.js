@@ -44,3 +44,20 @@ test('importarDoPlano usa a referência como resposta certa', () => {
   assert.strictEqual(r.registrados, 1);
   assert.strictEqual(r.recusados[0].id, 't2');
 });
+
+test("planos de sementes diferentes (mesmos ids) viram casos novos; o caso idêntico continua sendo duplicado", () => {
+  const { gerarPlano } = require("../orquestra/sombra-plano/gerar-plano.js");
+  const arq = novoArquivo();
+  const a = importarDoPlano(gerarPlano(24, 1), { arquivo: arq });
+  assert.ok(a.registrados >= 20, "quase todo o plano deve entrar");
+  assert.ok(a.recusados.every((r) => /já existe/.test(r.motivo)), "só caso idêntico dentro do plano pode ser recusado");
+  const b = importarDoPlano(gerarPlano(24, 4), { arquivo: arq });
+  assert.ok(b.registrados > 0, "a segunda semente não registrou nada");
+  const antes = lerAcertos(arq).length;
+  const repetido = importarDoPlano(gerarPlano(24, 4), { arquivo: arq });
+  assert.strictEqual(repetido.registrados, 0, "o mesmo plano duas vezes deve ser duplicado");
+  assert.strictEqual(lerAcertos(arq).length, antes);
+  const ids = lerAcertos(arq).map((c) => c.id);
+  assert.strictEqual(new Set(ids).size, ids.length, "ids repetidos no arquivo");
+  for (const c of lerAcertos(arq)) assert.ok(rodarVerificador(c.verificar, c.saidaCerta), c.id);
+});
