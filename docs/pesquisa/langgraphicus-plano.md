@@ -6,22 +6,22 @@ Data: 2026-10-23. Só plano, nenhum código do app entra aqui.
 
 - O LangGraphicus é o primeiro da fila de apps (decisão do dono em 2026-10-21): cria sólidos 3D conversando e permite editar. Fonte: `docs/memoria/estado.md`, seção "Apps a trazer".
 - O código está só no PC do dono. Nada dele está no GitHub, então a nuvem não consegue ler nem testar o app. Todo o trabalho com o código roda no PC.
-- Não sabemos ainda: linguagem, como roda, se há testes, onde fica a pasta. Isso sai do raio-X (passo 2).
-- Pendências já registradas no estado: (a) o `preparar-repo.ps1` nunca rodou num Windows real; (b) o `AGENTS.md` copiado cita `orquestra/` e `local/`, que só existem no MixAI.
+- Não sabemos ainda: linguagem, como roda, se há testes, onde fica a pasta, se já é um repo git. Isso sai do raio-X (passo 2).
+- Já resolvido: o kit copia o `AGENTS.md`/`CODEX.md` com os scripts chamados pela pasta do MixAI (`tests/caminhos-mixai.test.js`), e o `preparar-repo.ps1` já foi exercitado no Windows numa pasta Git temporária. Não precisa repetir. O que continua pendente no estado.md é só rodar o caminho dos scripts num Windows real.
 
 ## Decisões deste plano
 
-1. **Repositório próprio** para o app (o `/integrar-app` prefere isso quando o app já tem pasta). Se a pasta ainda não for um repo git, `git init` e criar o repo no GitHub vem antes de tudo.
-2. **Sobre o `orquestra/` e `local/`:** o kit passa a levar só as regras; no repo do app, os comandos de troca de papel são chamados pela pasta do MixAI (`node D:\MixAI\orquestra\chamar.js ...`). Evita duas cópias para manter. Se isso atrapalhar, vira tarefa própria.
+1. **Onde o app fica segue o passo 1 do `/integrar-app`:** se a pasta do LangGraphicus já for um repositório Git (com remoto ou não), trabalha nele e copia o kit para lá; se não for, o app entra em `apps/langgraphicus/` neste repositório. Criar um repo novo no GitHub só se o dono pedir, e aí é mudança de regra em tarefa própria.
+2. **Sobre o `orquestra/` e `local/`:** já resolvido pelo kit, que aponta os scripts para a pasta do MixAI. Nada a decidir aqui.
 3. Nenhuma API paga: só Claude Code e Codex CLI pelas assinaturas.
 
 ## Checklist
 
 ### A. Preparação (no PC)
-- [ ] Ensaio do kit: rodar `ferramentas\preparar-repo.ps1 -Repo <pasta de teste vazia>` e conferir os arquivos copiados (fecha a pendência do estado.md).
-- [ ] Anotar onde está a pasta do LangGraphicus e se já é repo git; se não, criar o repo no GitHub.
+- [ ] Ensaio opcional do kit: o script exige que o destino já seja um repo Git, então crie uma pasta temporária e rode `git init` nela antes de `ferramentas\preparar-repo.ps1 -Repo <essa pasta>`; confira os arquivos copiados.
+- [ ] Anotar onde está a pasta do LangGraphicus e se já é repo Git. Se for, usar essa pasta. Se não, colocar o app em `apps/langgraphicus/` no MixAI (regra do `/integrar-app`); o `preparar-repo.ps1` só é preciso para repo externo.
 - [ ] Descobrir o comando de teste do app (`npm test`, `pytest`...) ou registrar que não existe.
-- [ ] Rodar `preparar-repo.ps1 -Repo <pasta do LangGraphicus> -ComandoTeste "<comando>"`. Se já existir `AGENTS.md`, juntar com a versão `.orquestrador` à mão.
+- [ ] Se o app tem repo próprio: rodar `preparar-repo.ps1 -Repo <pasta do LangGraphicus> -ComandoTeste "<comando>"`. Se já existir `AGENTS.md`, juntar com a versão `.orquestrador` à mão.
 - [ ] Abrir um PR só com os arquivos do kit; revisão cruzada (`feito-por:*`/`revisado-por:*`); só o dono liga a proteção da branch.
 
 ### B. Raio-X (só leitura, passo 2 do `/integrar-app`)
