@@ -32,6 +32,18 @@ function Aplicar-ComandoTeste($arquivo) {
     if ($novo -ne $texto) { [IO.File]::WriteAllText($arquivo, $novo, (New-Object Text.UTF8Encoding $false)) }
 }
 
+# orquestra/ e local/ existem so na pasta do MixAI (fonte unica, sem copias nos outros apps): os textos copiados
+# passam a apontar para os scripts de la. A reescrita fica em caminhos-mixai.js, que tem teste proprio.
+function Aplicar-PastaMixAI($arquivo) {
+    if ($arquivo -notmatch '\.md$') { return }
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Write-Aviso "node nao encontrado; $(Split-Path $arquivo -Leaf) ficou com caminhos relativos a orquestra/ e local/. Rode instalar.ps1."
+        return
+    }
+    node (Join-Path $PSScriptRoot 'caminhos-mixai.js') $arquivo $origem
+    if ($LASTEXITCODE -ne 0) { throw "caminhos-mixai.js falhou em $arquivo (codigo $LASTEXITCODE)." }
+}
+
 # Caminho do AGENTS.md que ESTE script gravou (o do kit); um AGENTS.md que ja existia fica intacto.
 $agentsDoKit = $null
 
@@ -47,11 +59,13 @@ function Copiar-Arquivo($de, $relativo) {
         }
         Copy-Item $de $alternativo
         Aplicar-ComandoTeste $alternativo
+        Aplicar-PastaMixAI $alternativo
         if ($relativo -eq 'AGENTS.md') { $script:agentsDoKit = $alternativo }
         Write-Aviso "$relativo ja existia; a versao do kit foi salva ao lado como $(Split-Path $alternativo -Leaf). Junte os dois a mao."
     } else {
         Copy-Item $de $destino -Force
         Aplicar-ComandoTeste $destino
+        Aplicar-PastaMixAI $destino
         if ($relativo -eq 'AGENTS.md') { $script:agentsDoKit = $destino }
         Write-Ok $relativo
     }

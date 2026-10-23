@@ -33,7 +33,7 @@ function ollamaFalso(dir, codigo = 0) {
 // falham por falta de espaço), psStatus (código HTTP do /api/ps), semModelo (/api/ps sem o mixai-local).
 // Anota os pedidos feitos ao /api/generate (carregar e descarregar). Roda o rodar-local.js apontando para ele.
 async function rodar(entrada, env, opcoes = {}) {
-  const { naPlaca = 1, falhasCarga = 0, psStatus = 200, semModelo = false } = opcoes;
+  const { naPlaca = 1, falhasCarga = 0, psStatus = 200, semModelo = false, tamanho = 1000 } = opcoes;
   const pedidos = [];
   const servidor = http.createServer((req, res) => {
     let corpo = "";
@@ -41,7 +41,7 @@ async function rodar(entrada, env, opcoes = {}) {
       if (req.url === "/api/ps") {
         res.statusCode = psStatus;
         if (psStatus !== 200) return res.end(JSON.stringify({ error: "falha" }));
-        const models = semModelo ? [] : [{ name: "mixai-local:latest", size: 1000, size_vram: Math.round(1000 * naPlaca) }];
+        const models = semModelo ? [] : [{ name: "mixai-local:latest", size: tamanho, size_vram: Math.round(tamanho * naPlaca) }];
         return res.end(JSON.stringify({ models }));
       }
       if (req.url === "/api/generate") {
@@ -86,6 +86,46 @@ test("com pouca memória livre o modelo local nem é carregado e a tarefa sobe n
   assert.ok(!fs.existsSync(marca), "o Ollama não pode ser chamado com a memória no limite");
 });
 
+test("modelo já carregado: a memória que ele mesmo ocupa é descontada e a chamada seguinte não é recusada", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5", MIXAI_RAM_RUNNER_GB: "4" }, { tamanho: 4 * 1024 ** 3 });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, "TAREFA");
+});
+
+test("o /api/ps sozinho não vale como RAM: modelo na placa sem RAM medida no processo não libera a chamada", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5", MIXAI_RAM_RUNNER_GB: "0" }, { tamanho: 4 * 1024 ** 3 });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /memória livre/i);
+  assert.deepStrictEqual(r.pedidos, []);
+});
+
+test("outro programa esvaziou a RAM: com o modelo já carregado e a RAM livre abaixo do piso, a chamada é recusada", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.05", MIXAI_RAM_RUNNER_GB: "4" }, { tamanho: 4 * 1024 ** 3 });
+  assert.notStrictEqual(r.status, 0);
+  assert.deepStrictEqual(r.pedidos, []);
+});
+test("sem modelo carregado nada é descontado: memória livre baixa continua recusando", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5" }, { semModelo: true });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /memória livre/i);
+  assert.deepStrictEqual(r.pedidos, []);
+});
+
+test("falha ao consultar o /api/ps não desconta nada e a memória baixa continua recusando", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5" }, { psStatus: 500, tamanho: 4 * 1024 ** 3 });
+  assert.notStrictEqual(r.status, 0);
+  assert.deepStrictEqual(r.pedidos, []);
+});
 test("com memória suficiente o modelo carrega na placa, roda a tarefa e a resposta volta inteira", async () => {
   const dir = pastaTemporaria();
   const { comando, marca } = ollamaFalso(dir);
@@ -205,4 +245,68 @@ test("o servidor do Ollama grava log em arquivo", () => {
   assert.match(script, /^\$log = .*mixai-servidor\.log"$/m);
   // Bug visto: com -RedirectStandardError o servidor herdava a saída do script e quem rodava o modo.ps1 ficava preso.
   assert.doesNotMatch(inicio, /-RedirectStandard/);
+});
+
+// Runner de verdade: um "llama-server.exe" (cópia do node) filho de um cmd.exe registrado no arquivo de PID, como faz o modo.ps1.
+const ENTRE_WINDOWS = process.platform === "win32" ? {} : { skip: "ram-runner.ps1 é só do Windows" };
+
+function ramRunner(arquivoPid) {
+  const r = spawnSync(POWERSHELL, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(PASTA, "ram-runner.ps1")], { encoding: "utf8", env: { ...process.env, MIXAI_PID_OLLAMA: arquivoPid } });
+  return Number(r.stdout.trim());
+}
+
+function iniciarRunnerRegistrado(dir, nomeExe, registrar = true) {
+  const exe = path.join(dir, nomeExe);
+  fs.copyFileSync(process.execPath, exe);
+  const dorme = path.join(dir, "dorme.js");
+  fs.writeFileSync(dorme, "setTimeout(() => {}, 60000);");
+  const cmd = spawn("cmd.exe", ["/d", "/s", "/c", `""${exe}" "${dorme}""`], { stdio: "ignore", windowsVerbatimArguments: true });
+  const arquivoPid = path.join(dir, "mixai-ollama.pid");
+  return new Promise((ok) => setTimeout(() => {
+    const data = spawnSync(POWERSHELL, ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${cmd.pid}").CreationDate.ToUniversalTime().ToString('o')`], { encoding: "utf8" }).stdout.trim();
+    if (registrar) fs.writeFileSync(arquivoPid, `${cmd.pid}|${data}`);
+    ok({ cmd, arquivoPid, parar: () => spawnSync("taskkill", ["/PID", String(cmd.pid), "/T", "/F"]) });
+  }, 3000));
+}
+
+test("ram-runner.ps1 mede a RAM privada do runner que o MixAI iniciou", ENTRE_WINDOWS, async () => {
+  const dir = pastaTemporaria();
+  const r = await iniciarRunnerRegistrado(dir, "llama-server.exe");
+  try {
+    const bytes = ramRunner(r.arquivoPid);
+    assert.ok(bytes > 1024 * 1024, `esperava a RAM privada do runner, veio ${bytes}`);
+    const ws = spawnSync(POWERSHELL, ["-NoProfile", "-Command", `(Get-Process -Name llama-server | Where-Object { $_.Path -like '${dir}*' } | Measure-Object WorkingSet64 -Sum).Sum`], { encoding: "utf8" }).stdout.trim();
+    assert.ok(bytes < Number(ws) * 3, "a medida é de ordem de grandeza da memória do processo, não de outra coisa");
+    assert.ok(/PrivatePageCount/.test(fs.readFileSync(path.join(PASTA, "ram-runner.ps1"), "utf8")), "tem que ser memória privada, não working set");
+  } finally {
+    r.parar();
+  }
+});
+
+test("runner de outro programa com o mesmo nome não conta: sem registro do MixAI a RAM creditada é 0", ENTRE_WINDOWS, async () => {
+  const dir = pastaTemporaria();
+  const r = await iniciarRunnerRegistrado(dir, "llama-server.exe", false);
+  try {
+    assert.strictEqual(ramRunner(r.arquivoPid), 0, "sem arquivo de PID não há dono");
+    fs.writeFileSync(r.arquivoPid, `${r.cmd.pid}|2000-01-01T00:00:00.0000000Z`);
+    assert.strictEqual(ramRunner(r.arquivoPid), 0, "PID com data de criação diferente (PID reaproveitado) não é do MixAI");
+  } finally {
+    r.parar();
+  }
+});
+
+test("só runner de nome exato conta: outro executável filho do mesmo cmd não gera crédito", ENTRE_WINDOWS, async () => {
+  const dir = pastaTemporaria();
+  const r = await iniciarRunnerRegistrado(dir, "outro-programa.exe");
+  try {
+    assert.strictEqual(ramRunner(r.arquivoPid), 0);
+  } finally {
+    r.parar();
+  }
+});
+
+test("rodar-local.js não usa tasklist nem working set para creditar RAM", () => {
+  const fonte = fs.readFileSync(RODAR, "utf8");
+  assert.ok(!/tasklist/i.test(fonte) && !/WorkingSet|Mem Usage/i.test(fonte));
+  assert.match(fonte, /ram-runner\.ps1/);
 });
