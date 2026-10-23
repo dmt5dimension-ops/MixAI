@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync, execFile, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
+const { regrasDoModelo, MODELO_PADRAO } = require('./por-modelo.js');
 
 const pasta = __dirname;
 const ARQUIVOS = {
@@ -43,6 +44,12 @@ function salvarRegra(arquivo, regra) {
   }
   fs.mkdirSync(path.dirname(arquivo), { recursive: true });
   fs.writeFileSync(arquivo, JSON.stringify({ aviso, regras }, null, 2) + '\n');
+}
+
+// Sem `modelo` o aluno é o Qwen padrão (mixai-local), como em todos os registros antigos: regra ensinada só a outro aluno
+// (`modelos: [...]` sem o mixai-local) nunca entra no prompt dele. Regra sem o campo `modelos` continua valendo para todos.
+function regrasParaModelo(regras, modelo = MODELO_PADRAO) {
+  return regrasDoModelo(regras, modelo);
 }
 
 function escolherRegras(regras, entrada) {
@@ -113,24 +120,24 @@ async function tentar(chamar, prompt) {
 }
 
 // O grande resolveu depois de o local errar: pede a regra, deixa o local tentar de novo com ela e só salva se ele acertar.
-async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data }) {
+async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data, modelo }) {
   const candidata = lerRegraGerada(await tentar(chamarSuperior, promptRegra(entrada, saidaLocal, saida)));
   if (!candidata) return { regra: null, regraSalva: null };
   const segunda = await tentar(agentes.local, montarPrompt(entrada, [...usadas, { ...candidata, status: 'confirmada' }]));
   const funcionou = segunda !== null && (await ok(segunda));
   const regra = { ...candidata, status: funcionou ? 'confirmada' : 'descartada' };
   if (!funcionou) return { regra, regraSalva: null };
-  const nova = { ...regra, criadaEm: data, origem: nome };
+  const nova = { ...regra, criadaEm: data, origem: nome, ...(modelo ? { modelos: [modelo] } : {}) };
   salvarRegra(arquivos.regras, nova);
   return { regra: nova, regraSalva: nova.id };
 }
 
-async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS }) {
+async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo }) {
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
-  const usadas = escolherRegras(lerRegras(arquivos.regras), entrada);
+  const usadas = escolherRegras(regrasParaModelo(lerRegras(arquivos.regras), modelo), entrada);
   const ids = usadas.map((r) => r.id);
-  const base = { entrada, data: new Date().toISOString() };
+  const base = { entrada, data: new Date().toISOString(), ...(modelo ? { modelo } : {}) };
   let saidaLocal = null;
 
   if (cabeNoLocal) {
@@ -158,7 +165,7 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   let regra = null;
   let regraSalva = null;
   if (cabeNoLocal && saidaLocal !== null) {
-    ({ regra, regraSalva } = await aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data: base.data }));
+    ({ regra, regraSalva } = await aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior, usadas, ok, agentes, arquivos, data: base.data, modelo }));
   }
 
   registrarCaso(arquivos.casos, { ...base, regra, regrasUsadas: ids, saida, resolvidoPor: nome });
@@ -450,11 +457,11 @@ function promptAntagonista(entrada, saida) {
 // Loop de tentativas: o Qwen tenta; se falha, o modelo grande lê o erro e reinstrui; repete até o limite.
 // Estourou o limite, o grande resolve direto. Cada falha resolvida vira caso de regressão (tests/falhas-escada.test.js).
 // Com `antagonico`, a resposta só vale se outro agente (nunca o que produziu) não achar defeito.
-async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS }) {
+async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo }) {
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   if (!Number.isInteger(maxTentativas) || maxTentativas < 1) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
-  const usadas = escolherRegras(lerRegras(arquivos.regras), entrada);
-  const base = { entrada, data: new Date().toISOString() };
+  const usadas = escolherRegras(regrasParaModelo(lerRegras(arquivos.regras), modelo), entrada);
+  const base = { entrada, data: new Date().toISOString(), ...(modelo ? { modelo } : {}) };
   const erradas = [];
   const supers = agentes.superiores;
 
@@ -510,7 +517,7 @@ Instrução do revisor: ${dica}`; break; }
     if (j.ok) {
       const ultimaDoLocal = erradas.filter((e) => e.saida).pop();
       const aprendida = ultimaDoLocal
-        ? await aprenderRegra({ entrada, saidaLocal: ultimaDoLocal.saida, saida, nome: s.nome, chamarSuperior: s.chamar, usadas, ok, agentes, arquivos, data: base.data })
+        ? await aprenderRegra({ entrada, saidaLocal: ultimaDoLocal.saida, saida, nome: s.nome, chamarSuperior: s.chamar, usadas, ok, agentes, arquivos, data: base.data, modelo })
         : { regra: null, regraSalva: null };
       return concluir(saida, s.nome, maxTentativas, j.antagonista, aprendida.regra, aprendida.regraSalva);
     }
