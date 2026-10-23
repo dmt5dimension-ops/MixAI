@@ -63,7 +63,7 @@ test('passo: revert mesclado reabre a tarefa uma vez; com dependente ativo escal
   const deps = {
     agora: () => AGORA, simular: false, lerGrafo: () => grafo.carregar(arquivo), lerEstado: () => estado,
     salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}), listarPRs: () => [], log: () => {},
-    listarPRsFechados: () => [reverte(30)],
+    listarReverts: () => [reverte(30)],
     executar: (a, gr) => vigia.executarReal(a, gr, CFG, { arquivoGrafo: arquivo, log: () => {}, escreverCanal: (t) => canal.push(t) }),
   };
   vigia.passo(deps, CFG);
@@ -83,4 +83,24 @@ test('passo: revert mesclado reabre a tarefa uma vez; com dependente ativo escal
   assert.deepEqual(grafo.validar(grafo.carregar(arquivo)), []);
   assert.equal(canal.length, 1);
   assert.match(canal[0], /revertido|revert/i);
+});
+
+test('listarReverts: busca reverts mesclados por título (sem janela de 30); só consulta com tarefa feita citando PR', () => {
+  const chamadas = [];
+  const ok = vigia.listarReverts({ repo: 'dmt5dimension-ops/MixAI' }, (cmd, args) => { chamadas.push(args); return { status: 0, stdout: JSON.stringify([reverte(30)]) }; }, 'linux');
+  assert.equal(ok.length, 1);
+  assert.ok(chamadas[0].includes('--search') && chamadas[0].includes('merged') && !chamadas[0].includes('30'));
+  assert.equal(vigia.listarReverts({ repo: 'x/y' }, () => ({ status: 1, stdout: '' }), 'linux'), null);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-rev2-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, grafoFeita('feita à mão'));
+  let consultas = 0;
+  const deps = {
+    agora: () => AGORA, simular: false, lerGrafo: () => grafo.carregar(arquivo), lerEstado: () => ({}),
+    salvarEstado: () => {}, lerSemCota: () => ({}), listarPRs: () => [], log: () => {},
+    listarReverts: () => { consultas += 1; return []; }, executar: () => {},
+  };
+  vigia.passo(deps, CFG);
+  assert.equal(consultas, 0, 'tarefa feita sem PR no resultado: não consulta');
 });
