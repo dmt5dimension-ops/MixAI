@@ -2023,7 +2023,7 @@ test("Windows de verdade: SEM o arquivo de liberação o wrapper sai com 124 e n
   const { spawnSync } = require("node:child_process");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sem-liberar-"));
   const marca = path.join(dir, "rodou.txt");
-  const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WRAPPER], { env: { ...process.env, MIXAI_COMANDO: `echo x> "${marca}"`, MIXAI_JOB: `Local\\\\MixAI-sem-liberar-${process.pid}-${Date.now()}`, MIXAI_LIBERAR: path.join(dir, "nunca.liberar"), MIXAI_LIBERAR_ESPERA_S: "2" }, encoding: "utf8", timeout: 120000, windowsHide: true });
+  const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WRAPPER], { env: { ...process.env, MIXAI_COMANDO: `echo x> "${marca}"`, MIXAI_JOB: `Local\\MixAI-sem-liberar-${process.pid}-${Date.now()}`, MIXAI_LIBERAR: path.join(dir, "nunca.liberar"), MIXAI_LIBERAR_ESPERA_S: "2" }, encoding: "utf8", timeout: 120000, windowsHide: true });
   assert.strictEqual(r.status, 124, r.stderr);
   assert.ok(!fs.existsSync(marca), "o comando não rodou");
   assert.match(r.stderr, /sem liberação do Node/);
