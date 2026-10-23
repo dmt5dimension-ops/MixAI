@@ -86,6 +86,46 @@ class TestGeradores(unittest.TestCase):
         self.assertFalse(geradores.verificar(c, f"def {nome}(*a):\n    raise ValueError()\n"))
         self.assertFalse(geradores.verificar(c, ""))
 
+    def test_codigo_que_toca_o_mundo_de_fora_e_recusado_e_nada_e_criado(self):
+        import os
+        import tempfile
+        c = geradores.gerar(9, 1, ["codigo"])[0]
+        nome = c["dados"]["nome"]
+        ref = c["referencia"]
+        self.assertTrue(geradores.verificar(c, ref))  # a função certa continua passando
+        with tempfile.TemporaryDirectory() as pasta:
+            alvo = os.path.join(pasta, "invadido.txt")
+            ataques = [
+                ref + f"\nopen({alvo!r}, 'w').write('x')\n",
+                ref + f"\nimport os\nos.system('echo x > ' + {alvo!r})\n",
+                ref + f"\n__import__('os').system('echo x > ' + {alvo!r})\n",
+                ref + f"\nimport subprocess\nsubprocess.run(['touch', {alvo!r}])\n",
+                ref + f"\nimport socket\nsocket.create_connection(('example.com', 80))\n",
+                ref + "\nx = ().__class__.__bases__[0].__subclasses__()\n",
+                ref + f"\nexec(\"open({alvo!r}, 'w')\")\n",
+                ref + f"\nfrom os import system\nsystem('touch ' + {alvo!r})\n",
+            ]
+            for a in ataques:
+                self.assertFalse(geradores.verificar(c, a), a)
+            self.assertFalse(os.path.exists(alvo), "um ataque conseguiu criar arquivo")
+
+    def test_o_proprio_executor_nao_tem_open_nem_import_livre(self):
+        # mesmo que a conferência da árvore falhasse, a lista fechada de funções embutidas impede o efeito
+        c = geradores.gerar(9, 1, ["codigo"])[0]
+        c2 = dict(c)
+        antes = geradores.codigo_seguro
+        try:
+            geradores.codigo_seguro = lambda codigo: True
+            import os
+            import tempfile
+            with tempfile.TemporaryDirectory() as pasta:
+                alvo = os.path.join(pasta, "x.txt")
+                self.assertFalse(geradores.verificar(c2, c["referencia"] + f"\nopen({alvo!r}, 'w').write('x')\n"))
+                self.assertFalse(geradores.verificar(c2, c["referencia"] + f"\nimport os\nos.system('touch ' + {alvo!r})\n"))
+                self.assertFalse(os.path.exists(alvo))
+        finally:
+            geradores.codigo_seguro = antes
+
     def test_regex_que_aceita_tudo_reprova(self):
         r = geradores.gerar(3, 1, ["regex"])[0]
         self.assertFalse(geradores.verificar(r, ".*"))
@@ -169,6 +209,32 @@ class TestCiclo(unittest.TestCase):
             est = ciclo.executar(Fraco(), pasta, {**self.CFG, "max_rodadas": 3, "paciencia": 5})
             self.assertIn(est["regras"].get("data_iso", ""), ["", geradores.DICAS["data_iso"]])
             self.assertNotIn("regex", est["regras"])  # a dica de regex não ajudou: não vira regra
+
+
+class TestTrainerTrl(unittest.TestCase):
+    def test_monta_trainer_para_api_nova_e_antiga_do_trl(self):
+        import modelo_unsloth
+
+        class NovaCfg:
+            def __init__(self, dataset_text_field=None, per_device_train_batch_size=None, gradient_accumulation_steps=None,
+                         num_train_epochs=None, learning_rate=None, output_dir=None, report_to=None, save_strategy=None, max_length=None):
+                self.k = {"max_length": max_length}
+
+        class NovoTrainer:
+            def __init__(self, model=None, train_dataset=None, args=None, processing_class=None):
+                self.k = ("processing_class", args.k)
+
+        class VelhaCfg(NovaCfg):
+            def __init__(self, dataset_text_field=None, per_device_train_batch_size=None, gradient_accumulation_steps=None,
+                         num_train_epochs=None, learning_rate=None, output_dir=None, report_to=None, save_strategy=None, max_seq_length=None):
+                self.k = {"max_seq_length": max_seq_length}
+
+        class VelhoTrainer:
+            def __init__(self, model=None, train_dataset=None, args=None, tokenizer=None):
+                self.k = ("tokenizer", args.k)
+
+        self.assertEqual(modelo_unsloth.montar_trainer(NovoTrainer, NovaCfg, "m", "t", [], 2048, 1, 1e-4).k, ("processing_class", {"max_length": 2048}))
+        self.assertEqual(modelo_unsloth.montar_trainer(VelhoTrainer, VelhaCfg, "m", "t", [], 2048, 1, 1e-4).k, ("tokenizer", {"max_seq_length": 2048}))
 
 
 if __name__ == "__main__":
