@@ -36,6 +36,22 @@ test("detecta segredos comuns e não confunde texto normal", () => {
   assert.ok(!temSegredo("Escreva um teste para a função de token de data"));
 });
 
+test("pega token github_pat_ e cabeçalho Authorization/Bearer, e descarta o registro inteiro", () => {
+  assert.ok(temSegredo("github_pat_" + "A".repeat(60)));
+  assert.ok(temSegredo("Authorization: Bearer " + "a1b2c3d4e5".repeat(4)));
+  assert.ok(temSegredo("curl -H 'Authorization: Bearer " + "x".repeat(40) + "'"));
+  const formas = ["github_pat_" + "A".repeat(60), "Authorization: Bearer " + "a1b2c3d4e5".repeat(4)];
+  for (const f of formas) {
+    const r = prepararDataset([{ entrada: "task " + f, saida: "ok" }], { validacao: 0 });
+    assert.strictEqual(r.resumo.aproveitados, 0);
+    assert.strictEqual(r.treino.length, 0);
+    const naSaida = prepararDataset([{ entrada: "task", saida: "ok " + f }], { validacao: 0 });
+    assert.strictEqual(naSaida.resumo.aproveitados, 0);
+    const emOutroCampo = prepararDataset([{ entrada: "task", saida: "ok", regra: { id: "x", regra: f } }], { validacao: 0 });
+    assert.strictEqual(emOutroCampo.resumo.aproveitados, 0);
+  }
+});
+
 test("entrada repetida: igual vira 'repetido'; diferente fica com o caso mais novo", () => {
   const r = prepararDataset([
     caso(1), caso(1),
