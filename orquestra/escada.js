@@ -784,6 +784,27 @@ function exportar(arquivos = ARQUIVOS) {
   return linhas.length;
 }
 
+// Liga um lote ao grafo (`--grafo`): as microtarefas que são tarefas do grafo vão a em_andamento antes do lote e a
+// feita/falha depois. Microtarefa que não existe no grafo é ignorada. Tudo ou nada no início; no fim só mexe no que
+// ainda está em_andamento (alguém pode ter concluído por outro caminho).
+function ligarAoGrafo(arquivo, microtarefas) {
+  const grafoApi = require('./grafo.js');
+  const ids = (g) => microtarefas.map((m) => m.id).filter((id) => Object.hasOwn(g.tarefas, id));
+  return {
+    iniciar() {
+      grafoApi.atualizar(arquivo, (g) => ids(g).reduce((x, id) => grafoApi.iniciar(x, id, 'local'), g));
+    },
+    terminar(resultados) {
+      for (const r of resultados) {
+        grafoApi.atualizar(arquivo, (g) => {
+          if (g.tarefas[r.id]?.estado !== 'em_andamento') return g;
+          return r.ok ? grafoApi.concluir(g, r.id, `lote local verificado (${r.resolvidoPor || 'local'})`) : grafoApi.falhar(g, r.id, 'lote: microtarefa não passou na verificação');
+        });
+      }
+    },
+  };
+}
+
 async function principal(argumentos) {
   const [comando, alvo, ...resto] = argumentos;
   if (comando === 'exportar') {
@@ -794,6 +815,10 @@ async function principal(argumentos) {
     const ip = resto.indexOf('--paralelo');
     const cfgLote = JSON.parse(fs.readFileSync(path.join(pasta, 'escada.json'), 'utf8'));
     const microtarefas = JSON.parse(fs.readFileSync(path.resolve(alvo), 'utf8'));
+    const ig = resto.indexOf('--grafo');
+    if (ig >= 0 && !resto[ig + 1]) throw new Error('a opção --grafo precisa do caminho do arquivo do grafo');
+    const ligacao = ig >= 0 ? ligarAoGrafo(path.resolve(resto[ig + 1]), microtarefas) : null;
+    ligacao?.iniciar();
     const resultados = await lote({
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
@@ -807,6 +832,8 @@ async function principal(argumentos) {
         superiores: cfgLote.superiores.map((nome) => ({ nome, chamar: chamarComando(COMANDOS[nome]) })),
       },
     });
+    // Se o lote lançar erro, as tarefas ficam em_andamento (morte de processo não confirmada): nunca voltam à fila sozinhas.
+    ligacao?.terminar(resultados);
     for (const r of resultados) console.log(`${r.id}: ${r.ok ? `ok (${r.resolvidoPor})` : 'FALHOU'}`);
     return resultados.every((r) => r.ok) ? 0 : 1;
   }
@@ -815,7 +842,7 @@ async function principal(argumentos) {
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--grafo <arquivo>] | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');
@@ -842,7 +869,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, ativosDoSinal, aoNovoJob, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { ligarAoGrafo, lote, chamarComando, ativosDoSinal, aoNovoJob, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {
