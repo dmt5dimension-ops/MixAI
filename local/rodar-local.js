@@ -25,27 +25,20 @@ function minimoGB() {
   return JSON.parse(fs.readFileSync(path.join(__dirname, 'protecao.json'), 'utf8')).memoriaLivreMinimaGB;
 }
 
-// RAM do Windows que o processo do modelo (llama-server) usa de verdade agora, em bytes; 0 se não der para medir.
-// Não vale o `size` do /api/ps: ele é o tamanho do modelo, que pode estar todo na placa sem gastar RAM.
+// RAM PRIVADA, em bytes, dos runners do Ollama que o MixAI iniciou (local/ram-runner.ps1, o mesmo critério do
+// uso-windows.ps1: PID e data do registro do modo.ps1, só descendentes, nomes exatos). Runner de outro programa não
+// conta, e o working set (que inclui páginas compartilhadas) também não. Sem como atribuir a RAM ao MixAI, 0.
 function ramDoRunner() {
   if (process.env.MIXAI_RAM_RUNNER_GB !== undefined) return Number(process.env.MIXAI_RAM_RUNNER_GB) * GB;
+  if (process.platform !== 'win32') return 0;
   try {
-    if (process.platform === 'win32') {
-      const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq llama-server.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000 });
-      let kb = 0;
-      for (const linha of String(r.stdout || '').split(/\r?\n/)) {
-        const campos = linha.match(/"([^"]*)"/g);
-        if (campos && campos.length >= 5) kb += Number(campos[4].replace(/[^0-9]/g, '')) || 0;
-      }
-      return kb * 1024;
-    }
-    const r = spawnSync('ps', ['-C', 'llama-server', '-o', 'rss='], { encoding: 'utf8', timeout: 5000 });
-    return String(r.stdout || '').split(/\s+/).reduce((s, x) => s + (Number(x) || 0), 0) * 1024;
+    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'ram-runner.ps1')], { encoding: 'utf8', timeout: 20000 });
+    const bytes = Number(String(r.stdout || '').trim());
+    return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
   } catch {
     return 0;
   }
 }
-
 // Memória que o próprio mixai-local já ocupa, se o /api/ps o mostra carregado: ela já saiu da memória livre do
 // Windows, então sem este crédito o guarda recusaria toda chamada depois da primeira. O crédito é a RAM medida
 // do processo do modelo, nunca mais que o `size` dele. Qualquer falha ao consultar ou medir vale 0.

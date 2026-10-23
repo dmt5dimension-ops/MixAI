@@ -246,3 +246,67 @@ test("o servidor do Ollama grava log em arquivo", () => {
   // Bug visto: com -RedirectStandardError o servidor herdava a saída do script e quem rodava o modo.ps1 ficava preso.
   assert.doesNotMatch(inicio, /-RedirectStandard/);
 });
+
+// Runner de verdade: um "llama-server.exe" (cópia do node) filho de um cmd.exe registrado no arquivo de PID, como faz o modo.ps1.
+const ENTRE_WINDOWS = process.platform === "win32" ? {} : { skip: "ram-runner.ps1 é só do Windows" };
+
+function ramRunner(arquivoPid) {
+  const r = spawnSync(POWERSHELL, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(PASTA, "ram-runner.ps1")], { encoding: "utf8", env: { ...process.env, MIXAI_PID_OLLAMA: arquivoPid } });
+  return Number(r.stdout.trim());
+}
+
+function iniciarRunnerRegistrado(dir, nomeExe, registrar = true) {
+  const exe = path.join(dir, nomeExe);
+  fs.copyFileSync(process.execPath, exe);
+  const dorme = path.join(dir, "dorme.js");
+  fs.writeFileSync(dorme, "setTimeout(() => {}, 60000);");
+  const cmd = spawn("cmd.exe", ["/d", "/s", "/c", `""${exe}" "${dorme}""`], { stdio: "ignore", windowsVerbatimArguments: true });
+  const arquivoPid = path.join(dir, "mixai-ollama.pid");
+  return new Promise((ok) => setTimeout(() => {
+    const data = spawnSync(POWERSHELL, ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${cmd.pid}").CreationDate.ToUniversalTime().ToString('o')`], { encoding: "utf8" }).stdout.trim();
+    if (registrar) fs.writeFileSync(arquivoPid, `${cmd.pid}|${data}`);
+    ok({ cmd, arquivoPid, parar: () => spawnSync("taskkill", ["/PID", String(cmd.pid), "/T", "/F"]) });
+  }, 3000));
+}
+
+test("ram-runner.ps1 mede a RAM privada do runner que o MixAI iniciou", ENTRE_WINDOWS, async () => {
+  const dir = pastaTemporaria();
+  const r = await iniciarRunnerRegistrado(dir, "llama-server.exe");
+  try {
+    const bytes = ramRunner(r.arquivoPid);
+    assert.ok(bytes > 1024 * 1024, `esperava a RAM privada do runner, veio ${bytes}`);
+    const ws = spawnSync(POWERSHELL, ["-NoProfile", "-Command", `(Get-Process -Name llama-server | Where-Object { $_.Path -like '${dir}*' } | Measure-Object WorkingSet64 -Sum).Sum`], { encoding: "utf8" }).stdout.trim();
+    assert.ok(bytes < Number(ws) * 3, "a medida é de ordem de grandeza da memória do processo, não de outra coisa");
+    assert.ok(/PrivatePageCount/.test(fs.readFileSync(path.join(PASTA, "ram-runner.ps1"), "utf8")), "tem que ser memória privada, não working set");
+  } finally {
+    r.parar();
+  }
+});
+
+test("runner de outro programa com o mesmo nome não conta: sem registro do MixAI a RAM creditada é 0", ENTRE_WINDOWS, async () => {
+  const dir = pastaTemporaria();
+  const r = await iniciarRunnerRegistrado(dir, "llama-server.exe", false);
+  try {
+    assert.strictEqual(ramRunner(r.arquivoPid), 0, "sem arquivo de PID não há dono");
+    fs.writeFileSync(r.arquivoPid, `${r.cmd.pid}|2000-01-01T00:00:00.0000000Z`);
+    assert.strictEqual(ramRunner(r.arquivoPid), 0, "PID com data de criação diferente (PID reaproveitado) não é do MixAI");
+  } finally {
+    r.parar();
+  }
+});
+
+test("só runner de nome exato conta: outro executável filho do mesmo cmd não gera crédito", ENTRE_WINDOWS, async () => {
+  const dir = pastaTemporaria();
+  const r = await iniciarRunnerRegistrado(dir, "outro-programa.exe");
+  try {
+    assert.strictEqual(ramRunner(r.arquivoPid), 0);
+  } finally {
+    r.parar();
+  }
+});
+
+test("rodar-local.js não usa tasklist nem working set para creditar RAM", () => {
+  const fonte = fs.readFileSync(RODAR, "utf8");
+  assert.ok(!/tasklist/i.test(fonte) && !/WorkingSet|Mem Usage/i.test(fonte));
+  assert.match(fonte, /ram-runner\.ps1/);
+});
