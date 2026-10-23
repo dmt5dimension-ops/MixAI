@@ -41,6 +41,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Preparo do material de treino do Qwen (frente do aprendizado local): limpa os casos da escada, tira segredo, repetido e caso grande, separa treino/validação de forma estável e gera relatório (`node orquestra/treino.js preparar`). O treino LoRA em si ainda não foi feito (roda no PC) | `tests/treino.test.js` |
 | Avaliação do Qwen nos exemplos de validação (nota antes/depois do treino): `node orquestra/avaliar.js rodar --comando "..."`; falha do agente conta como erro | `tests/avaliar.test.js` |
 | Notebook do Colab com TRL novo ou antigo (montar_trainer) e treino só "pronto" com pelo menos 1 exemplo de validação | `ferramentas/treino-colab/treino-qwen.ipynb`, `orquestra/treino.js` | `tests/treino-colab.test.js` |
+| Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
 
 ## Em andamento
 
