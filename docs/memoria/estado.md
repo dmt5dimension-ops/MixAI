@@ -33,6 +33,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto | `tests/escada.test.js` |
 | Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo | `tests/aplicar.test.js` |
 | Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, gerado localmente e no CI, sem arquivos versionados (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (geração determinística, busca atual e arquivos ignorados) |
+| Tarefa agendada do supervisor no Windows (`ferramentas/supervisor-tarefa.ps1`): inicia no login, reinicia se cair, log próprio em `D:\MixAI-coordenacao\supervisor-tarefa.log` (só o texto do script é testado; validação real pendente no PC) | `tests/supervisor-tarefa.test.js` |
 
 ## Em andamento
 
@@ -58,6 +59,8 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - Modelo local nunca no processador (2026-10-21): com a memória do Windows cheia, a placa não reservava espaço e o Ollama jogava o modelo no processador (8,2 GB de RAM, PC travado). Agora tudo passa por `local/rodar-local.js` (mínimo de 2 GB livres, em `local/protecao.json`), o `mixai-local` tem `num_gpu 99`, o `rodar-local.js` descarrega o modelo se parte dele foi para o processador, e `num_gpu: 0` é proibido. O MCP `local-llm` não passa por essas proteções (só o `num_gpu 99`); ver `orquestra/ESCADA.md`.
 
 ## Ideias e problemas vistos (não consertar sem tarefa própria)
+
+- `ferramentas/supervisor-tarefa.ps1` nunca foi rodado num Windows de verdade. No PC: rodar o script, `Start-ScheduledTask -TaskName MixAI-Supervisor`, conferir `D:\MixAI-coordenacao\supervisor-tarefa.log` e matar o node para ver se reinicia em 1 minuto.
 
 - `local/uso-windows.ps1` e o `OLLAMA_NUM_PARALLEL` pelo modo foram conferidos no PC do dono em 2026-10-22 (JSON com os campos, vídeo detectado, suíte verde). Falta conferir de novo a versão que veio depois da revisão: contadores que falham viram `null`, CPU do Ollama por processo, e o `taskkill` do `lote` ao reduzir agentes (rodar `node orquestra/paralelismo.js` e um lote com `--paralelo auto`, voltando a mexer no PC no meio).
 - Acompanhamento após o #19: `orquestra/paralelismo.js` recebe o número de agentes do lote atual, sem uma contagem global entre lotes ou sessões do Ollama. Medir e testar dois lotes simultâneos antes de definir um limite global em PR próprio.
