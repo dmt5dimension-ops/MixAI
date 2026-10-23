@@ -252,6 +252,12 @@ function garantirPastaPrivada(pasta) {
 // Processos de comando ainda sem a morte confirmada, por sinal de aborto (o sinal é da microtarefa): quando o lote desiste de
 // esperar uma chamada pendente, ele sabe quais Jobs/PIDs reter. Saem daqui quando a chamada termina com a morte confirmada.
 const ativosPorSinal = new WeakMap();
+// Quem quiser saber quando um comando vai ganhar Job (fase 'antes', com o nome do Job já escolhido e ANTES de o processo nascer) e
+// quando nasceu (fase 'depois', com o PID do wrapper). O lote grava a reserva nas duas fases; um ouvinte que lança impede o
+// agente de rodar (fail-closed).
+const ouvintesDeJob = new Set();
+const aoNovoJob = (fn) => { ouvintesDeJob.add(fn); return () => ouvintesDeJob.delete(fn); };
+const avisarJob = (evento) => { for (const ouvir of ouvintesDeJob) ouvir(evento); };
 const ativosDoSinal = (signal) => (signal && ativosPorSinal.get(signal) ? [...ativosPorSinal.get(signal)].map((a) => ({ ...a })) : []);
 
 function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lancar = null, plataforma = process.platform, reintentoMs = 2000, tentativasDeMatar = 5, tempoMaximoMs = TEMPO_MAXIMO_MS, prazoDeFechamentoMs = 15000, maxSaidaBytes = 16 * 1024 * 1024, pastaPrompts = null } = {}) {
@@ -270,27 +276,39 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     // sem acesso para grupo/outros, senão a chamada é recusada antes de escrever o prompt.
     const pastaDosPrompts = pastaPrompts ?? pastaDePromptsPadrao();
     const entrada = path.join(pastaDosPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
+    const liberacao = `${entrada}.liberar`; // barreira do wrapper: só é criado depois de a reserva gravar o PID e o Job
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
-      try { fs.rmSync(entrada, { force: true }); } catch {
-        if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
-        else console.error(`não consegui apagar o arquivo temporário do prompt (apague à mão): ${entrada}`);
-      }
+      // Cada arquivo no seu próprio try: falhar em um não impede apagar o outro.
+      const apagar = (arquivo) => { try { fs.rmSync(arquivo, { force: true }); return true; } catch { return false; } };
+      const liberacaoApagada = apagar(liberacao);
+      const entradaApagada = apagar(entrada);
+      if (liberacaoApagada && entradaApagada) return;
+      if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
+      else console.error(`não consegui apagar o arquivo temporário (apague à mão): ${[liberacaoApagada ? null : liberacao, entradaApagada ? null : entrada].filter(Boolean).join(', ')}`);
     };
     const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
+    const ativo = { pid: undefined, jobNome };
+    const esquecerAtivo = () => { if (signal) ativosPorSinal.get(signal)?.delete(ativo); };
     let filho;
     try {
       garantirPastaPrivada(pastaDosPrompts);
       fs.writeFileSync(entrada, String(prompt), { mode: 0o600, flag: 'wx' }); // só o dono lê; nunca segue um arquivo que já exista
       const fdEntrada = fs.openSync(entrada, 'r');
       try {
+        // Reserva gravada ANTES de o processo nascer (com o nome do Job): se não der, o agente nem começa.
+        if (signal) { if (!ativosPorSinal.has(signal)) ativosPorSinal.set(signal, new Set()); ativosPorSinal.get(signal).add(ativo); }
+        avisarJob({ fase: 'antes', signal, jobNome });
         if (lancar) filho = lancar(comando, fdEntrada);
-        else filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
+        else filho = spawn('powershell', argsDoWrapper(), { env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome, MIXAI_LIBERAR: liberacao }, stdio: [fdEntrada, 'pipe', 'pipe'], windowsHide: true });
       } finally { fs.closeSync(fdEntrada); }
-    } catch (e) { apagarEntrada(); throw e; }
+    } catch (e) { esquecerAtivo(); apagarEntrada(); throw e; }
     filho.jobNome = jobNome;
-    const ativo = { pid: filho.pid, jobNome };
-    if (signal) { if (!ativosPorSinal.has(signal)) ativosPorSinal.set(signal, new Set()); ativosPorSinal.get(signal).add(ativo); }
+    ativo.pid = filho.pid;
+    let erroDeReserva = null;
+    try { avisarJob({ fase: 'depois', signal, jobNome, pid: filho.pid }); } catch (e) { erroDeReserva = e; } // grava o PID do wrapper na reserva
+    // Só agora o wrapper pode iniciar o comando (barreira): PID e nome do Job já estão na reserva. Sem isto ele sai sem rodar nada.
+    if (!erroDeReserva && !lancar) { try { fs.writeFileSync(liberacao, '1', { mode: 0o600, flag: 'wx' }); } catch (e) { erroDeReserva = e; } }
     let terminou = false;
     let relogio = null;
     let estourou = false;
@@ -301,7 +319,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     const fim = (f, valor) => {
       if (terminou) return;
       terminou = true; clearInterval(relogio); clearTimeout(limiteDeTempo);
-      if (signal && !valor?.naoConfirmado) ativosPorSinal.get(signal)?.delete(ativo); // morte confirmada: nada a reter
+      if (!valor?.naoConfirmado) esquecerAtivo(); // morte confirmada: nada a reter
       if (tirarOuvinteDeAborto) tirarOuvinteDeAborto(); // só sai depois da conferência: um aborto durante ela ainda conta
       apagarEntrada();
       f(valor);
@@ -317,6 +335,7 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
       try { filho.unref(); } catch { /* sem efeito */ }
     };
     const naoConfirmado = (texto) => { fim(reject, Object.assign(new Error(texto), { naoConfirmado: true, pid: filho.pid, jobNome: filho.jobNome })); largar(); };
+    if (erroDeReserva) { try { matar(filho); } catch { /* o Job é conferido pela retenção */ } return naoConfirmado(`o processo ${filho.pid} nasceu mas a reserva de vagas com o PID dele não foi gravada (${erroDeReserva.message}); pode continuar vivo`); }
     // Uma única rotina de parada (aborto, tempo máximo, saída grande e erro do processo podem pedir juntos): repete o pedido
     // até a chamada terminar, com prazo final explícito.
     let parando = false;
@@ -537,18 +556,32 @@ ${m.contexto}` : null, `Arquivos que você pode tocar: ${m.escopo.join(', ')}`]
 async function lote(opcoes) {
   let retidas = {};
   let erroDoLote = null;
-  try { return await loteSemLiberar(opcoes); } catch (erro) {
+  // Os agentes deste lote (Job e PID) vão para a reserva dele: se o lote morrer deixando agentes vivos, a vaga segue reservada.
+  const ponte = {};
+  const controle = opcoes?.paralelismo;
+  let soltarOuvinte = null;
+  if (typeof controle?.fornecerAgentes === 'function' && typeof controle?.atualizarAgentes === 'function') {
+    controle.fornecerAgentes(() => ponte.agentes?.() ?? []);
+    soltarOuvinte = aoNovoJob((ev) => {
+      if (!ponte.possui?.(ev.signal)) return; // comando de outro lote do mesmo processo
+      if (controle.atualizarAgentes() !== true) {
+        throw Object.assign(new Error('não consegui gravar a reserva de vagas com o agente (mesmo tentando de novo); o agente local não foi mantido'), { naoConfirmado: true, jobNome: ev.jobNome, pid: ev.pid });
+      }
+    });
+  }
+  try { return await loteSemLiberar({ ...opcoes, ponte }); } catch (erro) {
     if (erro?.naoConfirmados?.length) retidas = { naoConfirmados: erro.naoConfirmados.length, itens: erro.itensNaoConfirmados ?? [] };
     erroDoLote = erro;
     throw erro;
   } finally {
+    soltarOuvinte?.();
     try { opcoes?.paralelismo?.liberar?.(retidas); } catch (e) {
       // Retenção que não pôde ser gravada: falha fechada. O erro é exposto (a reserva segue valendo e o processo tenta gravar de novo).
       if (e?.retencaoNaoGravada) throw Object.assign(new Error(`${e.message}${erroDoLote ? ` (erro do lote: ${erroDoLote.message})` : ''}`), { naoConfirmados: erroDoLote?.naoConfirmados, retencaoNaoGravada: true });
     }
   }
 }
-async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -563,6 +596,8 @@ async function loteSemLiberar({ microtarefas, verificadorDe, agentes, paralelism
   const pendentes = [...microtarefas];
   const rodando = new Map();
   const estados = new Map(); // microtarefa -> { ctl, abandonada, emLocal, fim }
+  ponte.agentes = () => [...estados.values()].flatMap((e) => ativosDoSinal(e.ctl.signal));
+  ponte.possui = (signal) => !!signal && [...estados.values()].some((e) => e.ctl.signal === signal);
   const naoConfirmados = []; // ids de microtarefas cujo processo não teve a morte confirmada
   const identificadores = new Map(); // id da microtarefa -> [{ pid, jobNome }] dos processos sem morte confirmada (quando se sabe)
   const anotar = (id, item) => { if (!identificadores.has(id)) identificadores.set(id, []); identificadores.get(id).push(item); };
@@ -807,7 +842,7 @@ async function principal(argumentos) {
   return 0;
 }
 
-module.exports = { lote, chamarComando, ativosDoSinal, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
+module.exports = { lote, chamarComando, ativosDoSinal, aoNovoJob, criarPastaPrivadaWindows, matarArvore, orfaosVivos, confirmarJob, verificadorPorComando, resolverComLoop, escolherRegras, montarPrompt, lerRegraGerada, registrarCaso, lerCasos, paraTreino, resolver, exportar };
 
 if (require.main === module) {
   principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (erro) => {

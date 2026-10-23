@@ -1685,20 +1685,24 @@ test("retenção mista: cada morte não confirmada é avaliada pelo próprio ide
   assert.ok(!fs.existsSync(path.join(pasta, "mista.json")));
 }));
 
-test("Windows de verdade: jobVivoPadrao encerra e confere um Job nomeado criado pelo wrapper (processo vivo antes, morto depois, false); Job inexistente também é false", async () => {
+test("Windows de verdade: a consulta de Job (jobVivoAssincrono) é SÓ LEITURA: o Job com processo vivo dá true e nada é encerrado; só encerrarJobAssincrono encerra; Job inexistente é false", async () => {
   if (process.platform !== "win32") return; // só o Windows tem Job Object: no PC este teste roda de verdade
   const { spawn } = require("node:child_process");
   const nome = `Local\\MixAI-teste-${process.pid}-${Date.now()}`;
-  const filho = spawn("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(RAIZ, "orquestra", "job-windows.ps1")], { env: { ...process.env, MIXAI_COMANDO: "ping -n 60 127.0.0.1 >nul", MIXAI_JOB: nome }, stdio: "ignore", windowsHide: true });
+  const liberarArquivo = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "lib-")), "liberar");
+  fs.writeFileSync(liberarArquivo, "1");
+  const filho = spawn("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(RAIZ, "orquestra", "job-windows.ps1")], { env: { ...process.env, MIXAI_COMANDO: "ping -n 60 127.0.0.1 >nul", MIXAI_JOB: nome, MIXAI_LIBERAR: liberarArquivo }, stdio: "ignore", windowsHide: true });
   const saiu = new Promise((r) => filho.once("exit", r));
   try {
     await new Promise((r) => setTimeout(r, 5000));
     assert.strictEqual(filho.exitCode, null, "o comando está vivo dentro do Job");
-    // a consulta encerra o job (TerminateJobObject) e só devolve false (resolvido) quando ele ficou vazio
-    assert.strictEqual(par.jobVivoPadrao(nome), false, "Job encerrado e vazio");
+    assert.strictEqual(await par.jobVivoAssincrono(nome), true, "Job com processo vivo");
+    assert.strictEqual(filho.exitCode, null, "consultar NÃO encerra: o processo dentro do Job continua vivo");
+    assert.strictEqual(await par.jobVivoAssincrono(nome), true, "e continua vivo na segunda consulta");
+    assert.strictEqual(await par.encerrarJobAssincrono(nome), false, "encerrar esvazia o Job");
     await Promise.race([saiu, new Promise((r) => setTimeout(r, 5000))]);
     assert.notStrictEqual(filho.exitCode ?? filho.signalCode, null, "o processo dentro do Job morreu");
-    assert.strictEqual(par.jobVivoPadrao(`Local\\MixAI-inexistente-${Date.now()}`), false, "Job que não existe mais");
+    assert.strictEqual(await par.jobVivoAssincrono(`Local\\MixAI-inexistente-${Date.now()}`), false, "Job que não existe mais");
   } finally { try { filho.kill(); } catch { /* já foi */ } }
 });
 
@@ -1741,3 +1745,337 @@ test("item com Job E PID: Job ainda inexistente (wrapper vivo antes de criá-lo)
   grava(2147483000);
   assert.strictEqual(alvo(), teto, "Job inexistente e PID morto: a vaga volta");
 }));
+
+// --- Reserva: Jobs do lote, erro de leitura x JSON inválido, nada lento dentro da trava ------------------------------------
+
+test("reserva de lote cujo dono morreu continua valendo enquanto algum Job dos agentes dele estiver ativo; só cai quando todos os Jobs acabam", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dono-morto-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const estado = { "Local\\MixAI-x": true, "Local\\MixAI-y": false };
+  const grava = (jobs) => fs.writeFileSync(path.join(pasta, "morto.json"), JSON.stringify({ reservado: 2, pid: 2147483000, agentes: jobs.map((j) => ({ job: j })), em: agora.v }));
+  const alvo = () => { const c = controleCom(arquivoEstado, agora, { jobVivo: (n) => estado[n] }); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
+  grava(["Local\\MixAI-x", "Local\\MixAI-y"]);
+  assert.strictEqual(alvo(), teto - 2, "dono morto mas um Job ativo: a vaga segue reservada");
+  estado["Local\\MixAI-x"] = null; // inconclusivo: também segura
+  assert.strictEqual(alvo(), teto - 2);
+  estado["Local\\MixAI-x"] = false;
+  assert.strictEqual(alvo(), teto, "todos os Jobs acabaram: a vaga volta");
+  grava([]);
+  assert.strictEqual(alvo(), teto, "dono morto e sem Jobs: descartada");
+}));
+
+test("o lote escreve na reserva os Jobs dos agentes dele assim que nascem", () => comMemoriaAsync(6, async () => {
+  const { spawn } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobs-lote-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: Date.now, cacheMs: 0, modos, config });
+  const chamada = escada.chamarComando("setTimeout(()=>process.stdout.write('ok'),600)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [] });
+  let vistos = [];
+  setTimeout(() => { vistos = fs.readdirSync(pasta).filter((n) => n.endsWith(".json")).flatMap((n) => (JSON.parse(fs.readFileSync(path.join(pasta, n), "utf8")).agentes ?? []).map((a) => a.job)); }, 300);
+  const r = await escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local: (p, s) => chamada(p, s), superiores: [] } });
+  assert.ok(r[0].ok, JSON.stringify(r));
+  assert.strictEqual(vistos.length, 1);
+  assert.match(vistos[0], /^Local\\MixAI-[0-9a-f]+$/);
+}));
+
+test("erro de LEITURA da reserva (EBUSY/EACCES...) mantém a reserva; só JSON inválido descarta", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "leitura-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  const teto = modos.noite.agentesMax;
+  fs.mkdirSync(pasta, { recursive: true });
+  const alvo = () => { const c = controleCom(arquivoEstado, agora); const r = c({ agentesLocais: 0 }); c.liberar(); return r; };
+  fs.mkdirSync(path.join(pasta, "ilegivel.json")); // ler uma pasta como arquivo dá EISDIR: erro de leitura, não JSON inválido
+  assert.strictEqual(alvo(), 0, "não consegui ler: segue reservada (sem vaga nova)");
+  assert.ok(fs.existsSync(path.join(pasta, "ilegivel.json")), "não foi apagada");
+  fs.rmdirSync(path.join(pasta, "ilegivel.json"));
+  fs.writeFileSync(path.join(pasta, "lixo.json"), "{ isto não é json");
+  assert.strictEqual(alvo(), teto, "JSON inválido é descartado");
+  assert.ok(!fs.existsSync(path.join(pasta, "lixo.json")));
+}));
+
+test("a consulta ao Job (e à data de criação do processo) roda FORA da trava, nunca com ela segurada", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fora-trava-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.mkdirSync(pasta, { recursive: true });
+  fs.writeFileSync(path.join(pasta, "outro.json"), JSON.stringify({ reservado: 1, pid: 2147483000, agentes: [{ job: "Local\\MixAI-z" }], em: agora.v }));
+  const seguradas = [];
+  const jobVivo = () => {
+    for (const n of fs.readdirSync(dir)) if (n.startsWith("e.json.lotes.trava.lock.") && fs.readFileSync(path.join(dir, n), "utf8") !== "livre") seguradas.push(n);
+    return true;
+  };
+  const c = controleCom(arquivoEstado, agora, { jobVivo });
+  c({ agentesLocais: 0 });
+  c.liberar();
+  assert.deepStrictEqual(seguradas, [], "a trava não estava segurada durante a consulta");
+  // sem consulta injetada, a padrão é assíncrona: a primeira reserva não espera por ela e, sem resposta, o Job vale como vivo
+  const d = controleCom(arquivoEstado, agora);
+  assert.strictEqual(d({ agentesLocais: 0 }), modos.noite.agentesMax - 1);
+  d.liberar();
+}));
+
+test("a consulta de Job é só leitura: o script de consulta não tem como encerrar, e só o caminho `encerrar` usa o script que encerra", () => {
+  const consultar = fs.readFileSync(path.join(RAIZ, "orquestra", "job-consultar-windows.ps1"), "utf8");
+  assert.doesNotMatch(consultar.replace(/^#.*$/gm, ""), /TerminateJobObject/i);
+  assert.match(consultar, /OpenJobObject\(0x0004, /, "abre só com a permissão de consulta");
+  const fonte = fs.readFileSync(path.join(RAIZ, "orquestra", "paralelismo.js"), "utf8");
+  assert.match(fonte, /const script = encerrar \? 'job-confirmar-windows\.ps1' : 'job-consultar-windows\.ps1'/);
+  assert.match(fonte, /const jobVivoAssincrono = \(nome\) => perguntarAoJob\(nome\);/);
+});
+
+test("só o Job de uma reserva cujo DONO morreu é encerrado; Job de lote com dono vivo nunca é encerrado pela consulta de outro lote", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orfao-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.mkdirSync(pasta, { recursive: true });
+  fs.writeFileSync(path.join(pasta, "vivo.json"), JSON.stringify({ reservado: 1, pid: process.pid, inicio: par.inicioDoProcesso(process.pid), agentes: [{ job: "Local\\MixAI-do-vivo" }], em: agora.v }));
+  fs.writeFileSync(path.join(pasta, "morto.json"), JSON.stringify({ reservado: 1, pid: 2147483000, agentes: [{ job: "Local\\MixAI-do-morto" }], em: agora.v }));
+  const encerrados = [];
+  const c = controleCom(arquivoEstado, agora, { jobVivo: () => true, encerrarJob: async (n) => { encerrados.push(n); return false; } });
+  c({ agentesLocais: 0 });
+  await new Promise((r) => setTimeout(r, 50));
+  c.liberar();
+  assert.deepStrictEqual(encerrados, ["Local\\MixAI-do-morto"]);
+}));
+
+test("saindo com agente vivo, o processo NÃO devolve a reserva: ela vira retenção pelo Job e pelo PID", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "saida-"));
+  const pasta = path.join(dir, "lotes");
+  const script = path.join(dir, "filho.js");
+  fs.writeFileSync(script, `const par = require(${JSON.stringify(path.join(RAIZ, "orquestra", "paralelismo.js"))});
+const r = par.criarReserva({ pasta: ${JSON.stringify(pasta)}, relogio: Date.now });
+r.definirAgentes(() => [{ jobNome: "Local\\\\MixAI-saida", pid: ${process.pid} }]);
+r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+`);
+  const { spawnSync } = require("node:child_process");
+  const res = spawnSync(process.execPath, [script], { encoding: "utf8" });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const arquivos = fs.readdirSync(pasta).filter((n) => n.endsWith(".json"));
+  assert.strictEqual(arquivos.length, 1, "a reserva ficou");
+  const r = JSON.parse(fs.readFileSync(path.join(pasta, arquivos[0]), "utf8"));
+  assert.ok(Array.isArray(r.itens) && r.itens.length === 1, JSON.stringify(r));
+  assert.strictEqual(r.itens[0].job, "Local\\MixAI-saida");
+  assert.strictEqual(r.itens[0].pid, process.pid);
+  assert.strictEqual(r.pid, undefined, "não é mais a reserva comum presa ao PID do lote");
+});
+
+test("se a reserva com o agente não pode ser gravada, o agente NÃO é iniciado e o lote para", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sem-reserva-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const pasta = `${arquivoEstado}.lotes`;
+  const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: Date.now, cacheMs: 0, modos, config });
+  let lancou = 0;
+  const chamada = escada.chamarComando("setTimeout(()=>{},300)", { plataforma: "win32", lancar: () => { lancou += 1; throw new Error("não deveria lançar"); }, orfaos: () => [] });
+  const local = (p, s) => {
+    // a primeira reserva já foi gravada; agora a gravação passa a falhar (o temporário vira uma pasta)
+    for (const n of fs.readdirSync(pasta).filter((x) => x.endsWith(".json"))) fs.mkdirSync(path.join(pasta, `${n}.tmp`));
+    return chamada(p, s);
+  };
+  await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), (e) => /o lote parou/.test(e.message) && /não consegui gravar a reserva de vagas/.test(e.message));
+  assert.strictEqual(lancou, 0, "o processo do agente nunca foi criado");
+  // o lote falhou fechado e segue tentando gravar a retenção (timer vivo): libera a gravação para o teste poder terminar
+  for (const n of fs.readdirSync(pasta).filter((x) => x.endsWith(".tmp"))) fs.rmdirSync(path.join(pasta, n));
+  await new Promise((r) => setTimeout(r, 1500));
+}));
+
+test("barreira: o wrapper só inicia o comando depois que o Node libera, e sai sem rodar nada (124) se a liberação não vier; sem MIXAI_LIBERAR sai com 125", () => {
+  const ps = fs.readFileSync(WRAPPER, "utf8");
+  const entrou = ps.search(/\[MixJob\]::Entrar\(\$env:MIXAI_JOB\)/);
+  const espera = ps.search(/Test-Path -LiteralPath \$libera/);
+  const iniciou = ps.search(/\[System\.Diagnostics\.Process\]::Start/);
+  assert.ok(entrou >= 0 && espera >= 0 && iniciou >= 0);
+  assert.ok(entrou < espera && espera < iniciou, "entra no job, espera a liberação e só então inicia o comando");
+  assert.match(ps, /exit 124/);
+  assert.match(ps, /MIXAI_LIBERAR vazio'\); exit 125/);
+  const fonte = fs.readFileSync(path.join(RAIZ, "orquestra", "escada.js"), "utf8");
+  assert.match(fonte, /MIXAI_LIBERAR: liberacao/);
+  // a liberação só é escrita depois da fase 'depois' (PID gravado) e nunca se a reserva falhou
+  const depois = fonte.search(/avisarJob\(\{ fase: 'depois'/);
+  const escreve = fonte.search(/fs\.writeFileSync\(liberacao/);
+  assert.ok(depois >= 0 && escreve > depois);
+  assert.match(fonte, /if \(!erroDeReserva && !lancar\)/);
+});
+
+test("Windows de verdade: sem o arquivo de liberação o wrapper não roda o comando (124); com ele, roda", async () => {
+  if (process.platform !== "win32") return; // só o Windows tem Job Object: no PC este teste roda de verdade
+  const { spawnSync } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "barreira-"));
+  const marca = path.join(dir, "rodou.txt");
+  const rodar = (nome, liberar) => {
+    const libera = path.join(dir, `${nome}.liberar`);
+    if (liberar) fs.writeFileSync(libera, "1");
+    return spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WRAPPER], { env: { ...process.env, MIXAI_COMANDO: `echo x> "${marca}"`, MIXAI_JOB: `Local\\MixAI-barreira-${nome}-${process.pid}-${Date.now()}`, MIXAI_LIBERAR: libera }, encoding: "utf8", timeout: 120000, windowsHide: true });
+  };
+  const com = rodar("com", true);
+  assert.strictEqual(com.status, 0, com.stderr);
+  assert.ok(fs.existsSync(marca), "com a liberação o comando rodou");
+  fs.rmSync(marca);
+  const semVariavel = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WRAPPER], { env: { ...process.env, MIXAI_COMANDO: `echo x> "${marca}"`, MIXAI_JOB: `Local\\MixAI-barreira-sem-${process.pid}-${Date.now()}`, MIXAI_LIBERAR: "" }, encoding: "utf8", timeout: 120000, windowsHide: true });
+  assert.strictEqual(semVariavel.status, 125);
+  assert.ok(!fs.existsSync(marca), "sem MIXAI_LIBERAR nada roda");
+});
+
+// --- #28, rodada 3: esquema antes de encerrar, false sem cache, falha ao listar, data de criação null, barreira sem liberação ---
+
+test("reserva fora do esquema completo nunca encerra Job, mesmo com o dono morto", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "esquema-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.mkdirSync(pasta, { recursive: true });
+  const base = { reservado: 1, pid: 2147483000, em: agora.v };
+  const invalidas = {
+    "agente-sem-job-nem-pid": { ...base, agentes: [{ job: "Local\\\\MixAI-a" }, {}] },
+    "job-nao-texto": { ...base, agentes: [{ job: 7, pid: 1 }] },
+    "pid-texto": { ...base, pid: "2147483000", agentes: [{ job: "Local\\\\MixAI-b" }] },
+    "inicio-numero": { ...base, inicio: 5, agentes: [{ job: "Local\\\\MixAI-c" }] },
+    "reservado-negativo": { ...base, reservado: -1, agentes: [{ job: "Local\\\\MixAI-d" }] },
+    "agentes-nao-lista": { ...base, agentes: { job: "Local\\\\MixAI-e" } },
+  };
+  for (const [nome, r] of Object.entries(invalidas)) fs.writeFileSync(path.join(pasta, `${nome}.json`), JSON.stringify(r));
+  const encerrados = [];
+  const c = controleCom(arquivoEstado, agora, { jobVivo: () => true, encerrarJob: async (n) => { encerrados.push(n); return false; } });
+  c({ agentesLocais: 0 });
+  await new Promise((r) => setTimeout(r, 50));
+  c.liberar();
+  assert.deepStrictEqual(encerrados, [], "nenhuma reserva inválida encerra Job");
+}));
+
+test("Job inexistente (false) vale para uma decisão e NÃO fica em cache: a consulta seguinte pergunta de novo", () => comMemoriaAsync(6, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sem-cache-"));
+  const arquivoEstado = path.join(dir, "e.json");
+  const agora = { v: 1e6 };
+  const pasta = `${arquivoEstado}.lotes`;
+  fs.mkdirSync(pasta, { recursive: true });
+  // reserva mantida por um PID vivo, só para o Job ser consultado a cada decisão
+  fs.writeFileSync(path.join(pasta, "x.json"), JSON.stringify({ reservado: 1, pid: 2147483000, agentes: [{ job: "Local\\\\MixAI-nc", pid: process.pid, inicio: par.inicioDoProcesso(process.pid) }], em: agora.v }));
+  let perguntas = 0;
+  const perguntarJob = async () => { perguntas += 1; return false; };
+  const c = controleCom(arquivoEstado, agora, { perguntarJob, encerrarJob: async () => false });
+  c({ agentesLocais: 0 });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(perguntas, 1);
+  c({ agentesLocais: 0 }); // usa o false uma vez
+  c({ agentesLocais: 0 }); // e pergunta de novo, em vez de reaproveitar
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(perguntas, 2, "o false não foi guardado em cache");
+  c.liberar();
+}));
+
+test("falha ao listar os agentes: a reserva fica como está (nada alterado nem liberado), atualizar() devolve false e a saída do processo não mexe nela", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lista-falha-"));
+  const pasta = path.join(dir, "lotes");
+  const r = par.criarReserva({ pasta, relogio: Date.now });
+  r.definirAgentes(() => [{ jobNome: "Local\\\\MixAI-l", pid: process.pid }]);
+  r.reservar({ alvo: 2, agentes: 1, teto: 3 });
+  const arq = path.join(pasta, fs.readdirSync(pasta).find((n) => n.endsWith(".json")));
+  const antes = JSON.parse(fs.readFileSync(arq, "utf8"));
+  assert.strictEqual(antes.agentes.length, 1);
+  r.definirAgentes(() => { throw new Error("falhou ao listar"); });
+  const textoAntes = fs.readFileSync(arq, "utf8");
+  r.reservar({ alvo: 3, agentes: 3, teto: 3 }); // pedido diferente: se recalculasse, o `reservado` mudaria
+  assert.strictEqual(fs.readFileSync(arq, "utf8"), textoAntes, "a reserva ficou INTACTA (agentes, reservado e batimento)");
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq, "utf8")).reservado, antes.reservado);
+  assert.strictEqual(r.atualizar(), false, "sem listar, a reserva com o agente não está gravada");
+  // saída do processo com a listagem falhando: o arquivo continua como está
+  const script = path.join(dir, "filho.js");
+  fs.writeFileSync(script, `const par = require(${JSON.stringify(path.join(RAIZ, "orquestra", "paralelismo.js"))});
+const r = par.criarReserva({ pasta: ${JSON.stringify(path.join(dir, "lotes2"))}, relogio: Date.now });
+let falha = false;
+r.definirAgentes(() => { if (falha) throw new Error("x"); return [{ jobNome: "Local\\\\\\\\MixAI-z", pid: ${process.pid} }]; });
+r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+falha = true;
+`);
+  const res = require("node:child_process").spawnSync(process.execPath, [script], { encoding: "utf8" });
+  assert.strictEqual(res.status, 0, res.stderr);
+  const arq2 = path.join(dir, "lotes2", fs.readdirSync(path.join(dir, "lotes2")).find((n) => n.endsWith(".json")));
+  const guardada = JSON.parse(fs.readFileSync(arq2, "utf8"));
+  assert.ok(guardada.pid && guardada.agentes.length === 1 && !guardada.itens, "não foi apagada nem trocada: segue a reserva comum com o agente");
+});
+
+test("data de criação que vem null é lida de novo (3 tentativas na hora e de novo nas chamadas seguintes); a null não fica gravada como definitiva", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "inicio-null-"));
+  const pasta = path.join(dir, "lotes");
+  const leituras = [];
+  const respostas = [null, null, null, null, null, null, "T1"]; // 3 + 3 tentativas falham; a chamada seguinte acha
+  const inicioDe = (pid) => { leituras.push(pid); if (pid !== 4242) return "M"; return respostas.length ? respostas.shift() : "T1"; };
+  const r = par.criarReserva({ pasta, relogio: Date.now, inicioDe });
+  r.definirAgentes(() => [{ jobNome: "Local\\\\MixAI-n", pid: 4242 }]);
+  const arq = () => path.join(pasta, fs.readdirSync(pasta).find((n) => n.endsWith(".json")));
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, null, "sem data ainda: null");
+  assert.ok(leituras.filter((p) => p === 4242).length >= 3, "tentou mais de uma vez");
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, null, "ainda sem data (a null não foi tratada como prova)");
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, "T1", "na chamada seguinte a data foi lida e gravada");
+});
+
+test("Windows de verdade: SEM o arquivo de liberação o wrapper sai com 124 e não roda o comando (espera curta configurável)", async () => {
+  if (process.platform !== "win32") return; // só o Windows tem Job Object: no PC este teste roda de verdade
+  const { spawnSync } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sem-liberar-"));
+  const marca = path.join(dir, "rodou.txt");
+  const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WRAPPER], { env: { ...process.env, MIXAI_COMANDO: `echo x> "${marca}"`, MIXAI_JOB: `Local\\MixAI-sem-liberar-${process.pid}-${Date.now()}`, MIXAI_LIBERAR: path.join(dir, "nunca.liberar"), MIXAI_LIBERAR_ESPERA_S: "2" }, encoding: "utf8", timeout: 120000, windowsHide: true });
+  assert.strictEqual(r.status, 124, r.stderr);
+  assert.ok(!fs.existsSync(marca), "o comando não rodou");
+  assert.match(r.stderr, /do Node em 2 s/); // trecho ASCII: o stderr do PowerShell 5.1 não vem em UTF-8
+});
+
+test("o wrapper aceita a espera configurável por MIXAI_LIBERAR_ESPERA_S (padrão 60 s)", () => {
+  const ps = fs.readFileSync(WRAPPER, "utf8");
+  assert.match(ps, /\$espera = 60/);
+  assert.match(ps, /\$env:MIXAI_LIBERAR_ESPERA_S/);
+  assert.match(ps, /AddSeconds\(\$espera\)/);
+});
+
+test("PID reaproveitado: a data de criação não fica em cache só pelo número do PID (a chave é PID + Job)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pid-reuso-"));
+  const pasta = path.join(dir, "lotes");
+  const datas = { A: "DATA-DO-PRIMEIRO", B: "DATA-DO-SEGUNDO" };
+  let atual = "A";
+  const inicioDe = (pid) => (pid === 4242 ? datas[atual] : "M");
+  const r = par.criarReserva({ pasta, relogio: Date.now, inicioDe });
+  const arq = () => path.join(pasta, fs.readdirSync(pasta).find((n) => n.endsWith(".json")));
+  r.definirAgentes(() => [{ jobNome: "Local\\MixAI-A", pid: 4242 }]);
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, "DATA-DO-PRIMEIRO");
+  // o PID 4242 passa a ser de OUTRO agente (outro Job, outra data de criação)
+  atual = "B";
+  r.definirAgentes(() => [{ jobNome: "Local\\MixAI-B", pid: 4242 }]);
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, "DATA-DO-SEGUNDO", "não herdou a data do processo anterior");
+});
+
+test("a remoção do arquivo de liberação e a do prompt ficam em try separados (falhar num não impede o outro)", () => {
+  const fonte = fs.readFileSync(path.join(RAIZ, "orquestra", "escada.js"), "utf8");
+  const bloco = fonte.slice(fonte.indexOf("const apagarEntrada = (tentativa = 0) => {"), fonte.indexOf("const jobNome ="));
+  assert.match(bloco, /const apagar = \(arquivo\) => \{ try \{ fs\.rmSync\(arquivo, \{ force: true \}\); return true; \} catch \{ return false; \} \};/);
+  assert.match(bloco, /const liberacaoApagada = apagar\(liberacao\);\s+const entradaApagada = apagar\(entrada\);/);
+  assert.doesNotMatch(bloco, /rmSync\(liberacao[^;]*;\s*fs\.rmSync\(entrada/, "não é mais um try só para os dois");
+});
+
+test("se a remoção do arquivo de liberação falha, o arquivo do prompt é apagado mesmo assim (e a do liberar é tentada de novo)", async () => {
+  const { spawn } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rm-sep-"));
+  fs.chmodSync(dir, 0o700);
+  const original = fs.rmSync;
+  let falhasDoLiberar = 0;
+  fs.rmSync = (arquivo, ...resto) => { if (String(arquivo).endsWith(".liberar")) { falhasDoLiberar += 1; throw new Error("em uso"); } return original(arquivo, ...resto); };
+  try {
+    const chamada = escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [], pastaPrompts: dir });
+    assert.strictEqual(await chamada("x"), "ok");
+    assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.startsWith("prompt-") && !n.endsWith(".liberar")), [], "o prompt foi apagado");
+    assert.ok(falhasDoLiberar >= 1);
+  } finally { fs.rmSync = original; }
+  await new Promise((r) => setTimeout(r, 1500)); // a nova tentativa (sem a falha) roda e termina o ciclo de repetição
+});
