@@ -82,6 +82,19 @@ function pendenciasDosPRs(prs, revisados = {}) {
   }
   return acoes;
 }
+// Tarefa em revisão cujo PR (número em `resultado`, ex.: "PR #30", gravado por `grafo.js revisar`) ficou vermelho volta
+// para em_andamento no grafo. Quem acorda o autor é pendenciasDosPRs; aqui só o grafo acompanha o CI.
+function devolucoesPorCI(g, prs) {
+  const acoes = [];
+  for (const t of Object.values(g?.tarefas || {})) {
+    if (t.estado !== 'em_revisao') continue;
+    const m = /#(\d+)/.exec(String(t.resultado || ''));
+    const pr = m && (prs || []).find((p) => p.number === Number(m[1]));
+    if (!pr || !(pr.statusCheckRollup || []).some(checkFalhou)) continue;
+    acoes.push({ tipo: 'devolver', tarefa: t.id, pr: pr.number, agente: t.agente, motivo: `Tarefa ${t.id} devolvida: CI vermelho no PR #${pr.number}`, chave: `devolver:${t.id}:${String(pr.headRefOid || '').slice(0, 8)}` });
+  }
+  return acoes;
+}
 // Atualiza o mapa de heads revisados: guarda o head em que a label foi vista pela primeira vez e esquece PRs que saíram da lista.
 function atualizarRevisados(prs, revisados = {}) {
   const novo = {};
@@ -233,6 +246,7 @@ function passo(deps, cfg = configPadrao) {
         }
         return { ...pr, labels: pr.labels.filter((l) => l.name !== rotulo) };
       });
+      acoes.push(...devolucoesPorCI(g, prs));
       acoes.push(...filtrarExternas(pendenciasDosPRs(atuais, estado.revisados), estado, agora, c));
       const revisados = atualizarRevisados(atuais, estado.revisados);
       if (JSON.stringify(revisados) !== JSON.stringify(estado.revisados || {})) { estado = { ...estado, revisados }; deps.salvarEstado(estado); }
@@ -321,7 +335,7 @@ function promptDe(a, g) {
   const ids = a.ids?.length ? a.ids : a.id ? [a.id] : [];
   const tarefas = ids.map((id) => g?.tarefas?.[id]).filter(Boolean)
     .map((t) => `Tarefa ${t.id}: ${t.titulo}\nEscopo: ${t.escopo.join(', ')}\nVerificar: ${t.verificar || 'não definido'}`);
-  return [a.motivo, ...tarefas, `Leia AGENTS.md e ${ARQ_CANAL}. Siga somente a tarefa indicada, crie branch/worktree antes de alterar arquivos, registre o progresso no canal e, ao terminar, atualize a tarefa no grafo com revisar ou concluir. Não faça merge do próprio PR.`].join('\n\n');
+  return [a.motivo, ...tarefas, `Leia AGENTS.md e ${ARQ_CANAL}. Siga somente a tarefa indicada, crie branch/worktree antes de alterar arquivos, registre o progresso no canal e, ao terminar, atualize a tarefa no grafo com revisar (resultado "PR #<número>", para o supervisor acompanhar o CI) ou concluir. Não faça merge do próprio PR.`].join('\n\n');
 }
 function acordar(a, cfg, g, spawn = spawnSync, plataforma = process.platform) {
   const prompt = promptDe(a, g);
@@ -344,6 +358,16 @@ function executarReal(a, g, cfg, deps = {}) {
     try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
     finally { fs.rmSync(plano, { force: true }); }
   });
+  if (a.tipo === 'devolver') {
+    try { grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'em_revisao' ? grafoApi.devolver(x, a.tarefa, a.motivo) : x)); }
+    catch (e) {
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (devolução não feita)\n\n${a.motivo}, mas a tarefa não pôde voltar a em_andamento: ${e.message} (escopo ou estado). Confira o grafo.\n`);
+      log(`devolver ${a.tarefa}: ${e.message}`);
+      return;
+    }
+    log(`devolver ${a.tarefa}: CI vermelho no PR #${a.pr}`);
+    return;
+  }
   if (a.tipo === 'escalar') {
     const para = /login|aprova|decis[aã]o/.test(a.motivo) ? 'Fernando' : 'Claude';
     escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → ${para} (escalada)\n\n${a.motivo}\n`);
@@ -460,5 +484,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, devolucoesPorCI, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });
