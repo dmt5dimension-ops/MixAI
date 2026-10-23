@@ -131,3 +131,16 @@ test("ligarAoGrafo: pasta com barra final libera descendentes; arquivo sem barra
   escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/x.js", "t/a/sub/y.js"] })]).iniciar();
   assert.equal(estado(arq, "a"), "em_andamento");
 });
+
+test("ligarAoGrafo: maiúsculas contam fora do Windows e não contam no Windows (como o aplicar.js)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-caixa-"));
+  const novo = () => { const arq = path.join(dir, `g${Math.random()}.json`); grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/A.js"] }, AGORA)); return arq; };
+  const arq1 = novo();
+  assert.throws(() => escada.ligarAoGrafo(arq1, [planoDe({ escopo: ["t/a.js"] })], { plataforma: "linux" }).iniciar(), /fora do escopo/);
+  assert.equal(estado(arq1, "a"), "pendente");
+  escada.ligarAoGrafo(arq1, [planoDe({ escopo: ["t/A.js"] })], { plataforma: "linux" }).iniciar();
+  assert.equal(estado(arq1, "a"), "em_andamento");
+  const arq2 = novo();
+  escada.ligarAoGrafo(arq2, [planoDe({ escopo: ["t/a.js"] })], { plataforma: "win32" }).iniciar();
+  assert.equal(estado(arq2, "a"), "em_andamento");
+});
