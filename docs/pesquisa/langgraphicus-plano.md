@@ -11,7 +11,7 @@ Data: 2026-10-23. Só plano, nenhum código do app entra aqui.
 
 ## Decisões deste plano
 
-1. **Onde o app fica segue o passo 1 do `/integrar-app`:** se a pasta do LangGraphicus já for um repositório Git (com remoto ou não), trabalha nele e copia o kit para lá; se não for, o app entra em `apps/langgraphicus/` neste repositório. Criar um repo novo no GitHub só se o dono pedir, e aí é mudança de regra em tarefa própria.
+1. **Onde o app fica segue o passo 1 do `/integrar-app`:** se a pasta do LangGraphicus já for um repositório Git, trabalha nele e copia o kit para lá; se não for, o app entra em `apps/langgraphicus/` neste repositório. Criar um repo novo no GitHub só se o dono pedir, e aí é mudança de regra em tarefa própria.
 2. **Sobre o `orquestra/` e `local/`:** já resolvido pelo kit, que aponta os scripts para a pasta do MixAI. Nada a decidir aqui.
 3. Nenhuma API paga: só Claude Code e Codex CLI pelas assinaturas.
 
@@ -22,7 +22,9 @@ Data: 2026-10-23. Só plano, nenhum código do app entra aqui.
 - [ ] Anotar onde está a pasta do LangGraphicus e se já é repo Git. Se for, usar essa pasta. Se não, colocar o app em `apps/langgraphicus/` no MixAI (regra do `/integrar-app`); o `preparar-repo.ps1` só é preciso para repo externo.
 - [ ] Descobrir o comando de teste do app (`npm test`, `pytest`...) ou registrar que não existe.
 - [ ] Se o app tem repo próprio: rodar `preparar-repo.ps1 -Repo <pasta do LangGraphicus> -ComandoTeste "<comando>"`. Se já existir `AGENTS.md`, juntar com a versão `.orquestrador` à mão.
-- [ ] Abrir um PR só com os arquivos do kit; revisão cruzada (`feito-por:*`/`revisado-por:*`); só o dono liga a proteção da branch.
+- [ ] Só no caminho de repo externo: o repo precisa ter remoto no GitHub antes dos portões. Sem remoto, o `preparar-repo.ps1` copia os arquivos mas para em `gh repo view`, sem labels nem variável do CI. Então subir o repo (decisão do dono, fora deste plano) e rodar o script de novo. Enquanto não houver remoto, esse caminho fica **pendente**, sem declarar "pronto".
+- [ ] Caminho de repo externo: abrir um PR só com os arquivos do kit; revisão cruzada (`feito-por:*`/`revisado-por:*`); só o dono liga a proteção da branch.
+- [ ] Caminho `apps/langgraphicus/` no MixAI: não há kit a copiar; valem o PR, o CI (`regressao`, `guarda-de-testes`, `revisao-cruzada`) e as labels do próprio MixAI, com o escopo declarado em `apps/langgraphicus/` e na pasta de testes.
 
 ### B. Raio-X (só leitura, passo 2 do `/integrar-app`)
 - [ ] `explorador` descreve: como roda, quais partes existem (conversa, geração do sólido, edição, exportação), o que tem de teste.
@@ -52,4 +54,4 @@ Data: 2026-10-23. Só plano, nenhum código do app entra aqui.
 
 ## Pronto quando
 
-Repo do app com o kit, CI verde, testes travando o que funciona, estado.md preenchido, e a primeira tarefa de avanço aberta por `/pedido`.
+No caminho de repo externo: repo com remoto e o kit; no caminho interno: pasta `apps/langgraphicus/` no MixAI. Em ambos: CI verde, testes travando o que funciona, estado.md preenchido, e a primeira tarefa de avanço aberta por `/pedido`.
