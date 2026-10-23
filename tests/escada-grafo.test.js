@@ -85,8 +85,9 @@ test("ligarAoGrafo: escopo do plano fora do escopo da tarefa no grafo é recusad
   assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a", "t/fora"] })]).iniciar(), /fora do escopo/);
   assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/"] })]).iniciar(), /fora do escopo/, "pasta mais larga que a da tarefa");
   assert.equal(estado(arq, "a"), "pendente");
-  // dentro do escopo (arquivo ou pasta abaixo da tarefa) passa
-  escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/x.js"] })]).iniciar();
+  assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/x.js"] })]).iniciar(), /fora do escopo/, "t/a sem barra final é arquivo: não libera filhos");
+  assert.equal(estado(arq, "a"), "pendente");
+  escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a"] })]).iniciar(); // o próprio arquivo
   assert.equal(estado(arq, "a"), "em_andamento");
 });
 
@@ -118,5 +119,15 @@ test("ligarAoGrafo: plano com curinga dentro de pasta da tarefa passa; curinga q
   grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/a/"] }, AGORA));
   assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/*.js"] })]).iniciar(), /fora do escopo/);
   escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/*.js"] })]).iniciar();
+  assert.equal(estado(arq, "a"), "em_andamento");
+});
+
+test("ligarAoGrafo: pasta com barra final libera descendentes; arquivo sem barra não", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-pasta-"));
+  const arq = path.join(dir, "grafo.json");
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/a/"] }, AGORA));
+  assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/b.js"] })]).iniciar(), /fora do escopo/);
+  assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a"] })]).iniciar(), /fora do escopo/, "t/a sem barra é outro caminho (arquivo)");
+  escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/x.js", "t/a/sub/y.js"] })]).iniciar();
   assert.equal(estado(arq, "a"), "em_andamento");
 });
