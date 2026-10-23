@@ -52,6 +52,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Sombra recusa plano com tarefa sem `verificar` antes de chamar o modelo (não vira erro do Qwen) | `orquestra/sombra.js` | `tests/sombra.test.js` |
 | Medida de regras considera as outras regras que disparam junto e marca "sem medida" quando o agente falha por recurso | `orquestra/medir-regras.js` | `tests/medir-regras.test.js` |
 | Plano da sombra autossuficiente: dados da regex vão dentro do comando `verificar` (planos de sementes diferentes não se atropelam) | `orquestra/sombra-plano/gerar-plano.js`, `orquestra/sombra-plano/confere.js` | `tests/sombra-plano.test.js` |
+| Arquivos por modelo nunca colidem: sufixo com hash do nome exato ("gemma3:1b" x "gemma3/1b", caixa no Windows) | `orquestra/por-modelo.js` | `tests/por-modelo.test.js` |
 
 ## Em andamento
 

@@ -1,6 +1,8 @@
 // Regras e casos por modelo. A mesma escada serve vários alunos (Qwen, outros modelos locais, o aluno estático).
 // Regra com `modelos: ["a","b"]` só vale para esses; sem o campo, vale para todos (como as regras de antes).
 // Caso com `modelo` conta só para o treino desse modelo; sem o campo é do Qwen (mixai-local), que era o único.
+const crypto = require('node:crypto');
+
 const MODELO_PADRAO = 'mixai-local';
 
 function nomeValido(modelo) {
@@ -26,10 +28,15 @@ function casosDoModelo(casos, modelo) {
   return casos.filter((c) => casoDoModelo(c, modelo));
 }
 
-// Nome de modelo vira parte de nome de arquivo: só letras, números, ponto, hífen e sublinhado.
+// Nome de modelo vira parte de nome de arquivo: só letras minúsculas, números, ponto, hífen e sublinhado, MAIS um hash do nome
+// exato. O hash garante que nomes diferentes nunca caiam no mesmo arquivo ("gemma3:1b" x "gemma3/1b", ou "Gemma" x "gemma" em
+// sistema de arquivos sem diferença de caixa, como o do Windows).
 function sufixoDeArquivo(modelo) {
   const m = nomeValido(modelo);
-  return m === MODELO_PADRAO ? '' : `.${m.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+  if (m === MODELO_PADRAO) return '';
+  const legivel = m.replace(/[^A-Za-z0-9._-]/g, '_').toLowerCase().slice(0, 40);
+  const hash = crypto.createHash('sha256').update(m).digest('hex').slice(0, 8);
+  return `.${legivel}-${hash}`;
 }
 
 module.exports = { MODELO_PADRAO, regraVale, regrasDoModelo, casoDoModelo, casosDoModelo, sufixoDeArquivo };

@@ -29,7 +29,7 @@ test("caso sem 'modelo' é do Qwen; cada modelo vê só os seus", () => {
 
 test("nome de arquivo por modelo: sem sufixo para o Qwen e sem caractere perigoso para os outros", () => {
   assert.strictEqual(M.sufixoDeArquivo(M.MODELO_PADRAO), "");
-  assert.strictEqual(M.sufixoDeArquivo("gemma3:1b"), ".gemma3_1b");
+  assert.match(M.sufixoDeArquivo("gemma3:1b"), /^\.gemma3_1b-[0-9a-f]{8}$/);
   assert.ok(!/[\\/]/.test(M.sufixoDeArquivo("../../x")), "sem barra: não sai da pasta");
   assert.ok(!M.sufixoDeArquivo("a/b\\c").includes("/") && !M.sufixoDeArquivo("a/b\\c").includes("\\"));
 });
@@ -43,8 +43,8 @@ test("treino por modelo: separa os casos e grava arquivos com o nome do modelo, 
     assert.strictEqual(preparar(arq, { validacao: 0, minimo: 1 }).treino, 2);
     assert.strictEqual(preparar(arq, { validacao: 0, minimo: 1, modelo: "gemma3:1b" }).treino, 3);
     assert.strictEqual(fs.readFileSync(arq.treino, "utf8").trim().split("\n").length, 2, "o treino do Qwen não foi sobrescrito");
-    assert.strictEqual(fs.readFileSync(path.join(dir, "treino.gemma3_1b.jsonl"), "utf8").trim().split("\n").length, 3);
-    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, "relatorio.gemma3_1b.json"), "utf8")).modelo, "gemma3:1b");
+    assert.strictEqual(fs.readFileSync(path.join(dir, `treino${M.sufixoDeArquivo("gemma3:1b")}.jsonl`), "utf8").trim().split("\n").length, 3);
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, `relatorio${M.sufixoDeArquivo("gemma3:1b")}.json`), "utf8")).modelo, "gemma3:1b");
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -56,4 +56,30 @@ test("medir regras por modelo: regra de outro modelo não é medida", async () =
   assert.deepStrictEqual(r.map((i) => i.id), ["todos"]);
   const g = await medirRegras({ regras: [regra("todos"), regra("so-gemma", ["gemma3:1b"])], exemplos: ex, agente, modelo: "gemma3:1b" });
   assert.deepStrictEqual(g.map((i) => i.id), ["todos", "so-gemma"]);
+});
+
+test("nomes de modelo diferentes nunca dividem o mesmo sufixo (inclui troca de símbolo e só caixa)", () => {
+  const nomes = ["gemma3:1b", "gemma3/1b", "gemma3_1b", "Gemma3:1b", "gemma3:1B", "MIXAI-LOCAL", "mixai-local-2"];
+  const sufixos = nomes.map((n) => M.sufixoDeArquivo(n));
+  assert.strictEqual(new Set(sufixos).size, nomes.length);
+  assert.strictEqual(new Set(sufixos.map((x) => x.toLowerCase())).size, nomes.length, "colide num sistema sem diferença de caixa");
+  assert.strictEqual(M.sufixoDeArquivo("gemma3:1b"), M.sufixoDeArquivo("gemma3:1b"), "estável");
+});
+
+test("treino de dois modelos de nome parecido grava arquivos e dados separados", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mixai-colide-"));
+  try {
+    const arq = { casos: path.join(dir, "casos.jsonl"), treino: path.join(dir, "treino.jsonl"), validacao: path.join(dir, "validacao.jsonl"), relatorio: path.join(dir, "relatorio.json") };
+    const caso = (n, modelo) => ({ entrada: `tarefa ${modelo} ${n}`, saida: `resp ${modelo} ${n}`, resolvidoPor: "codex", modelo });
+    const a = "gemma3:1b";
+    const b = "gemma3/1b";
+    fs.writeFileSync(arq.casos, [caso(1, a), caso(2, a), caso(1, b), caso(2, b), caso(3, b)].map((c) => JSON.stringify(c)).join("\n") + "\n");
+    assert.strictEqual(preparar(arq, { validacao: 0, minimo: 1, modelo: a }).treino, 2);
+    assert.strictEqual(preparar(arq, { validacao: 0, minimo: 1, modelo: b }).treino, 3);
+    const lerTreino = (m) => fs.readFileSync(path.join(dir, `treino${M.sufixoDeArquivo(m)}.jsonl`), "utf8").trim().split("\n");
+    assert.strictEqual(lerTreino(a).length, 2, "o treino do primeiro modelo foi sobrescrito");
+    assert.strictEqual(lerTreino(b).length, 3);
+    assert.ok(lerTreino(a).every((l) => l.includes("gemma3:1b")) && lerTreino(b).every((l) => l.includes("gemma3/1b")));
+    assert.notStrictEqual(M.sufixoDeArquivo(a), M.sufixoDeArquivo(b));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
