@@ -59,3 +59,10 @@ Nota de base real, treino LoRA, troca de versão do modelo, medir VRAM sob carga
 - Treinar com erro: só entram casos que alguém acertou e o verificador confirmou.
 - Contexto pequeno: 4096 (dia) e 8192 (noite); regra e tarefa precisam caber.
 - Nunca `num_gpu: 0`; sempre por `local/rodar-local.js`.
+
+## Onde treinar (nuvem x PC)
+
+- **Esta nuvem (sessão do Claude): não serve para treinar.** Tem 4 CPUs, 15 GB de RAM e nenhuma placa de vídeo. Serve para preparar dados, escrever regras, gerar casos e rodar a regressão.
+- **PC do dono: serve para rodar o Qwen, mal para treinar.** A RX 6600M (AMD, 8 GB) roda o modelo no Ollama, mas treino LoRA no Windows com placa AMD quase não tem suporte, e 8 GB não comportam o 7B com folga.
+- **Melhor para treinar: GPU grátis ou barata de terceiros** (Google Colab ou Kaggle, com NVIDIA T4 de 16 GB), com QLoRA em 4 bits. Os dados saem do `treino.js` (já sem segredo), o script `ferramentas/treino-lora-colab.py` treina e exporta um GGUF, e o PC só baixa o arquivo e cria o `mixai-local-v2` no Ollama. Não usa API da Anthropic nem da OpenAI. Precisa de uma conta Google/Kaggle do dono (decisão dele) e de volume mínimo de exemplos (Fase 4).
+- Antes de treinar vale rodar a Fase 1 (sombra): com poucos exemplos, regra no prompt rende mais do que treino.
