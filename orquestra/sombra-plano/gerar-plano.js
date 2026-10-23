@@ -1,9 +1,6 @@
 // Gera o plano da fase 0/1 do Qwen: tarefas que uma máquina confere, com a resposta de referência.
 //   node orquestra/sombra-plano/gerar-plano.js 30 [semente] > plano.json    (rodar da raiz do repositório)
 //   node orquestra/sombra.js rodar plano.json
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
 function aleatorio(semente) {
   let s = semente >>> 0;
@@ -33,7 +30,9 @@ const TIPOS = {
   },
 };
 
-function gerarPlano(n, semente = 1, pastaDados = path.join(os.tmpdir(), 'mixai-sombra-dados')) {
+// Os dados da regex vão dentro do próprio comando `verificar` (base64): cada plano é autossuficiente, planos de sementes
+// diferentes não se atropelam e nada some quando a pasta temporária é limpa. O 3º parâmetro só existe por compatibilidade.
+function gerarPlano(n, semente = 1) {
   const r = aleatorio(semente);
   const nomes = Object.keys(TIPOS);
   const tarefas = [];
@@ -43,10 +42,7 @@ function gerarPlano(n, semente = 1, pastaDados = path.join(os.tmpdir(), 'mixai-s
     const id = `${tipo}-${String(i + 1).padStart(3, '0')}`;
     let verificar;
     if (t.modo === 'regex') {
-      fs.mkdirSync(pastaDados, { recursive: true });
-      const arq = path.join(pastaDados, `${id}.json`);
-      fs.writeFileSync(arq, JSON.stringify(t.dados));
-      verificar = `node orquestra/sombra-plano/confere.js regex "${arq}"`;
+      verificar = `node orquestra/sombra-plano/confere.js regex64 ${Buffer.from(JSON.stringify(t.dados)).toString('base64')}`;
     } else {
       verificar = `node orquestra/sombra-plano/confere.js igual "${t.esperado}"`;
     }

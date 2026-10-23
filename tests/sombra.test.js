@@ -104,3 +104,20 @@ test("a linha de comando recusa comando desconhecido", () => {
   assert.strictEqual(outro.status, 1);
   assert.match(outro.stderr, /precisa de --comando/);
 });
+
+test("plano com tarefa sem verificar é recusado antes de chamar o modelo e não registra nada", () => {
+  const { spawnSync } = require("node:child_process");
+  const os = require("node:os");
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), "sombra-sv-"));
+  const plano = path.join(pasta, "plano.json");
+  fs.writeFileSync(plano, JSON.stringify([{ id: "a", tipo: "t", entrada: "x", verificar: "node -e \"process.exit(0)\"" }, { id: "b", tipo: "t", entrada: "y" }]));
+  const registro = path.join(__dirname, "..", "orquestra", "casos", "sombra.jsonl");
+  const antes = fs.existsSync(registro) ? fs.statSync(registro).mtimeMs : null;
+  const r = spawnSync(process.execPath, [path.join(__dirname, "..", "orquestra", "sombra.js"), "rodar", plano], { encoding: "utf8" });
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /sem comando "verificar".*: b/);
+  assert.strictEqual(fs.existsSync(registro) ? fs.statSync(registro).mtimeMs : null, antes);
+  const { exigirVerificar } = require("../orquestra/sombra.js");
+  assert.throws(() => exigirVerificar([{ id: "c", verificar: "  " }]), /c/);
+  assert.doesNotThrow(() => exigirVerificar([{ id: "d", verificar: "true" }]));
+});
