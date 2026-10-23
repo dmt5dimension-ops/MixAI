@@ -16,6 +16,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Regra de quando mandar tarefa para o modelo local (`AGENTS.md`) | `tests/regra-modelo-local.test.js` |
 | Proteção do PC no modelo local: memória livre antes de carregar, `num_gpu 99` (nunca processador), log do servidor | `tests/protecao-local.test.js` |
 | Kit que leva as regras para o repo de outro app (`ferramentas/preparar-repo.ps1` + `ferramentas/kit-arquivos.json`) | `tests/preparar-repo.test.js` |
+| Kit: o `AGENTS.md` e o `CODEX.md` copiados para o repo de outro app chamam os scripts pela pasta do MixAI (fonte única, sem copiar `orquestra/` nem `local/`): `node "<MixAI>/orquestra/..."`, `-File "<MixAI>/orquestra/..."` e menções soltas, sem duplicar ao rodar de novo (`ferramentas/caminhos-mixai.js`, chamado pelo `preparar-repo.ps1`; ainda não rodado num Windows real) | `tests/caminhos-mixai.test.js` |
 | Travas do canal Claude↔Codex: hooks do Claude Code (`.claude/settings.json`, `.claude/hooks/canal.js`: SessionStart mostra o canal, Stop bloqueia se o Codex ficou sem resposta) e regra global do Codex (`ferramentas/codex-agents-global.md` → `~/.codex/AGENTS.md`) | `tests/hooks-canal.test.js` |
 | Canal de coordenação Claude↔Codex fora do git (`D:\MixAI-coordenacao\coordenacao.md`), citado em `AGENTS.md`, `CODEX.md` e `CLAUDE.md`; `docs/memoria/coordenacao.md` é só um ponteiro (ponto único) | `tests/canal-coordenacao.test.js` |
 | Regras que o Qwen aprendeu de verdade ficam em `orquestra/regras-locais.json` (só confirmadas, palavras-chave específicas); primeira: `teste-mesmo-arquivo` | `tests/regras-locais.test.js` |
@@ -74,5 +75,4 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - Ligar o vigia e a `escada.js` ao grafo (`orquestra/grafo.js`): hoje só o planejador e o Codex o usam pela linha de comando. Tarefa própria, mexe em arquivos de outras etapas.
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
-- O `AGENTS.md` copiado pelo kit cita `orquestra/` e `local/`, que só existem no MixAI. No repo de outro app esses comandos não existem; falta decidir se ele chama os scripts pela pasta do MixAI ou se o kit passa a levar essas pastas.
 - O `preparar-repo.ps1` não foi rodado num Windows de verdade depois do conserto (a sessão na nuvem não tem PowerShell). Rodar uma vez numa pasta de teste antes de usar no LangGraphicus.
