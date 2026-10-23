@@ -1,0 +1,452 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const grafo = require('../orquestra/grafo.js');
+const vigia = require('../orquestra/fofoqueiro.js');
+
+const AGORA = new Date('2026-10-23T12:00:00.000Z');
+const CFG = { esperaMinimaMinutos: 10, prazoParadaMinutos: 30, maxDisparosPorHora: 2 };
+const tarefa = (id, agente = 'codex', depende = []) => ({ id, titulo: `Tarefa ${id}`, agente, depende, escopo: [`src/${id}.js`], verificar: 'node -e "process.exit(0)"' });
+const criar = (...tarefas) => tarefas.reduce((g, t) => grafo.adicionar(g, t, AGORA.toISOString()), grafo.novo());
+
+test('pronta do Codex acorda uma vez e respeita o prazo para repetir', () => {
+  const g = criar(tarefa('a'));
+  const a = vigia.decidir(g, {}, AGORA, CFG);
+  assert.deepEqual(a.map((x) => [x.tipo, x.agente, x.ids]), [['acordar', 'codex', ['a']]]);
+  const estado = vigia.registrar({}, a[0], AGORA);
+  assert.deepEqual(vigia.decidir(g, estado, new Date(AGORA.getTime() + 9 * 60000), CFG), []);
+});
+
+test('tarefa em andamento parada gera cobrança; falha definitiva e dependente travada geram escalada', () => {
+  const g = criar(tarefa('a'), tarefa('b', 'claude', ['a']));
+  g.tarefas.a.estado = 'em_andamento';
+  g.tarefas.a.atualizado = new Date(AGORA.getTime() - 31 * 60000).toISOString();
+  assert.deepEqual(vigia.decidir(g, {}, AGORA, CFG).map((x) => [x.tipo, x.id]), [['cobrar', 'a']]);
+  g.tarefas.a.estado = 'falhou';
+  g.tarefas.a.tentativas = 3;
+  const a = vigia.decidir(g, {}, AGORA, CFG);
+  assert.deepEqual(a.map((x) => [x.tipo, x.id]), [['escalar', 'a'], ['escalar', 'b']]);
+});
+
+test('cobrança local não chama CLI e várias cobranças respeitam limite do ciclo', () => {
+  const g = criar(tarefa('a', 'local'), tarefa('b', 'codex'), tarefa('c', 'codex'));
+  for (const x of Object.values(g.tarefas)) {
+    x.estado = 'em_andamento';
+    x.atualizado = new Date(AGORA.getTime() - 31 * 60000).toISOString();
+  }
+  const a = vigia.decidir(g, {}, AGORA, { ...CFG, maxDisparosPorHora: 1 });
+  assert.equal(a.filter((x) => x.tipo === 'cobrar' && x.agente === 'codex').length, 1);
+  let chamadas = 0, canal = 0;
+  vigia.executarReal(a.find((x) => x.agente === 'local'), g, CFG, { chamarAgente: () => { chamadas++; }, escreverCanal: () => { canal++; }, log: () => {} });
+  assert.equal(chamadas, 0);
+  assert.equal(canal, 1);
+});
+
+test('agente local canônico do grafo segue para escada, sem acordar CLI', () => {
+  const a = vigia.decidir(criar(tarefa('q', 'local')), {}, AGORA, CFG);
+  assert.deepEqual(a.map((x) => [x.tipo, x.ids]), [['escada', ['q']]]);
+});
+
+test('cota e limite por hora impedem novos despertares e registram o adiamento', () => {
+  const g = criar(tarefa('a'));
+  const semCota = vigia.decidir(g, {}, AGORA, { ...CFG, semCota: { codex: new Date(AGORA.getTime() + 3600000).toISOString() } });
+  assert.equal(semCota.some((x) => x.tipo === 'acordar'), false);
+  assert.equal(semCota.some((x) => x.tipo === 'registrar' && /cota/.test(x.motivo)), true);
+  const cheio = vigia.decidir(g, { disparos: { codex: [AGORA.toISOString(), AGORA.toISOString()] } }, AGORA, CFG);
+  assert.equal(cheio.some((x) => x.tipo === 'acordar'), false);
+  g.tarefas.a.estado = 'em_andamento';
+  g.tarefas.a.atualizado = new Date(AGORA.getTime() - 31 * 60000).toISOString();
+  const cobrarCheio = vigia.decidir(g, { disparos: { codex: [AGORA.toISOString(), AGORA.toISOString()] } }, AGORA, CFG);
+  assert.equal(cobrarCheio.some((x) => x.tipo === 'cobrar'), false);
+});
+
+test('grafo inválido recusa trabalho e escala; nenhuma ação cita tarefa inexistente', () => {
+  const g = criar(tarefa('a'));
+  g.tarefas.a.depende = ['fantasma'];
+  const a = vigia.decidir(g, {}, AGORA, CFG);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].tipo, 'escalar');
+  assert.equal(a[0].id, null);
+  const bom = criar(tarefa('b'));
+  assert.ok(vigia.decidir(bom, {}, AGORA, CFG).every((x) => (x.ids || (x.id ? [x.id] : [])).every((id) => Object.hasOwn(bom.tarefas, id))));
+  const malformado = { versao: 1, tarefas: { a: { id: 'a', depende: null } } };
+  assert.deepEqual(vigia.decidir(malformado, {}, AGORA, CFG).map((x) => [x.tipo, x.id]), [['escalar', null]]);
+});
+
+test('falha ao carregar grafo é escalada sem acordar agente nem gravar estado', () => {
+  let salvou = 0, executou = 0;
+  const a = vigia.passo({ agora: () => AGORA, lerGrafo: () => { throw new Error('grafo corrompido'); }, lerEstado: () => ({}), lerSemCota: () => ({}), salvarEstado: () => { salvou++; }, executar: (x) => { executou++; assert.equal(x.tipo, 'escalar'); }, simular: true }, CFG);
+  assert.deepEqual(a.map((x) => [x.tipo, x.id]), [['escalar', null]]);
+  assert.equal(salvou, 0);
+  assert.equal(executou, 0);
+});
+
+test('uma mensagem do Claude e PR sem revisão viram pendências deduplicáveis', () => {
+  const canal = '### 2026-10-23 — Claude → Codex (rever)\n\nReveja o PR.\n';
+  const acao = vigia.pendenciasDoCanal(canal)[0];
+  assert.equal(acao.agente, 'codex');
+  assert.deepEqual(acao.ids, []);
+  const pr = { number: 31, headRefOid: 'abcdef1234', labels: [{ name: 'feito-por:codex' }], statusCheckRollup: [] };
+  assert.deepEqual(vigia.pendenciasDosPRs([pr]).map((x) => [x.agente, x.tipo]), [['claude', 'acordar']]);
+});
+
+test('despertar leva escopo e verificador da tarefa ao agente', () => {
+  const g = criar(tarefa('a'));
+  const a = vigia.decidir(g, {}, AGORA, CFG)[0];
+  const prompt = vigia.promptDe(a, g);
+  assert.match(prompt, /src\/a\.js/);
+  assert.match(prompt, /node -e/);
+  assert.match(prompt, /Tarefa a/);
+});
+
+test('falha do agente devolve tarefa ao grafo e a terceira falha escala', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-falha-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const acao = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  const deps = { arquivoGrafo: arquivo, chamarAgente: () => ({ status: 1, limite: false }), log: () => {} };
+  for (let i = 1; i <= 3; i++) {
+    vigia.executarReal(acao, grafo.carregar(arquivo), CFG, deps);
+    const atual = grafo.carregar(arquivo).tarefas.a;
+    assert.equal(atual.tentativas, i);
+    assert.equal(atual.estado, i === 3 ? 'falhou' : 'pendente');
+  }
+  assert.equal(vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0].tipo, 'escalar');
+});
+
+test('trava de instância única recusa a segunda enquanto a primeira vive', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-lock-'));
+  const a = vigia.pegarTrava(dir);
+  try { assert.equal(a.ok, true); assert.equal(vigia.pegarTrava(dir).ok, false); }
+  finally { a.soltar(); }
+});
+
+test('trava também recusa segunda instância quando o início do processo contém dois-pontos', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-lock-data-'));
+  const deps = { inicioDe: () => 'Thu Oct 22 21:15:02 2026' };
+  const a = vigia.pegarTrava(dir, deps);
+  try { assert.equal(a.ok, true); assert.equal(vigia.pegarTrava(dir, deps).ok, false); }
+  finally { a.soltar(); }
+});
+
+test('passo em simulação lista ações sem executar nem salvar estado', () => {
+  let executou = 0, salvou = 0;
+  const a = vigia.passo({ agora: () => AGORA, lerGrafo: () => criar(tarefa('a')), lerEstado: () => ({}), lerSemCota: () => ({}), executar: () => { executou++; }, salvarEstado: () => { salvou++; }, simular: true, log: () => {} }, CFG);
+  assert.equal(a[0].tipo, 'acordar');
+  assert.equal(executou, 0);
+  assert.equal(salvou, 0);
+});
+
+test('CLI --simular --uma-vez lê um grafo real sem executar comandos', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-cli-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'orquestra', 'fofoqueiro.js'), '--simular', '--uma-vez'], { env: { ...process.env, MIXAI_GRAFO: arquivo, MIXAI_CANAL_DIR: dir }, encoding: 'utf8', timeout: 10000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /acordar/);
+  assert.equal(fs.existsSync(path.join(dir, 'fofoqueiro-estado.json')), false);
+});
+
+test('grafo, canal e PR pedindo o mesmo agente geram um disparo por passo', () => {
+  const g = criar(tarefa('a', 'codex'));
+  let estado = {}, chamadas = 0;
+  const a = vigia.passo({
+    agora: () => AGORA, lerGrafo: () => g, lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    lerCanal: () => '### 2026-10-23 — Claude → Codex (pedido)\nFaça a tarefa.\n',
+    listarPRs: () => [{ number: 29, headRefOid: 'a1234567', labels: [{ name: 'feito-por:claude' }], statusCheckRollup: [] }],
+    executar: () => { chamadas++; }, simular: false,
+  }, { ...CFG, maxDisparosPorHora: 1 });
+  assert.equal(a.filter((x) => x.tipo === 'acordar' && x.agente === 'codex').length, 1);
+  assert.equal(chamadas, 1);
+  assert.equal(estado.disparos.codex.length, 1);
+});
+
+test('simulação mostra só as ações que caberiam no mesmo passo', () => {
+  const a = vigia.passo({
+    agora: () => AGORA, lerGrafo: () => criar(tarefa('a', 'codex')),
+    lerEstado: () => ({}), lerSemCota: () => ({}),
+    lerCanal: () => '### 2026-10-23 — Claude → Codex (pedido)\nFaça a tarefa.\n',
+    executar: () => { throw new Error('não pode executar'); }, simular: true,
+  }, CFG);
+  assert.equal(a.filter((x) => x.tipo === 'acordar' && x.agente === 'codex').length, 1);
+});
+
+test('lote local inicia e encerra tarefa no grafo; não roda outra vez no ciclo seguinte', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-local-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('q', 'local')));
+  let chamadas = 0;
+  const acao = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(acao, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarEscada: () => { chamadas++; return { status: 0 }; }, log: () => {} });
+  assert.equal(chamadas, 1);
+  assert.equal(grafo.carregar(arquivo).tarefas.q.estado, 'feita');
+  assert.deepEqual(vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG), []);
+});
+
+test('passo reconsulta o grafo e não cobra tarefa concluída durante outra ação', () => {
+  const g = criar(tarefa('a', 'codex'), tarefa('b', 'claude'));
+  for (const t of Object.values(g.tarefas)) { t.estado = 'em_andamento'; t.atualizado = new Date(AGORA.getTime() - 31 * 60000).toISOString(); }
+  let estado = {}, chamadas = [];
+  vigia.passo({
+    agora: () => AGORA, lerGrafo: () => g, lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    executar: (a) => { chamadas.push(a.id); if (a.id === 'a') g.tarefas.b.estado = 'feita'; }, simular: false,
+  }, CFG);
+  assert.deepEqual(chamadas, ['a']);
+});
+
+test('saída zero de agente tira tarefa do estado em_andamento', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-ok-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: 0, limite: false }), log: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_revisao');
+});
+
+test('grafo inválido não repete escalada dentro do prazo', () => {
+  let estado = {}, chamadas = 0;
+  const deps = {
+    agora: () => AGORA, lerGrafo: () => ({ versao: 0 }), lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    executar: () => { chamadas++; }, simular: false,
+  };
+  vigia.passo(deps, CFG);
+  vigia.passo(deps, CFG);
+  assert.equal(chamadas, 1);
+});
+
+test('simulação não consulta GitHub nem executa agente', () => {
+  const a = vigia.passo({
+    agora: () => AGORA, lerGrafo: () => criar(tarefa('a')), lerEstado: () => ({}), lerSemCota: () => ({}),
+    listarPRs: () => { throw new Error('gh foi chamado'); },
+    executar: () => { throw new Error('agente foi chamado'); }, simular: true,
+  }, CFG);
+  assert.equal(a[0].tipo, 'acordar');
+});
+
+test('mensagem posterior do supervisor não encobre pedido do Claude sem resposta', () => {
+  const canal = [
+    '### 2026-10-23 — Claude → Codex (corrigir)\nCorrija o PR.\n',
+    '### 2026-10-23 — Fofoqueiro → Claude (escalada)\nAviso.\n',
+  ].join('\n');
+  assert.equal(vigia.pendenciasDoCanal(canal).some((x) => x.agente === 'codex'), true);
+});
+
+test('trava antiga de PID reutilizado não bloqueia nova instância', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-pid-'));
+  fs.writeFileSync(path.join(dir, 'fofoqueiro.trava.00000001'), `${process.pid}:inicio-antigo:token`);
+  const t = vigia.pegarTrava(dir, { inicioDe: () => 'inicio-atual' });
+  try { assert.equal(t.ok, true); } finally { t.soltar?.(); }
+});
+
+test('se falta de cota não foi registrada, tarefa não volta para pendente', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-cota-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  let avisos = 0;
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, {
+    arquivoGrafo: arquivo, chamarAgente: () => ({ status: 1, limite: true }),
+    marcarSemCota: () => ({ status: 1 }), escreverCanal: () => { avisos++; }, log: () => {},
+  });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_andamento');
+  assert.equal(avisos, 1);
+});
+
+test('erro de leitura com mensagem sensível não vai para canal', () => {
+  let motivo;
+  vigia.passo({
+    agora: () => AGORA, lerGrafo: () => { throw new Error('marcador-confidencial-123'); },
+    lerEstado: () => ({}), salvarEstado: () => {}, lerSemCota: () => ({}),
+    executar: (a) => { motivo = a.motivo; }, simular: false,
+  }, CFG);
+  assert.doesNotMatch(motivo, /marcador-confidencial-123/);
+});
+
+test('detalhes de grafo inválido não são copiados ao canal', () => {
+  const g = criar(tarefa('a'));
+  g.tarefas.a.depende = ['marcador-confidencial-123'];
+  const a = vigia.decidir(g, {}, AGORA, CFG)[0];
+  assert.equal(a.tipo, 'escalar');
+  assert.doesNotMatch(a.motivo, /marcador-confidencial-123/);
+});
+
+test('dois lotes locais prontos respeitam o limite de um disparo por hora', () => {
+  const g = criar(tarefa('a', 'local'), tarefa('b', 'local'));
+  const a = vigia.decidir(g, {}, AGORA, { ...CFG, maxDisparosPorHora: 1 });
+  assert.equal(a.filter((x) => x.tipo === 'escada').length, 1);
+  const estado = vigia.registrar({}, a.find((x) => x.tipo === 'escada'), AGORA);
+  assert.equal(estado.disparos.local.length, 1);
+});
+
+test('morte incerta do lote não devolve tarefa local à fila', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-incerto-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('q', 'local')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarEscada: () => ({ status: null, error: { code: 'ETIMEDOUT' } }), log: () => {}, escreverCanal: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.q.estado, 'em_andamento');
+});
+
+test('morte incerta de agente pago também mantém tarefa em andamento', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-cli-incerto-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false }), log: () => {}, escreverCanal: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_andamento');
+});
+
+// --- Revisão do Claude no #29: cinco pontos --------------------------------------------------------------------------
+
+test('revisão: label revisado-por de um head antigo não vale depois de um commit novo (compara o head revisado com o atual)', () => {
+  const pr = (sha) => ({ number: 40, headRefOid: sha, labels: [{ name: 'feito-por:codex' }, { name: 'revisado-por:claude' }], statusCheckRollup: [] });
+  // o head revisado é o que estava quando a label foi vista pela primeira vez
+  const revisados = { 40: 'aaaaaaaa11111111' };
+  assert.deepEqual(vigia.pendenciasDosPRs([pr('aaaaaaaa11111111')], revisados), [], 'mesmo head: nada a fazer');
+  const novo = vigia.pendenciasDosPRs([pr('bbbbbbbb22222222')], revisados);
+  assert.deepEqual(novo.map((x) => [x.agente, x.tipo]), [['claude', 'acordar']], 'commit novo depois da revisão chama o revisor de novo');
+  assert.match(novo[0].motivo, /nova revisão|commit novo|precisa de revisão/i);
+});
+
+test('revisão: passo grava o head em que viu a label e depois chama o revisor quando o head muda', () => {
+  let estado = {}, chamadas = [];
+  let head = 'aaaaaaaa11111111';
+  const deps = () => ({
+    agora: () => AGORA, lerGrafo: () => grafo.novo(), lerEstado: () => estado, salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    listarPRs: () => [{ number: 41, headRefOid: head, labels: [{ name: 'feito-por:codex' }, { name: 'revisado-por:claude' }], statusCheckRollup: [] }],
+    executar: (a) => chamadas.push(a.motivo), simular: false,
+  });
+  vigia.passo(deps(), CFG);
+  assert.deepEqual(chamadas, [], 'label no head visto: nada a fazer');
+  assert.equal(estado.revisados[41], 'aaaaaaaa11111111');
+  head = 'bbbbbbbb22222222';
+  vigia.passo(deps(), CFG);
+  assert.equal(chamadas.length, 1);
+  assert.match(chamadas[0], /#41/);
+});
+
+test('revisão: head novo retira a label antiga e a próxima aprovação vale para o novo head', () => {
+  let estado = {}, head = 'aaaaaaaa11111111', rotulo = true, removidas = 0;
+  const chamadas = [];
+  const deps = () => ({
+    agora: () => AGORA, lerGrafo: () => grafo.novo(), lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    listarPRs: () => [{ number: 42, headRefOid: head, labels: [
+      { name: 'feito-por:codex' }, ...(rotulo ? [{ name: 'revisado-por:claude' }] : []),
+    ], statusCheckRollup: [] }],
+    removerLabelRevisao: () => { removidas++; rotulo = false; return { status: 0 }; },
+    executar: (a) => chamadas.push(a), simular: false,
+  });
+  vigia.passo(deps(), CFG);
+  assert.equal(estado.revisados[42], head);
+  head = 'bbbbbbbb22222222';
+  vigia.passo(deps(), CFG);
+  assert.equal(removidas, 1, 'removeu a label do head antigo');
+  assert.equal(estado.revisados?.[42], undefined, 'esqueceu o head antigo');
+  assert.equal(chamadas.filter((a) => a.agente === 'claude').length, 1);
+  rotulo = true; // revisor conferiu o head novo e recolocou a label
+  vigia.passo(deps(), CFG);
+  assert.equal(estado.revisados[42], head, 'a nova revisão passa a valer para o head atual');
+  assert.equal(chamadas.filter((a) => a.agente === 'claude').length, 1, 'não chama o revisor de novo');
+});
+
+test('Windows: CLIs .cmd usam shell só no fallback, com prompt no stdin e sem argumentos variáveis no shell', () => {
+  for (const agente of ['codex', 'claude']) {
+    const chamadas = [];
+    const spawn = (cmd, args, opcoes) => {
+      chamadas.push({ cmd, args, opcoes });
+      return opcoes.shell ? { status: 0, stdout: '{}', stderr: '' } : { status: null, error: { code: 'ENOENT' } };
+    };
+    const r = vigia.acordar({ tipo: 'acordar', agente, motivo: 'pedido & literal', ids: [] }, { ...CFG, tempoMaximoDisparoMinutos: 1 }, grafo.novo(), spawn, 'win32');
+    assert.equal(r.status, 0);
+    assert.equal(chamadas.length, 2);
+    assert.equal(chamadas[1].opcoes.shell, true);
+    assert.deepEqual(chamadas[1].args, []);
+    assert.match(chamadas[1].opcoes.input, /pedido & literal/);
+    assert.doesNotMatch(chamadas[1].cmd, /pedido & literal/);
+  }
+  const chamadas = [];
+  const spawn = (cmd, args, opcoes) => {
+    chamadas.push({ cmd, args, opcoes });
+    return opcoes.shell ? { status: 0, stdout: '[]', stderr: '' } : { status: null, error: { code: 'ENOENT' } };
+  };
+  assert.deepEqual(vigia.listarPRs({ repo: 'dmt5dimension-ops/MixAI' }, spawn, 'win32'), []);
+  assert.equal(chamadas[1].opcoes.shell, true);
+  assert.deepEqual(chamadas[1].args, []);
+  chamadas.length = 0;
+  assert.equal(vigia.listarPRs({ repo: 'dmt5dimension-ops/MixAI & echo injetado' }, spawn, 'win32'), null);
+  assert.equal(chamadas.length, 1, 'repo inválido nunca chega ao shell');
+});
+
+test('canal: uma resposta em sentido contrário fecha só o pedido a que responde, não todos', () => {
+  const canal = [
+    '### 2026-10-23 — Claude → Codex (pedido 1)\nFaça A.\n',
+    '### 2026-10-23 — Claude → Codex (pedido 2)\nFaça B.\n',
+    '### 2026-10-23 — Codex → Claude (resposta)\nFiz.\n',
+  ].join('\n');
+  const pend = vigia.pendenciasDoCanal(canal);
+  assert.equal(pend.filter((x) => x.agente === 'codex').length, 1, 'sobra um pedido sem resposta');
+  assert.match(pend.find((x) => x.agente === 'codex').motivo, /pedido 1/, 'a resposta fecha o pedido mais recente (pedido 2) e mantém o outro');
+});
+
+test('CLI inexistente (status null com ENOENT) vira falha da tarefa e é escalada, não fica em andamento', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-enoent-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  const avisos = [];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false, error: { code: 'ENOENT' } }), log: () => {}, escreverCanal: (t) => avisos.push(t) });
+  const atual = grafo.carregar(arquivo).tarefas.a;
+  assert.notEqual(atual.estado, 'em_andamento');
+  assert.equal(atual.tentativas, 1, 'contou como falha');
+  assert.equal(avisos.length, 1);
+  assert.match(avisos[0], /não encontr|inexistente|ENOENT/i);
+  // timeout continua sendo morte incerta: segue em andamento
+  grafo.salvar(arquivo, criar(tarefa('b')));
+  const b = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(b, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false, error: { code: 'ETIMEDOUT' } }), log: () => {}, escreverCanal: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.b.estado, 'em_andamento');
+});
+
+test('escada inexistente (ENOENT) também vira falha escalada', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-enoent-escada-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('q', 'local')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  const avisos = [];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarEscada: () => ({ status: null, error: { code: 'ENOENT' } }), log: () => {}, escreverCanal: (t) => avisos.push(t) });
+  assert.notEqual(grafo.carregar(arquivo).tarefas.q.estado, 'em_andamento');
+  assert.equal(avisos.length, 1);
+});
+
+test('status de commit com falha em `state` (StatusContext) aciona o autor, como a conclusão de um check run', () => {
+  const base = { number: 50, headRefOid: 'cccccccc33333333', labels: [{ name: 'feito-por:claude' }] };
+  for (const state of ['FAILURE', 'ERROR', 'failure']) {
+    const a = vigia.pendenciasDosPRs([{ ...base, statusCheckRollup: [{ __typename: 'StatusContext', state }] }]);
+    assert.deepEqual(a.map((x) => [x.agente, x.motivo.includes('vermelho')]), [['claude', true]], state);
+  }
+  assert.ok(vigia.pendenciasDosPRs([{ ...base, statusCheckRollup: [{ __typename: 'StatusContext', state: 'SUCCESS' }] }]).every((x) => !/vermelho/.test(x.motivo)));
+});
+
+test('falha ao consultar os PRs é registrada e escalada (uma vez por janela), não silenciosa', () => {
+  for (const consulta of [() => null, () => { throw new Error('gh caiu'); }]) {
+    let estado = {}; const escaladas = [], logs = [];
+    const deps = {
+      agora: () => AGORA, lerGrafo: () => grafo.novo(), lerEstado: () => estado, salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+      listarPRs: consulta, executar: (a) => escaladas.push(a), log: (t) => logs.push(t), simular: false,
+    };
+    vigia.passo(deps, CFG);
+    vigia.passo(deps, CFG);
+    assert.equal(escaladas.length, 1, 'escalou uma vez e deduplicou');
+    assert.equal(escaladas[0].tipo, 'escalar');
+    assert.match(escaladas[0].motivo, /PRs/);
+    assert.doesNotMatch(escaladas[0].motivo, /gh caiu/);
+    assert.ok(logs.length >= 1, 'registrou no log');
+  }
+});

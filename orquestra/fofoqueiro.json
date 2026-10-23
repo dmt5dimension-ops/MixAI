@@ -1,0 +1,8 @@
+{
+  "repo": "dmt5dimension-ops/MixAI",
+  "intervaloSegundos": 30,
+  "maxDisparosPorHora": 4,
+  "esperaMinimaMinutos": 3,
+  "prazoParadaMinutos": 30,
+  "tempoMaximoDisparoMinutos": 45
+}
