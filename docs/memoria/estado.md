@@ -49,6 +49,9 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Sombra recusa plano com tarefa sem `verificar` antes de chamar o modelo (não vira erro do Qwen) | `orquestra/sombra.js` | `tests/sombra.test.js` |
 | Medida de regras considera as outras regras que disparam junto e marca "sem medida" quando o agente falha por recurso | `orquestra/medir-regras.js` | `tests/medir-regras.test.js` |
 | Plano da sombra autossuficiente: dados da regex vão dentro do comando `verificar` (planos de sementes diferentes não se atropelam) | `orquestra/sombra-plano/gerar-plano.js`, `orquestra/sombra-plano/confere.js` | `tests/sombra-plano.test.js` |
+| Medidor do Laya como porteiro "cabe no local?" (`orquestra/laya-teste.js` + ponte `orquestra/laya-ponte.py`). Só o medidor está pronto, com modelo simulado; o Laya real ainda não rodou | `tests/laya-teste.test.js` |
+| Verificador de código do Kaggle sem acesso transitivo: módulos permitidos entram como fachada (sem `sys`/outros módulos), sem `operator`/`string`, atributos de quadro de execução barrados | `ferramentas/treino-kaggle/geradores.py` | `ferramentas/treino-kaggle/test_ciclo.py` |
+| Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
 
 ## Em andamento
 
