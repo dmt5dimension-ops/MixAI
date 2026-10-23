@@ -235,7 +235,7 @@ function pegarTrava(pasta = PASTA_CANAL, deps = {}) {
     const todos = arquivos(), ultimo = todos.at(-1);
     if (ultimo) {
       const conteudo = fs.readFileSync(path.join(pasta, ultimo), 'utf8');
-      const dono = /^(\d+):([^:]+):/.exec(conteudo);
+      const dono = /^(\d+):(.+):([^:]+)$/.exec(conteudo);
       if (conteudo !== 'livre') {
         if (!dono) return { ok: false };
         if (vivo(Number(dono[1]))) {

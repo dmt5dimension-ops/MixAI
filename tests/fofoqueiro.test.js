@@ -124,6 +124,14 @@ test('trava de instância única recusa a segunda enquanto a primeira vive', () 
   finally { a.soltar(); }
 });
 
+test('trava também recusa segunda instância quando o início do processo contém dois-pontos', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-lock-data-'));
+  const deps = { inicioDe: () => 'Thu Oct 22 21:15:02 2026' };
+  const a = vigia.pegarTrava(dir, deps);
+  try { assert.equal(a.ok, true); assert.equal(vigia.pegarTrava(dir, deps).ok, false); }
+  finally { a.soltar(); }
+});
+
 test('passo em simulação lista ações sem executar nem salvar estado', () => {
   let executou = 0, salvou = 0;
   const a = vigia.passo({ agora: () => AGORA, lerGrafo: () => criar(tarefa('a')), lerEstado: () => ({}), lerSemCota: () => ({}), executar: () => { executou++; }, salvarEstado: () => { salvou++; }, simular: true, log: () => {} }, CFG);
