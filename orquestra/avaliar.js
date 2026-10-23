@@ -3,7 +3,7 @@
 // ele é um comando que lê a tarefa na entrada padrão e responde na saída padrão (como local/rodar-local.js).
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const ARQUIVO_VALIDACAO = path.join(__dirname, 'casos', 'validacao.jsonl');
 
@@ -20,8 +20,16 @@ function lerValidacao(arquivo = ARQUIVO_VALIDACAO) {
   });
 }
 
+// limite ausente = todos; zero vale zero; negativo, fracionário ou não numérico é erro (nunca vira "avalie tudo" por engano).
+function validarLimite(limite) {
+  if (limite === undefined) return undefined;
+  if (typeof limite !== 'number' || !Number.isInteger(limite) || limite < 0) throw new Error(`limite inválido: ${String(limite)} (use um inteiro de zero para cima)`);
+  return limite;
+}
+
 async function avaliar(exemplos, agente, { limite } = {}) {
-  const lista = limite ? exemplos.slice(0, limite) : exemplos;
+  const max = validarLimite(limite);
+  const lista = max === undefined ? exemplos : exemplos.slice(0, max);
   const erros = [];
   let acertos = 0;
   for (const ex of lista) {
@@ -35,12 +43,21 @@ async function avaliar(exemplos, agente, { limite } = {}) {
   return { total, acertos, taxa: total ? acertos / total : null, erros };
 }
 
+// Encerra o comando e tudo que ele criou (no Windows o shell não leva os netos junto): taskkill /T; nos outros, o grupo de processos.
+function matarArvore(filho, { plataforma = process.platform } = {}) {
+  try {
+    if (plataforma === 'win32') spawnSync('taskkill', ['/pid', String(filho.pid), '/T', '/F'], { windowsHide: true });
+    else process.kill(-filho.pid, 'SIGKILL');
+  } catch { /* já tinha saído */ }
+  try { filho.kill('SIGKILL'); } catch { /* idem */ }
+}
+
 function agentePorComando(comando, tempoMaxMs = 600000) {
   return (prompt) => new Promise((ok, no) => {
-    const filho = spawn(comando, { shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const filho = spawn(comando, { shell: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let saida = '';
     let erro = '';
-    const t = setTimeout(() => { filho.kill(); no(new Error('tempo máximo do agente')); }, tempoMaxMs);
+    const t = setTimeout(() => { matarArvore(filho); no(new Error('tempo máximo do agente')); }, tempoMaxMs);
     filho.stdout.on('data', (d) => { saida += d; });
     filho.stderr.on('data', (d) => { erro += d; });
     filho.on('error', (e) => { clearTimeout(t); no(e); });
@@ -63,12 +80,18 @@ async function principal(argumentos) {
   const ia = argumentos.indexOf('--arquivo');
   const exemplos = lerValidacao(ia >= 0 ? path.resolve(argumentos[ia + 1]) : ARQUIVO_VALIDACAO);
   if (!exemplos.length) { console.error('Sem exemplos de validação. Rode antes: node orquestra/treino.js preparar'); return 2; }
-  const r = await avaliar(exemplos, agentePorComando(argumentos[i + 1]), { limite: il >= 0 ? Number(argumentos[il + 1]) : undefined });
-  console.log(`${r.acertos} de ${r.total} certos (${Math.round(r.taxa * 100)}%).`);
+  let limite;
+  if (il >= 0) {
+    const texto = argumentos[il + 1];
+    limite = /^\d+$/.test(String(texto)) ? Number(texto) : NaN;
+    if (Number.isNaN(limite)) { console.error(`--limite precisa ser um inteiro de zero para cima (veio "${texto}").`); return 1; }
+  }
+  const r = await avaliar(exemplos, agentePorComando(argumentos[i + 1]), { limite });
+  console.log(`${r.acertos} de ${r.total} certos${r.taxa === null ? '' : ` (${Math.round(r.taxa * 100)}%)`}.`);
   for (const e of r.erros) console.log(`ERROU: ${e.entrada.slice(0, 80).replace(/\s+/g, ' ')}`);
   return 0;
 }
 
 if (require.main === module) principal(process.argv.slice(2)).then((c) => process.exit(c));
 
-module.exports = { avaliar, lerValidacao, normalizar, agentePorComando };
+module.exports = { validarLimite, matarArvore, avaliar, lerValidacao, normalizar, agentePorComando };
