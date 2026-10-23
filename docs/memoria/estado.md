@@ -38,6 +38,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto | `tests/escada.test.js` |
 | Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo | `tests/aplicar.test.js` |
 | Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, gerado localmente e no CI, sem arquivos versionados (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (geração determinística, busca atual e arquivos ignorados) |
+| Medidor do Laya como porteiro "cabe no local?" (`orquestra/laya-teste.js` + ponte `orquestra/laya-ponte.py`). Só o medidor está pronto, com modelo simulado; o Laya real ainda não rodou | `tests/laya-teste.test.js` |
 | Preparo do material de treino do Qwen (frente do aprendizado local): limpa os casos da escada, tira segredo, repetido e caso grande, separa treino/validação de forma estável e gera relatório (`node orquestra/treino.js preparar`). O treino LoRA em si ainda não foi feito (roda no PC) | `tests/treino.test.js` |
 | Avaliação do Qwen nos exemplos de validação (nota antes/depois do treino): `node orquestra/avaliar.js rodar --comando "..."`; falha do agente conta como erro | `tests/avaliar.test.js` |
 | Treino sem supervisão do Qwen (Kaggle/Colab): gera tarefas conferíveis por máquina (data, regex, função Python), Qwen tenta, treina nos acertos e corrigidos, só promove o modelo se a nota da prova fixa subir, guarda estado e continua na sessão seguinte (`ferramentas/treino-kaggle/`). Só o laço e os verificadores estão provados; o código da GPU (`modelo_unsloth.py`) nunca rodou numa placa | `tests/treino-kaggle.test.js` |
@@ -87,3 +88,6 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 - Testar o qwen3.5:4b (modo dia) e o qwen3.5:9b (modo noite) quando houver espaço e tempo.
 - Avaliar o local-delegate (segundo Claude Code rodando no modelo local, conferido por `npm test`) para o modo noite.
 - O `preparar-repo.ps1` não foi rodado num Windows de verdade depois do conserto (a sessão na nuvem não tem PowerShell). Rodar uma vez numa pasta de teste antes de usar no LangGraphicus.
+
+
+- Laya (modelo de decisão da ConvAI, Apache 2.0, 421M, não gera texto; não confundir com o Jev, que é API paga): falta a **primeira rodada real no PC do dono** (`pip install laya`, depois `node orquestra/laya-teste.js medir orquestra/casos/casos.jsonl --modelo "python orquestra/laya-ponte.py"`). O artigo da própria comparação diz que, sem ajuste fino, o Laya fica perto do acaso; se o veredito sair "ainda não vale", o próximo passo é ajustá-lo com os casos do MixAI (Kaggle), não integrá-lo. Só integrar na escada se o veredito for "vale integrar".
