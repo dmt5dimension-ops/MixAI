@@ -49,3 +49,19 @@ test("o verificador aceita crases e aspas em volta, e a regex que aceita tudo re
     assert.throws(() => conferir("xyz", "a", "a"), /modo desconhecido/);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+test("planos de sementes diferentes não se atropelam: gerar o B não muda o verificador do A, e nenhum arquivo é criado", () => {
+  const antes = new Set(fs.readdirSync(os.tmpdir()));
+  const a = gerarPlano(24, 1);
+  const regexA = a.filter((t) => t.tipo === "regex-digitos");
+  gerarPlano(24, 4); // plano B depois do A, antes de rodar o A
+  for (const t of regexA) {
+    assert.strictEqual(rodar(t.verificar, t.referencia + "\n"), 0, `referência do plano A reprovada depois de gerar B: ${t.id}`);
+    assert.strictEqual(rodar(t.verificar, ".*"), 1);
+  }
+  assert.ok(regexA.length >= 2);
+  assert.deepStrictEqual(a, gerarPlano(24, 1));
+  assert.ok(!a.some((t) => t.verificar.includes(os.tmpdir())), "o verificador depende da pasta temporária");
+  const novos = fs.readdirSync(os.tmpdir()).filter((n) => !antes.has(n) && /sombra-dados/.test(n));
+  assert.deepStrictEqual(novos, []);
+});
