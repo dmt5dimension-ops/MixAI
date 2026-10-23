@@ -385,7 +385,7 @@ function criarReserva({ pasta, relogio, jobVivo = null, perguntarJob = jobVivoAs
     if (naoConfirmados > 0) {
       const lista = (itens.length ? itens : Array.from({ length: naoConfirmados }, () => ({}))).map((i) => ({
         ...(typeof i?.jobNome === 'string' && i.jobNome ? { job: i.jobNome } : {}),
-        ...(Number.isInteger(i?.pid) ? { pid: i.pid, inicio: iniciosDosMeus.get(i.pid) ?? inicioComTentativas(i.pid) } : {}),
+        ...(Number.isInteger(i?.pid) ? { pid: i.pid, inicio: iniciosDosMeus.get(`${i.pid}|${i.jobNome ?? ''}`) ?? inicioComTentativas(i.pid) } : {}),
       }));
       const gravar = () => {
         fs.mkdirSync(pasta, { recursive: true });
@@ -426,10 +426,12 @@ function criarReserva({ pasta, relogio, jobVivo = null, perguntarJob = jobVivoAs
     if (meuInicio === undefined || meuInicio === null) meuInicio = inicioComTentativas(process.pid);
     const lista = listarAgentes();
     if (lista === null) return null; // falhou ao listar: quem chama mantém a reserva como está
-    for (const a of lista) if (Number.isInteger(a?.pid) && (iniciosDosMeus.get(a.pid) ?? null) === null) iniciosDosMeus.set(a.pid, inicioComTentativas(a.pid));
+    // Chave = PID + nome do Job (único por chamada): um PID reaproveitado por outro agente nunca herda a data do anterior.
+    const chave = (a) => `${a.pid}|${a.jobNome ?? ''}`;
+    for (const a of lista) if (Number.isInteger(a?.pid) && (iniciosDosMeus.get(chave(a)) ?? null) === null) iniciosDosMeus.set(chave(a), inicioComTentativas(a.pid));
     ultimosAgentes = lista.map((a) => ({
       ...(typeof a?.jobNome === 'string' && a.jobNome ? { job: a.jobNome } : {}),
-      ...(Number.isInteger(a?.pid) ? { pid: a.pid, inicio: iniciosDosMeus.get(a.pid) ?? null } : {}),
+      ...(Number.isInteger(a?.pid) ? { pid: a.pid, inicio: iniciosDosMeus.get(chave(a)) ?? null } : {}),
     }));
     return ultimosAgentes;
   };
@@ -444,7 +446,9 @@ function criarReserva({ pasta, relogio, jobVivo = null, perguntarJob = jobVivoAs
   const ultimoConhecido = new Map(); // arquivo -> última quantidade lida com sucesso
   // Devolve a vaga concedida (0..alvo), ou null se não conseguiu coordenar (quem chama não concede vaga nova).
   const reservar = ({ alvo, agentes, teto }) => {
-    const agentesMeus = prepararAgentes() ?? ultimosAgentes; // fora da trava (falha ao listar: mantém os últimos conhecidos)
+    const agentesMeus = prepararAgentes(); // fora da trava
+    // Falhou ao listar os agentes: a reserva fica INTACTA (nem agentes nem `reservado` são recalculados ou gravados) e não se pede vaga nova.
+    if (agentesMeus === null) return Math.min(alvo, agentes);
     const ctx = levantar(); // fora da trava
     return comTrava(() => {
       fs.mkdirSync(pasta, { recursive: true });

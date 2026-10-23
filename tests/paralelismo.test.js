@@ -1981,8 +1981,10 @@ test("falha ao listar os agentes: a reserva fica como está (nada alterado nem l
   const antes = JSON.parse(fs.readFileSync(arq, "utf8"));
   assert.strictEqual(antes.agentes.length, 1);
   r.definirAgentes(() => { throw new Error("falhou ao listar"); });
-  r.reservar({ alvo: 2, agentes: 1, teto: 3 });
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(arq, "utf8")).agentes, antes.agentes, "os últimos agentes conhecidos seguem na reserva");
+  const textoAntes = fs.readFileSync(arq, "utf8");
+  r.reservar({ alvo: 3, agentes: 3, teto: 3 }); // pedido diferente: se recalculasse, o `reservado` mudaria
+  assert.strictEqual(fs.readFileSync(arq, "utf8"), textoAntes, "a reserva ficou INTACTA (agentes, reservado e batimento)");
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq, "utf8")).reservado, antes.reservado);
   assert.strictEqual(r.atualizar(), false, "sem listar, a reserva com o agente não está gravada");
   // saída do processo com a listagem falhando: o arquivo continua como está
   const script = path.join(dir, "filho.js");
@@ -2034,4 +2036,46 @@ test("o wrapper aceita a espera configurável por MIXAI_LIBERAR_ESPERA_S (padrã
   assert.match(ps, /\$espera = 60/);
   assert.match(ps, /\$env:MIXAI_LIBERAR_ESPERA_S/);
   assert.match(ps, /AddSeconds\(\$espera\)/);
+});
+
+test("PID reaproveitado: a data de criação não fica em cache só pelo número do PID (a chave é PID + Job)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pid-reuso-"));
+  const pasta = path.join(dir, "lotes");
+  const datas = { A: "DATA-DO-PRIMEIRO", B: "DATA-DO-SEGUNDO" };
+  let atual = "A";
+  const inicioDe = (pid) => (pid === 4242 ? datas[atual] : "M");
+  const r = par.criarReserva({ pasta, relogio: Date.now, inicioDe });
+  const arq = () => path.join(pasta, fs.readdirSync(pasta).find((n) => n.endsWith(".json")));
+  r.definirAgentes(() => [{ jobNome: "Local\\MixAI-A", pid: 4242 }]);
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, "DATA-DO-PRIMEIRO");
+  // o PID 4242 passa a ser de OUTRO agente (outro Job, outra data de criação)
+  atual = "B";
+  r.definirAgentes(() => [{ jobNome: "Local\\MixAI-B", pid: 4242 }]);
+  r.reservar({ alvo: 1, agentes: 1, teto: 3 });
+  assert.strictEqual(JSON.parse(fs.readFileSync(arq(), "utf8")).agentes[0].inicio, "DATA-DO-SEGUNDO", "não herdou a data do processo anterior");
+});
+
+test("a remoção do arquivo de liberação e a do prompt ficam em try separados (falhar num não impede o outro)", () => {
+  const fonte = fs.readFileSync(path.join(RAIZ, "orquestra", "escada.js"), "utf8");
+  const bloco = fonte.slice(fonte.indexOf("const apagarEntrada = (tentativa = 0) => {"), fonte.indexOf("const jobNome ="));
+  assert.match(bloco, /const apagar = \(arquivo\) => \{ try \{ fs\.rmSync\(arquivo, \{ force: true \}\); return true; \} catch \{ return false; \} \};/);
+  assert.match(bloco, /const liberacaoApagada = apagar\(liberacao\);\s+const entradaApagada = apagar\(entrada\);/);
+  assert.doesNotMatch(bloco, /rmSync\(liberacao[^;]*;\s*fs\.rmSync\(entrada/, "não é mais um try só para os dois");
+});
+
+test("se a remoção do arquivo de liberação falha, o arquivo do prompt é apagado mesmo assim (e a do liberar é tentada de novo)", async () => {
+  const { spawn } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rm-sep-"));
+  fs.chmodSync(dir, 0o700);
+  const original = fs.rmSync;
+  let falhasDoLiberar = 0;
+  fs.rmSync = (arquivo, ...resto) => { if (String(arquivo).endsWith(".liberar")) { falhasDoLiberar += 1; throw new Error("em uso"); } return original(arquivo, ...resto); };
+  try {
+    const chamada = escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [], pastaPrompts: dir });
+    assert.strictEqual(await chamada("x"), "ok");
+    assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.startsWith("prompt-") && !n.endsWith(".liberar")), [], "o prompt foi apagado");
+    assert.ok(falhasDoLiberar >= 1);
+  } finally { fs.rmSync = original; }
+  await new Promise((r) => setTimeout(r, 1500)); // a nova tentativa (sem a falha) roda e termina o ciclo de repetição
 });

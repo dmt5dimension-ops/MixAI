@@ -276,15 +276,18 @@ function chamarComando(comando, { matar = matarArvore, orfaos = orfaosVivos, lan
     // sem acesso para grupo/outros, senão a chamada é recusada antes de escrever o prompt.
     const pastaDosPrompts = pastaPrompts ?? pastaDePromptsPadrao();
     const entrada = path.join(pastaDosPrompts, `prompt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.txt`);
+    const liberacao = `${entrada}.liberar`; // barreira do wrapper: só é criado depois de a reserva gravar o PID e o Job
     // No Windows o arquivo pode estar em uso enquanto o processo vive: repete algumas vezes e, se não der, avisa onde ficou.
     const apagarEntrada = (tentativa = 0) => {
-      try { fs.rmSync(liberacao, { force: true }); fs.rmSync(entrada, { force: true }); } catch {
-        if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
-        else console.error(`não consegui apagar o arquivo temporário do prompt (apague à mão): ${entrada}`);
-      }
+      // Cada arquivo no seu próprio try: falhar em um não impede apagar o outro.
+      const apagar = (arquivo) => { try { fs.rmSync(arquivo, { force: true }); return true; } catch { return false; } };
+      const liberacaoApagada = apagar(liberacao);
+      const entradaApagada = apagar(entrada);
+      if (liberacaoApagada && entradaApagada) return;
+      if (tentativa < 5) setTimeout(() => apagarEntrada(tentativa + 1), 1000); // sem unref: o Node não sai antes de tentar de novo
+      else console.error(`não consegui apagar o arquivo temporário (apague à mão): ${[liberacaoApagada ? null : liberacao, entradaApagada ? null : entrada].filter(Boolean).join(', ')}`);
     };
     const jobNome = `Local\\MixAI-${crypto.randomBytes(12).toString('hex')}`;
-    const liberacao = `${entrada}.liberar`; // barreira do wrapper: só é criado depois de a reserva gravar o PID e o Job
     const ativo = { pid: undefined, jobNome };
     const esquecerAtivo = () => { if (signal) ativosPorSinal.get(signal)?.delete(ativo); };
     let filho;
