@@ -70,7 +70,22 @@ function rodarComFalsos(falsos, args) {
     }
   }
   const env = { ...process.env, PATH: bin, Path: bin };
-  return spawnSync(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env });
+  return comTentativas(() => spawnSync(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env, timeout: 120000, windowsHide: true }));
+}
+
+// Com a memoria do PC cheia o sistema as vezes nao consegue nem iniciar o PowerShell (spawn com erro, morto por sinal,
+// estouro de tempo ou saida vazia). Isso e falha da maquina, nao do instalador: repete a execucao em vez de julgar o instalador
+// com uma saida que ele nem chegou a produzir. Se o instalador rodou e deu resposta errada, nao repete: o teste falha de verdade.
+function naoIniciou(r) {
+  return Boolean(r.error) || r.status === null || (r.status !== 0 && !r.stdout && !r.stderr);
+}
+function comTentativas(executar, maximo = 3) {
+  let r;
+  for (let i = 0; i < maximo; i++) {
+    r = executar();
+    if (!naoIniciou(r)) return r;
+  }
+  return r;
 }
 
 test("se o winget falha, o instalador para e nao anuncia sucesso", () => {
@@ -92,4 +107,20 @@ test("se o npm falha ao instalar o Codex, o instalador para e nao anuncia sucess
 test("o instalador confere o codigo de saida do winget e do npm", () => {
   assert.match(instalar, /winget install[^\n]*\n\s*if \(\$LASTEXITCODE -ne 0\)/);
   assert.match(instalar, /npm install -g @openai\/codex\s*\n\s*if \(\$LASTEXITCODE -ne 0\)/);
+});
+
+test("falha de iniciar o PowerShell (memoria cheia) e repetida, mas resposta errada do instalador nao", () => {
+  let chamadas = 0;
+  const r = comTentativas(() => (++chamadas < 3 ? { status: null, error: new Error("spawn ENOMEM"), stdout: "", stderr: "" } : { status: 1, stdout: "x", stderr: "" }));
+  assert.strictEqual(chamadas, 3);
+  assert.strictEqual(r.status, 1);
+
+  chamadas = 0;
+  comTentativas(() => (++chamadas, { status: 1, stdout: "erro do instalador", stderr: "" }));
+  assert.strictEqual(chamadas, 1, "saida real do instalador nao pode ser repetida");
+
+  chamadas = 0;
+  const sempre = comTentativas(() => (++chamadas, { status: null, signal: "SIGKILL", stdout: "", stderr: "" }));
+  assert.strictEqual(chamadas, 3);
+  assert.strictEqual(sempre.status, null);
 });
