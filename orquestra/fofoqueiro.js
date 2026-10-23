@@ -109,6 +109,22 @@ function fechamentosDePR(g, fechados) {
   }
   return acoes;
 }
+// Tarefa `feita` por PR mesclado ("PR #30 mesclado" no resultado) cujo PR foi revertido por outro PR mesclado cujo título começa
+// com "Revert" e cita o número (título ou corpo, como o "Reverts ...#30" do GitHub): reabre. Depois de reaberta o resultado deixa de
+// dizer "mesclado", então não repete.
+function revertidosDePR(g, fechados) {
+  const acoes = [];
+  for (const t of Object.values(g?.tarefas || {})) {
+    if (t.estado !== 'feita') continue;
+    const m = /PR #(\d+) mesclado/.exec(String(t.resultado || ''));
+    if (!m) continue;
+    const n = m[1];
+    const cita = new RegExp(`(?:#|/pull/)${n}(?!\\d)`);
+    const rev = (fechados || []).find((p) => String(p.state || '').toUpperCase() === 'MERGED' && /^\s*revert\b/i.test(String(p.title || '')) && cita.test(`${p.title || ''}\n${p.body || ''}`));
+    if (rev) acoes.push({ tipo: 'reabrir', tarefa: t.id, pr: Number(n), revert: rev.number, agente: t.agente, motivo: `PR #${n} revertido (#${rev.number}); tarefa ${t.id} reaberta`, chave: `reabrir:${t.id}:${n}:${rev.number}` });
+  }
+  return acoes;
+}
 // Atualiza o mapa de heads revisados: guarda o head em que a label foi vista pela primeira vez e esquece PRs que saíram da lista.
 function atualizarRevisados(prs, revisados = {}) {
   const novo = {};
@@ -264,7 +280,7 @@ function passo(deps, cfg = configPadrao) {
       if (deps.listarPRsFechados) {
         let fechados = null;
         try { fechados = deps.listarPRsFechados(); } catch { fechados = null; }
-        if (Array.isArray(fechados)) acoes.push(...fechamentosDePR(g, fechados));
+        if (Array.isArray(fechados)) acoes.push(...fechamentosDePR(g, fechados), ...revertidosDePR(g, fechados));
         else deps.log?.('falha ao consultar os PRs fechados no GitHub');
       }
       acoes.push(...filtrarExternas(pendenciasDosPRs(atuais, estado.revisados), estado, agora, c));
@@ -352,7 +368,7 @@ function listarPRs(cfg, spawn = spawnSync, plataforma = process.platform) {
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
 function listarPRsFechados(cfg, spawn = spawnSync, plataforma = process.platform) {
-  const r = chamarCli('gh', ['pr', 'list', '--repo', cfg.repo, '--state', 'closed', '--limit', '30', '--json', 'number,state'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, spawn, plataforma);
+  const r = chamarCli('gh', ['pr', 'list', '--repo', cfg.repo, '--state', 'closed', '--limit', '30', '--json', 'number,state,title,body'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, spawn, plataforma);
   if (r.status !== 0) return null;
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
@@ -383,6 +399,16 @@ function executarReal(a, g, cfg, deps = {}) {
     try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
     finally { fs.rmSync(plano, { force: true }); }
   });
+  if (a.tipo === 'reabrir') {
+    try { grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'feita' ? grafoApi.reabrir(x, a.tarefa, a.motivo) : x)); }
+    catch (e) {
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (revert sem reabrir)\n\nO PR #${a.pr} foi revertido (#${a.revert}), mas a tarefa ${a.tarefa} não pôde ser reaberta: ${e.message}. Decida o que fazer com o trabalho que depende dela.\n`);
+      log(`reabrir ${a.tarefa}: ${e.message}`);
+      return;
+    }
+    log(`reabrir ${a.tarefa}: ${a.motivo}`);
+    return;
+  }
   if (a.tipo === 'concluir') {
     grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'em_revisao' ? grafoApi.concluir(x, a.tarefa, a.motivo) : x));
     log(`concluir ${a.tarefa}: ${a.motivo}`);
@@ -515,5 +541,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, devolucoesPorCI, fechamentosDePR, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, devolucoesPorCI, fechamentosDePR, revertidosDePR, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });

@@ -273,6 +273,16 @@ function concluir(g, id, resultado = null, agora = new Date().toISOString()) {
   return mudar(g, id, { estado: 'feita', resultado }, agora);
 }
 
+// Tarefa dada como feita cujo trabalho foi desfeito (PR revertido): volta à fila. Recusa se algum dependente já está ativo,
+// porque trabalho ativo só existe com as dependências feitas (ver validar).
+function reabrir(g, id, motivo = null, agora = new Date().toISOString()) {
+  const t = pegar(g, id);
+  if (t.estado !== 'feita') throw new Error(`tarefa ${id} precisa estar feita (está ${t.estado})`);
+  const ativo = lista(g).find((x) => x.depende.includes(id) && (x.estado === 'em_andamento' || x.estado === 'em_revisao'));
+  if (ativo) throw new Error(`tarefa ${id} não pode ser reaberta: o dependente ${ativo.id} está ${ativo.estado}`);
+  return mudar(g, id, { estado: 'pendente', resultado: motivo }, agora);
+}
+
 function falhar(g, id, motivo, agora = new Date().toISOString(), limite = limitePadrao) {
   const t = pegar(g, id);
   if (t.estado !== 'em_andamento') throw new Error(`tarefa ${id} precisa estar em_andamento (está ${t.estado})`);
@@ -345,6 +355,8 @@ function principal(args) {
     atualizar(arquivo, (x) => devolver(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'concluir' && resto.length >= 1) {
     atualizar(arquivo, (x) => concluir(x, resto[0], resto.slice(1).join(' ') || null));
+  } else if (cmd === 'reabrir' && resto.length >= 1) {
+    atualizar(arquivo, (x) => reabrir(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'falhar' && resto.length >= 1) {
     atualizar(arquivo, (x) => falhar(x, resto[0], resto.slice(1).join(' ') || null));
   } else if (cmd === 'proximas') {
@@ -362,7 +374,7 @@ function principal(args) {
   return 0;
 }
 
-module.exports = { normaliza, novo, carregar, salvar, atualizar, comRetentativa, adicionar, prontas, travadas, iniciar, revisar, devolver, concluir, falhar, validar, resumo };
+module.exports = { normaliza, novo, carregar, salvar, atualizar, comRetentativa, adicionar, prontas, travadas, iniciar, revisar, devolver, concluir, reabrir, falhar, validar, resumo };
 
 if (require.main === module) {
   try {
