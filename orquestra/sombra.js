@@ -35,6 +35,13 @@ function validar(tarefas) {
   }
 }
 
+// Para rodar de verdade cada tarefa precisa trazer o comando que confere a resposta; sem ele o Qwen seria chamado e marcado
+// como errado só por falta de verificador. Por isso o plano inteiro é recusado antes de qualquer chamada ao modelo.
+function exigirVerificar(tarefas) {
+  const sem = tarefas.filter((t) => typeof t?.verificar !== 'string' || !t.verificar.trim()).map((t) => t?.id ?? '?');
+  if (sem.length) throw new Error(`tarefa sem comando "verificar" (o modelo não foi chamado): ${sem.join(', ')}`);
+}
+
 // `local(prompt)` e `verificar(tarefa, saida)` são injetados; `verificar` devolve { ok, motivo }.
 async function rodarSombra({ tarefas, local, verificar, modelo = MODELO_PADRAO, arquivo = ARQUIVOS.sombra, agora = () => new Date().toISOString() }) {
   if (typeof modelo !== 'string' || !modelo.trim()) throw new Error('modelo sem nome');
@@ -156,6 +163,8 @@ async function principal(argumentos) {
     if (modelo && modelo !== MODELO_PADRAO && !opcao(argumentos, '--comando')) throw new Error(`modelo "${modelo}" precisa de --comando (só o ${MODELO_PADRAO} tem comando padrão)`);
     const escada = require('./escada.js');
     const tarefas = JSON.parse(fs.readFileSync(path.resolve(alvo), 'utf8'));
+    validar(tarefas);
+    exigirVerificar(tarefas);
     // Por padrão o Qwen (rodar-local.js). Outro modelo local: --modelo <nome> --comando "<comando que lê a tarefa e responde>".
     const comando_ = opcao(argumentos, '--comando') || `node "${path.join(pasta, '..', 'local', 'rodar-local.js')}"`;
     const chamarLocal = escada.chamarComando(comando_);
@@ -174,4 +183,4 @@ async function principal(argumentos) {
 
 if (require.main === module) principal(process.argv.slice(2)).then((c) => process.exit(c), (e) => { console.error(e.message); process.exit(1); });
 
-module.exports = { rodarSombra, relatorio, liberados, liberadosDeTodos, comparar, modelosDe, gravarLiberados, tipoLiberado, lerRegistros, validar, ARQUIVOS, PADRAO, MODELO_PADRAO };
+module.exports = { exigirVerificar, rodarSombra, relatorio, liberados, liberadosDeTodos, comparar, modelosDe, gravarLiberados, tipoLiberado, lerRegistros, validar, ARQUIVOS, PADRAO, MODELO_PADRAO };
