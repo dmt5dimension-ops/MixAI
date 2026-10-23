@@ -36,6 +36,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Preparo do material de treino do Qwen (frente do aprendizado local): limpa os casos da escada, tira segredo, repetido e caso grande, separa treino/validação de forma estável e gera relatório (`node orquestra/treino.js preparar`). O treino LoRA em si ainda não foi feito (roda no PC) | `tests/treino.test.js` |
 | Avaliação do Qwen nos exemplos de validação (nota antes/depois do treino): `node orquestra/avaliar.js rodar --comando "..."`; falha do agente conta como erro | `tests/avaliar.test.js` |
 | Treino sem supervisão do Qwen (Kaggle/Colab): gera tarefas conferíveis por máquina (data, regex, função Python), Qwen tenta, treina nos acertos e corrigidos, só promove o modelo se a nota da prova fixa subir, guarda estado e continua na sessão seguinte (`ferramentas/treino-kaggle/`). Só o laço e os verificadores estão provados; o código da GPU (`modelo_unsloth.py`) nunca rodou numa placa | `tests/treino-kaggle.test.js` |
+| Modo sombra do Qwen (fase 1) e tabela de tipos liberados (fase 2): o Qwen tenta tarefas verificáveis sem que a resposta valha, registra acerto por tipo (sem resposta não conta contra ele) e só libera o tipo com 20 tentativas e 90% de acerto nas últimas (`node orquestra/sombra.js rodar|relatorio|liberar`; `tipoLiberado()` para a escada consultar). A escada ainda não consulta a tabela | `tests/sombra.test.js` |
 
 ## Em andamento
 
