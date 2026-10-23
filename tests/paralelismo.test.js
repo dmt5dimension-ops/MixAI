@@ -2086,3 +2086,52 @@ test("se a remoção do arquivo de liberação falha, o arquivo do prompt é apa
   } finally { fs.rmSync = original; }
   await new Promise((r) => setTimeout(r, 1500)); // a nova tentativa (sem a falha) roda e termina o ciclo de repetição
 });
+
+// ---- Acompanhamento do #19 (b, c, d): leituras simuladas; a validação real no PC com PowerShell ainda está pendente ----
+
+test("(b) uso-windows.ps1 (texto): linha malformada de CIM/processos não é descartada em silêncio, vira leitura indisponível", () => {
+  const uso = fs.readFileSync(path.join(RAIZ, "local", "uso-windows.ps1"), "utf8");
+  assert.match(uso, /\$malformadas = @\(\$todos \| Where-Object \{ \$null -eq \$_\.ProcessId -or \$null -eq \$_\.ParentProcessId -or -not \$_\.Name \}\)/);
+  assert.match(uso, /if \(\$malformadas\.Count -gt 0\) \{ \$ramMeuGB = \$null \}\s+elseif \(\$runners\.Count -eq 0\) \{ \$ramMeuGB = 0 \}/, "RAM do MixAI desconhecida (null), nunca 0, com linha malformada");
+  assert.match(uso, /if \(-not \$a\.Name -or -not \(Test-Numero \$a\.UtilizationPercentage\)\) \{ return \$null \}/, "CIM de motores: linha sem nome ou valor invalida a leitura");
+  assert.match(uso, /if \(\$null -eq \$p\.IDProcess\) \{ \$valido = \$false; continue \}/, "contador de processo sem IDProcess invalida a CPU do MixAI");
+});
+
+test("(b) lerSaida: gpuOutros e cpuOutros nulos (leitura indisponível) continuam nulos e o PC conta como em uso", () => {
+  const l = par.lerSaida(JSON.stringify({ ociosoSegundos: 900, memoriaLivreGB: 6, nucleos: 8, cpuTotalPct: 5, cpuMeuPct: null, gpuAmostras: 0, gpuPorTipo: [], videoAmostras: 0, videoMotores: [], ramMeuGB: null }));
+  assert.strictEqual(l.gpuOutrosPct, null);
+  assert.strictEqual(l.cpuOutrosPct, null);
+  assert.strictEqual(decide(l, "dia", null, 1000).alvo, 1);
+});
+
+test("(c) leitura atual que falha vale 1 agente mesmo existindo leitura boa anterior", async () => {
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), "mixai-c-"));
+  try {
+    let t = 1_000_000;
+    const respostas = [{ ...PARADO, ociosoSegundos: 3600 }, null, null];
+    let n = 0;
+    const leitor = { lerAsync: async () => respostas[Math.min(n++, respostas.length - 1)] };
+    const controle = par.criarControle({ leitor, modo: "noite", arquivoEstado: path.join(pasta, "estado.json"), relogio: () => t, cacheMs: 1000, modos, config });
+    controle({ agentesLocais: 1 });
+    await new Promise((r) => setTimeout(r, 20));
+    t += 1500;
+    const boa = controle({ agentesLocais: 1 });
+    assert.ok(boa >= 1);
+    await new Promise((r) => setTimeout(r, 20));
+    t += 1500;
+    controle({ agentesLocais: 3 });
+    await new Promise((r) => setTimeout(r, 20));
+    t += 1500;
+    assert.strictEqual(controle({ agentesLocais: 3 }), 1, "a foto atual falhou (null): a antiga não pode manter vários agentes");
+  } finally { fs.rmSync(pasta, { recursive: true, force: true }); }
+});
+
+test("(d) consulta ao Job: saída vazia, lixo ou erro é inconclusiva (null), nunca 'morto'", async () => {
+  const com = (saida, erro = null) => ({ plataforma: "win32", executar: (c, a, o, cb) => cb(erro, saida, "") });
+  for (const vazia of ["", "\n", "   \r\n", "texto qualquer\n"]) assert.strictEqual(await par.perguntarAoJob("Local\\MixAI-x", com(vazia)), null, JSON.stringify(vazia));
+  assert.strictEqual(await par.perguntarAoJob("Local\\MixAI-x", com("", new Error("falhou"))), null);
+  assert.strictEqual(await par.perguntarAoJob("Local\\MixAI-x", com("VIVOS 2\n")), true);
+  assert.strictEqual(await par.perguntarAoJob("Local\\MixAI-x", com("VAZIO\n")), false);
+  assert.strictEqual(await par.perguntarAoJob("Local\\MixAI-x", com("FECHADO\r\n")), false);
+  assert.strictEqual(await par.perguntarAoJob("Local\\MixAI-x", { plataforma: "linux", executar: () => assert.fail("não deve rodar fora do Windows") }), null);
+});

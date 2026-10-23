@@ -263,12 +263,13 @@ function inicioDoProcesso(pid) {
 // Pergunta ao Job Object (assíncrono, limite de 20 s, nunca segura o laço de eventos nem a trava). `encerrar` escolhe o script:
 // a consulta padrão é SÓ LEITURA (job-consultar-windows.ps1); só `encerrar: true` usa o job-confirmar-windows.ps1, que ENCERRA o
 // que houver no Job. Devolve true (tem processo), false (vazio ou não existe) ou null (inconclusivo).
-function perguntarAoJob(nome, { encerrar = false } = {}) {
+// Saída vazia (ou qualquer coisa fora de FECHADO/VAZIO/VIVOS n) NUNCA vale "morto": é inconclusivo (null), igual a erro da consulta.
+function perguntarAoJob(nome, { encerrar = false, plataforma = process.platform, executar = execFile } = {}) {
   return new Promise((resolve) => {
-    if (process.platform !== 'win32') return resolve(null);
+    if (plataforma !== 'win32') return resolve(null);
     const script = encerrar ? 'job-confirmar-windows.ps1' : 'job-consultar-windows.ps1';
     try {
-      execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, script), '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true }, (erro, stdout) => {
+      executar('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, script), '-Nome', nome], { encoding: 'utf8', timeout: 20000, windowsHide: true }, (erro, stdout) => {
         if (erro) return resolve(null);
         const resposta = String(stdout).trim().split(/\r?\n/).pop();
         if (resposta === 'FECHADO' || resposta === 'VAZIO') return resolve(false);
@@ -559,7 +560,7 @@ function criarControle({ jobVivo, perguntarJob, inicioDe, encerrarJob, reintento
   return controle;
 }
 
-module.exports = { criarReserva, jobVivoAssincrono, encerrarJobAssincrono, inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
+module.exports = { perguntarAoJob, criarReserva, jobVivoAssincrono, encerrarJobAssincrono, inicioDoProcesso, limparReservas, capacidade, motivosDeUso, decidir, leitorWindows, lerSaida, videoDecodeDe, cpuOutrosDe, gpuOutrosDe, leitorSimulado, modoAtual, criarControle };
 
 // Saída manual: apaga todas as reservas e retenções de vagas (use só se tiver certeza de que nenhum lote nem agente está rodando).
 function limparReservas(pasta = `${path.join(os.tmpdir(), 'mixai-paralelismo.json')}.lotes`) {

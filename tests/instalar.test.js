@@ -70,7 +70,22 @@ function rodarComFalsos(falsos, args) {
     }
   }
   const env = { ...process.env, PATH: bin, Path: bin };
-  return spawnSync(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env });
+  return comTentativas(() => spawnSync(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(pasta, "instalar.ps1"), ...args], { encoding: "utf8", env, timeout: 120000, windowsHide: true }));
+}
+
+// Com a memoria do PC cheia o sistema as vezes nem consegue criar o processo do PowerShell (spawn falha com ENOMEM/EAGAIN, sem PID).
+// So esse caso e falha da maquina e e repetido. Saida nao zero, timeout ou sinal acontecem depois do processo iniciar (o instalador
+// pode ter rodado em parte): contam como resultado e o teste julga na primeira tentativa, sem repetir.
+function naoIniciou(r) {
+  return Boolean(r.error) && ["ENOMEM", "EAGAIN"].includes(r.error.code) && !r.pid;
+}
+function comTentativas(executar, maximo = 3) {
+  let r;
+  for (let i = 0; i < maximo; i++) {
+    r = executar();
+    if (!naoIniciou(r)) return r;
+  }
+  return r;
 }
 
 test("se o winget falha, o instalador para e nao anuncia sucesso", () => {
@@ -92,4 +107,29 @@ test("se o npm falha ao instalar o Codex, o instalador para e nao anuncia sucess
 test("o instalador confere o codigo de saida do winget e do npm", () => {
   assert.match(instalar, /winget install[^\n]*\n\s*if \(\$LASTEXITCODE -ne 0\)/);
   assert.match(instalar, /npm install -g @openai\/codex\s*\n\s*if \(\$LASTEXITCODE -ne 0\)/);
+});
+
+test("so a falha de criar o processo (ENOMEM/EAGAIN sem PID) e repetida; qualquer resultado de processo iniciado vale na primeira tentativa", () => {
+  const falhaDeCriar = (code) => Object.assign(new Error(`spawn ${code}`), { code });
+  let chamadas = 0;
+  const r = comTentativas(() => (++chamadas < 3 ? { status: null, pid: 0, error: falhaDeCriar("ENOMEM"), stdout: "", stderr: "" } : { status: 1, pid: 7, stdout: "x", stderr: "" }));
+  assert.strictEqual(chamadas, 3);
+  assert.strictEqual(r.status, 1);
+
+  const iniciados = [
+    { status: 1, pid: 7, stdout: "", stderr: "" },
+    { status: null, pid: 7, signal: "SIGKILL", stdout: "", stderr: "" },
+    { status: null, pid: 7, signal: "SIGTERM", error: falhaDeCriar("ETIMEDOUT"), stdout: "", stderr: "" },
+    { status: 1, pid: 7, stdout: "erro do instalador", stderr: "" },
+  ];
+  for (const primeiro of iniciados) {
+    chamadas = 0;
+    const res = comTentativas(() => (++chamadas === 1 ? primeiro : { status: 0, pid: 8, stdout: "ok", stderr: "" }));
+    assert.strictEqual(chamadas, 1, JSON.stringify(primeiro));
+    assert.strictEqual(res, primeiro);
+  }
+
+  chamadas = 0;
+  comTentativas(() => (++chamadas, { status: null, pid: 0, error: falhaDeCriar("EAGAIN"), stdout: "", stderr: "" }));
+  assert.strictEqual(chamadas, 3);
 });

@@ -18,6 +18,12 @@ const ARQUIVOS = {
 const SEGREDOS = [
   /sk-[A-Za-z0-9_-]{16,}/,
   /gh[pousr]_[A-Za-z0-9]{20,}/,
+  /github_pat_[A-Za-z0-9_]{20,}/,
+  /\bBearer\s+[A-Za-z0-9._~+\/=-]{20,}/i,
+  /\bAuthorization\s*[:=]\s*\S{8,}/i,
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
+  /\bAIza[0-9A-Za-z_-]{30,}/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/,
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b(?:senha|password|passwd|token|secret|api[_-]?key)\s*[:=]\s*\S{6,}/i,
@@ -37,7 +43,8 @@ function motivoDeDescarte(caso, maxChars) {
   const entrada = typeof caso?.entrada === 'string' ? caso.entrada.trim() : '';
   const saida = typeof caso?.saida === 'string' ? caso.saida.trim() : '';
   if (!entrada || !saida) return 'sem entrada ou sem saída';
-  if (temSegredo(entrada) || temSegredo(saida)) return 'parece conter segredo';
+  // o registro inteiro (regra, motivos etc.), não só entrada e saída: nada com credencial chega ao treino.jsonl
+  if (temSegredo(entrada) || temSegredo(saida) || temSegredo(JSON.stringify(caso))) return 'parece conter segredo';
   if (entrada.length + saida.length > maxChars) return 'grande demais para o contexto do modelo local';
   return null;
 }
