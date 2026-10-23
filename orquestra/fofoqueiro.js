@@ -95,6 +95,20 @@ function devolucoesPorCI(g, prs) {
   }
   return acoes;
 }
+// PR que já saiu da lista de abertos: mesclado conclui a tarefa em revisão que o cita; fechado sem mesclar escala (alguém decide).
+function fechamentosDePR(g, fechados) {
+  const acoes = [];
+  for (const t of Object.values(g?.tarefas || {})) {
+    if (t.estado !== 'em_revisao') continue;
+    const m = /#(\d+)/.exec(String(t.resultado || ''));
+    const pr = m && (fechados || []).find((p) => p.number === Number(m[1]));
+    if (!pr) continue;
+    const estado = String(pr.state || '').toUpperCase();
+    if (estado === 'MERGED') acoes.push({ tipo: 'concluir', tarefa: t.id, pr: pr.number, agente: t.agente, motivo: `PR #${pr.number} mesclado`, chave: `concluir:${t.id}:${pr.number}` });
+    else if (estado === 'CLOSED') acoes.push({ tipo: 'escalar', id: null, tarefa: t.id, pr: pr.number, motivo: `PR #${pr.number} da tarefa ${t.id} foi fechado sem mesclar; decida se a tarefa volta à fila`, chave: `fechado:${t.id}:${pr.number}` });
+  }
+  return acoes;
+}
 // Atualiza o mapa de heads revisados: guarda o head em que a label foi vista pela primeira vez e esquece PRs que saíram da lista.
 function atualizarRevisados(prs, revisados = {}) {
   const novo = {};
@@ -247,6 +261,12 @@ function passo(deps, cfg = configPadrao) {
         return { ...pr, labels: pr.labels.filter((l) => l.name !== rotulo) };
       });
       acoes.push(...devolucoesPorCI(g, prs));
+      if (deps.listarPRsFechados) {
+        let fechados = null;
+        try { fechados = deps.listarPRsFechados(); } catch { fechados = null; }
+        if (Array.isArray(fechados)) acoes.push(...fechamentosDePR(g, fechados));
+        else deps.log?.('falha ao consultar os PRs fechados no GitHub');
+      }
       acoes.push(...filtrarExternas(pendenciasDosPRs(atuais, estado.revisados), estado, agora, c));
       const revisados = atualizarRevisados(atuais, estado.revisados);
       if (JSON.stringify(revisados) !== JSON.stringify(estado.revisados || {})) { estado = { ...estado, revisados }; deps.salvarEstado(estado); }
@@ -331,6 +351,11 @@ function listarPRs(cfg, spawn = spawnSync, plataforma = process.platform) {
   if (r.status !== 0) return null;
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
+function listarPRsFechados(cfg, spawn = spawnSync, plataforma = process.platform) {
+  const r = chamarCli('gh', ['pr', 'list', '--repo', cfg.repo, '--state', 'closed', '--limit', '30', '--json', 'number,state'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, spawn, plataforma);
+  if (r.status !== 0) return null;
+  try { return JSON.parse(r.stdout); } catch { return null; }
+}
 function promptDe(a, g) {
   const ids = a.ids?.length ? a.ids : a.id ? [a.id] : [];
   const tarefas = ids.map((id) => g?.tarefas?.[id]).filter(Boolean)
@@ -358,6 +383,11 @@ function executarReal(a, g, cfg, deps = {}) {
     try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
     finally { fs.rmSync(plano, { force: true }); }
   });
+  if (a.tipo === 'concluir') {
+    grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'em_revisao' ? grafoApi.concluir(x, a.tarefa, a.motivo) : x));
+    log(`concluir ${a.tarefa}: ${a.motivo}`);
+    return;
+  }
   if (a.tipo === 'devolver') {
     try { grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'em_revisao' ? grafoApi.devolver(x, a.tarefa, a.motivo) : x)); }
     catch (e) {
@@ -460,6 +490,7 @@ function depsReais(simular, cfg) {
     lerSemCota: () => lerJson(ARQ_SEM_COTA, {}),
     lerCanal: () => { try { return fs.readFileSync(ARQ_CANAL, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; } },
     listarPRs: () => listarPRs(cfg),
+    listarPRsFechados: () => listarPRsFechados(cfg),
     removerLabelRevisao: (numero, revisor) => chamarCli('gh', ['pr', 'edit', String(numero), '--repo', cfg.repo, '--remove-label', `revisado-por:${revisor}`], { encoding: 'utf8', timeout: 30000, windowsHide: true }),
     executar: (a, g) => executarReal(a, g, cfg),
     log: logPadrao,
@@ -484,5 +515,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, devolucoesPorCI, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, devolucoesPorCI, fechamentosDePR, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });
