@@ -33,6 +33,18 @@ test('grafo.reabrir: feita volta a pendente com motivo; recusa estado errado e d
   assert.throws(() => grafo.reabrir(g2, 'a', 'x', T), /dependente.*b/);
 });
 
+test('grafo.reabrir: dependente ativo indireto (A feita, B feita depende de A, C ativa depende de B) também recusa', () => {
+  let g = grafoFeita();
+  g = grafo.adicionar(g, { id: 'b', titulo: 'B', agente: 'claude', escopo: ['src/b.js'], depende: ['a'] }, T);
+  g = grafo.iniciar(g, 'b', 'claude', T);
+  g = grafo.concluir(g, 'b', 'feita', T);
+  g = grafo.adicionar(g, { id: 'c', titulo: 'C', agente: 'claude', escopo: ['src/c.js'], depende: ['b'] }, T);
+  g = grafo.iniciar(g, 'c', 'claude', T);
+  assert.throws(() => grafo.reabrir(g, 'a', 'x', T), /dependente.*c/);
+  assert.equal(g.tarefas.a.estado, 'feita');
+  assert.deepEqual(grafo.validar(g), []);
+});
+
 test('grafo.js reabrir pela linha de comando', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reabrir-'));
   const arq = path.join(dir, 'grafo.json');
@@ -49,7 +61,11 @@ test('revertidosDePR: só PR mesclado com título Revert que cita o PR da tarefa
   assert.deepEqual(vigia.revertidosDePR(g, [reverte(31)]), [], 'reverte outro PR');
   assert.deepEqual(vigia.revertidosDePR(g, [{ ...reverte(30), state: 'CLOSED' }]), [], 'revert não mesclado');
   assert.deepEqual(vigia.revertidosDePR(g, [{ number: 45, state: 'MERGED', title: 'Corrige texto', body: 'Menciona #30 de passagem' }]), [], 'não é revert');
-  assert.deepEqual(vigia.revertidosDePR(g, [{ number: 46, state: 'MERGED', title: 'Revert "x" (#30)', body: '' }]).length, 1, 'número no título também vale');
+  assert.deepEqual(vigia.revertidosDePR(g, [{ number: 46, state: 'MERGED', title: 'Revert "x" (#30)', body: '' }]), [], 'número só no título não declara o alvo');
+  assert.deepEqual(vigia.revertidosDePR(g, [{ number: 47, state: 'MERGED', title: 'Revert "PR 31"', body: 'Reverts #31. Also mentions #30 as background.' }]), [], 'menção incidental a #30 não reabre');
+  assert.deepEqual(vigia.revertidosDePR(g, [{ number: 48, state: 'MERGED', title: 'Revert "x"', body: 'Reverts dmt5dimension-ops/MixAI#30' }]).length, 1, 'corpo padrão do GitHub com repositório');
+  assert.deepEqual(vigia.revertidosDePR(g, [{ number: 49, state: 'MERGED', title: 'Revert "x"', body: 'Reverts https://github.com/dmt5dimension-ops/MixAI/pull/30' }]).length, 1, 'URL do PR');
+  assert.deepEqual(vigia.revertidosDePR(g, [{ number: 50, state: 'MERGED', title: 'Revert "x"', body: 'Reverts #300' }]), [], '#300 não é #30');
   assert.deepEqual(vigia.revertidosDePR(grafoFeita('feita à mão'), [reverte(30)]), [], 'sem PR no resultado');
   assert.deepEqual(vigia.revertidosDePR(grafoFeita('PR #30 revertido (#44)'), [reverte(30)]), [], 'já reaberta uma vez: resultado não diz mais mesclado');
 });
@@ -85,12 +101,24 @@ test('passo: revert mesclado reabre a tarefa uma vez; com dependente ativo escal
   assert.match(canal[0], /revertido|revert/i);
 });
 
-test('listarReverts: busca reverts mesclados por título (sem janela de 30); só consulta com tarefa feita citando PR', () => {
+test('listarReverts: lê a linha do tempo de cada PR feito com paginação, sem limite de 100; só consulta com tarefa feita citando PR', () => {
   const chamadas = [];
-  const ok = vigia.listarReverts({ repo: 'dmt5dimension-ops/MixAI' }, (cmd, args) => { chamadas.push(args); return { status: 0, stdout: JSON.stringify([reverte(30)]) }; }, 'linux');
-  assert.equal(ok.length, 1);
-  assert.ok(chamadas[0].includes('--search') && chamadas[0].includes('merged') && !chamadas[0].includes('30'));
-  assert.equal(vigia.listarReverts({ repo: 'x/y' }, () => ({ status: 1, stdout: '' }), 'linux'), null);
+  const linhas = (n) => {
+    const out = [];
+    for (let i = 0; i < 150; i += 1) out.push(JSON.stringify({ number: 1000 + i, title: `PR qualquer ${i}`, body: 'cita', state: 'MERGED' }));
+    out.push(JSON.stringify({ number: 44, title: 'Revert "Supervisor"', body: `Reverts #${n}`, state: 'MERGED' }));
+    return out.join('\n');
+  };
+  const gh = (cmd, args) => { chamadas.push([cmd, args]); const n = Number(/issues\/(\d+)\//.exec(args[2])[1]); return n === 31 ? { status: 1, stdout: '' } : { status: 0, stdout: `${linhas(n)}\n` }; };
+  const ok = vigia.listarReverts({ repo: 'dmt5dimension-ops/MixAI' }, [30, 31], gh, 'linux');
+  assert.equal(ok.length, 151, 'mais de 100 citações: nenhuma se perde; PR 31 falhou e ficou de fora');
+  assert.equal(chamadas.length, 2);
+  assert.ok(chamadas.every((c) => c[0] === 'gh' && c[1][0] === 'api' && c[1].includes('--paginate')));
+  assert.equal(vigia.revertidosDePR(grafoFeita(), ok).length, 1, 'revert antigo continua achado depois de 150 outras citações');
+  assert.equal(vigia.listarReverts({ repo: 'x/y' }, [30], () => ({ status: 1, stdout: '' }), 'linux'), null);
+  assert.deepEqual(vigia.listarReverts({ repo: 'x/y' }, [], () => { throw new Error('não chama'); }, 'linux'), []);
+  assert.deepEqual(vigia.prsFeitos(grafoFeita()), [30]);
+  assert.deepEqual(vigia.prsFeitos(grafoFeita('feita à mão')), []);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-rev2-'));
   const arquivo = path.join(dir, 'grafo.json');

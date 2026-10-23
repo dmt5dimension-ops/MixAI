@@ -278,7 +278,13 @@ function concluir(g, id, resultado = null, agora = new Date().toISOString()) {
 function reabrir(g, id, motivo = null, agora = new Date().toISOString()) {
   const t = pegar(g, id);
   if (t.estado !== 'feita') throw new Error(`tarefa ${id} precisa estar feita (está ${t.estado})`);
-  const ativo = lista(g).find((x) => x.depende.includes(id) && (x.estado === 'em_andamento' || x.estado === 'em_revisao'));
+  // dependente ativo direto ou indireto (descendente no grafo): reabrir deixaria trabalho ativo sobre dependência não pronta
+  const descendentes = new Set();
+  for (let fila = [id]; fila.length;) {
+    const atual = fila.pop();
+    for (const x of lista(g)) if (x.depende.includes(atual) && !descendentes.has(x.id)) { descendentes.add(x.id); fila.push(x.id); }
+  }
+  const ativo = lista(g).find((x) => descendentes.has(x.id) && (x.estado === 'em_andamento' || x.estado === 'em_revisao'));
   if (ativo) throw new Error(`tarefa ${id} não pode ser reaberta: o dependente ${ativo.id} está ${ativo.estado}`);
   return mudar(g, id, { estado: 'pendente', resultado: motivo }, agora);
 }
