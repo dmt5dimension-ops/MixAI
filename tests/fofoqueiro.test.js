@@ -331,6 +331,59 @@ test('revisão: passo grava o head em que viu a label e depois chama o revisor q
   assert.match(chamadas[0], /#41/);
 });
 
+test('revisão: head novo retira a label antiga e a próxima aprovação vale para o novo head', () => {
+  let estado = {}, head = 'aaaaaaaa11111111', rotulo = true, removidas = 0;
+  const chamadas = [];
+  const deps = () => ({
+    agora: () => AGORA, lerGrafo: () => grafo.novo(), lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    listarPRs: () => [{ number: 42, headRefOid: head, labels: [
+      { name: 'feito-por:codex' }, ...(rotulo ? [{ name: 'revisado-por:claude' }] : []),
+    ], statusCheckRollup: [] }],
+    removerLabelRevisao: () => { removidas++; rotulo = false; return { status: 0 }; },
+    executar: (a) => chamadas.push(a), simular: false,
+  });
+  vigia.passo(deps(), CFG);
+  assert.equal(estado.revisados[42], head);
+  head = 'bbbbbbbb22222222';
+  vigia.passo(deps(), CFG);
+  assert.equal(removidas, 1, 'removeu a label do head antigo');
+  assert.equal(estado.revisados?.[42], undefined, 'esqueceu o head antigo');
+  assert.equal(chamadas.filter((a) => a.agente === 'claude').length, 1);
+  rotulo = true; // revisor conferiu o head novo e recolocou a label
+  vigia.passo(deps(), CFG);
+  assert.equal(estado.revisados[42], head, 'a nova revisão passa a valer para o head atual');
+  assert.equal(chamadas.filter((a) => a.agente === 'claude').length, 1, 'não chama o revisor de novo');
+});
+
+test('Windows: CLIs .cmd usam shell só no fallback, com prompt no stdin e sem argumentos variáveis no shell', () => {
+  for (const agente of ['codex', 'claude']) {
+    const chamadas = [];
+    const spawn = (cmd, args, opcoes) => {
+      chamadas.push({ cmd, args, opcoes });
+      return opcoes.shell ? { status: 0, stdout: '{}', stderr: '' } : { status: null, error: { code: 'ENOENT' } };
+    };
+    const r = vigia.acordar({ tipo: 'acordar', agente, motivo: 'pedido & literal', ids: [] }, { ...CFG, tempoMaximoDisparoMinutos: 1 }, grafo.novo(), spawn, 'win32');
+    assert.equal(r.status, 0);
+    assert.equal(chamadas.length, 2);
+    assert.equal(chamadas[1].opcoes.shell, true);
+    assert.deepEqual(chamadas[1].args, []);
+    assert.match(chamadas[1].opcoes.input, /pedido & literal/);
+    assert.doesNotMatch(chamadas[1].cmd, /pedido & literal/);
+  }
+  const chamadas = [];
+  const spawn = (cmd, args, opcoes) => {
+    chamadas.push({ cmd, args, opcoes });
+    return opcoes.shell ? { status: 0, stdout: '[]', stderr: '' } : { status: null, error: { code: 'ENOENT' } };
+  };
+  assert.deepEqual(vigia.listarPRs({ repo: 'dmt5dimension-ops/MixAI' }, spawn, 'win32'), []);
+  assert.equal(chamadas[1].opcoes.shell, true);
+  assert.deepEqual(chamadas[1].args, []);
+  chamadas.length = 0;
+  assert.equal(vigia.listarPRs({ repo: 'dmt5dimension-ops/MixAI & echo injetado' }, spawn, 'win32'), null);
+  assert.equal(chamadas.length, 1, 'repo inválido nunca chega ao shell');
+});
+
 test('canal: uma resposta em sentido contrário fecha só o pedido a que responde, não todos', () => {
   const canal = [
     '### 2026-10-23 — Claude → Codex (pedido 1)\nFaça A.\n',

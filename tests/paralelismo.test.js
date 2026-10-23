@@ -1775,8 +1775,15 @@ test("o lote escreve na reserva os Jobs dos agentes dele assim que nascem", () =
   const pasta = `${arquivoEstado}.lotes`;
   const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: Date.now, cacheMs: 0, modos, config });
   const chamada = escada.chamarComando("setTimeout(()=>process.stdout.write('ok'),600)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [] });
+  // Confere a reserva no instante em que o lote confirma sua gravação, antes de liberar o agente.
+  // Temporizadores podem não executar enquanto outros testes bloqueiam o processo sob carga.
   let vistos = [];
-  setTimeout(() => { vistos = fs.readdirSync(pasta).filter((n) => n.endsWith(".json")).flatMap((n) => (JSON.parse(fs.readFileSync(path.join(pasta, n), "utf8")).agentes ?? []).map((a) => a.job)); }, 300);
+  const atualizar = controle.atualizarAgentes;
+  controle.atualizarAgentes = () => {
+    const ok = atualizar();
+    if (ok && vistos.length === 0) vistos = fs.readdirSync(pasta).filter((n) => n.endsWith(".json")).flatMap((n) => (JSON.parse(fs.readFileSync(path.join(pasta, n), "utf8")).agentes ?? []).map((a) => a.job));
+    return ok;
+  };
   const r = await escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local: (p, s) => chamada(p, s), superiores: [] } });
   assert.ok(r[0].ok, JSON.stringify(r));
   assert.strictEqual(vistos.length, 1);
