@@ -66,6 +66,9 @@ function pendenciasDoCanal(texto) {
 // um commit novo depois da revisão chama o revisor de novo.
 const CONCLUSOES_RUINS = ['FAILURE', 'ERROR', 'TIMED_OUT'];
 const checkFalhou = (c) => CONCLUSOES_RUINS.includes(String(c.conclusion || '').toUpperCase()) || ['FAILURE', 'ERROR'].includes(String(c.state || '').toUpperCase()); // check run usa `conclusion`, status de commit usa `state`
+// `revisao-cruzada` fica vermelho por desenho até o outro agente revisar; não é teste falhando e não devolve nada ao autor.
+const PORTAO_REVISAO = 'revisao-cruzada';
+const ciFalhou = (pr) => (pr.statusCheckRollup || []).some((c) => String(c.name || c.context || '') !== PORTAO_REVISAO && checkFalhou(c));
 function pendenciasDosPRs(prs, revisados = {}) {
   const acoes = [];
   for (const pr of prs || []) {
@@ -73,7 +76,7 @@ function pendenciasDosPRs(prs, revisados = {}) {
     const feito = AGENTES.find((a) => labels.includes(`feito-por:${a}`));
     if (!feito) continue;
     const revisor = feito === 'claude' ? 'codex' : 'claude';
-    const falhou = (pr.statusCheckRollup || []).some(checkFalhou);
+    const falhou = ciFalhou(pr);
     const sha = String(pr.headRefOid || '').slice(0, 8);
     const revisadoEm = revisados?.[pr.number];
     const revisaoVale = labels.includes(`revisado-por:${revisor}`) && (revisadoEm === undefined || revisadoEm === pr.headRefOid);
@@ -88,9 +91,9 @@ function devolucoesPorCI(g, prs) {
   const acoes = [];
   for (const t of Object.values(g?.tarefas || {})) {
     if (t.estado !== 'em_revisao') continue;
-    const m = /#(\d+)/.exec(String(t.resultado || ''));
+    const m = /\bPR\s*#(\d+)/i.exec(String(t.resultado || ''));
     const pr = m && (prs || []).find((p) => p.number === Number(m[1]));
-    if (!pr || !(pr.statusCheckRollup || []).some(checkFalhou)) continue;
+    if (!pr || !ciFalhou(pr)) continue;
     acoes.push({ tipo: 'devolver', tarefa: t.id, pr: pr.number, agente: t.agente, motivo: `Tarefa ${t.id} devolvida: CI vermelho no PR #${pr.number}`, chave: `devolver:${t.id}:${String(pr.headRefOid || '').slice(0, 8)}` });
   }
   return acoes;
@@ -100,7 +103,7 @@ function fechamentosDePR(g, fechados) {
   const acoes = [];
   for (const t of Object.values(g?.tarefas || {})) {
     if (t.estado !== 'em_revisao') continue;
-    const m = /#(\d+)/.exec(String(t.resultado || ''));
+    const m = /\bPR\s*#(\d+)/i.exec(String(t.resultado || ''));
     const pr = m && (fechados || []).find((p) => p.number === Number(m[1]));
     if (!pr) continue;
     const estado = String(pr.state || '').toUpperCase();

@@ -66,3 +66,19 @@ test('executarReal devolver: tarefa que não está mais em revisão não é toca
   assert.equal(canal.length, 1);
   assert.match(canal[0], /escopo/);
 });
+
+test('portão revisao-cruzada vermelho não é teste falhando: tarefa continua em revisão e o revisor é chamado', () => {
+  const real = { number: 31, headRefOid: 'bbbbbbbb22222222', labels: [{ name: 'feito-por:claude' }], statusCheckRollup: [
+    { name: 'regressao', conclusion: 'SUCCESS' }, { name: 'guarda-de-testes', conclusion: 'SUCCESS' }, { name: 'revisao-cruzada', conclusion: 'FAILURE' }] };
+  const g = grafoEmRevisao('PR #31');
+  assert.deepEqual(vigia.devolucoesPorCI(g, [real]), []);
+  assert.deepEqual(vigia.pendenciasDosPRs([real]).map((x) => [x.agente, x.chave.split(':')[0]]), [['codex', 'rev']]);
+  const vermelho = { ...real, statusCheckRollup: [{ name: 'regressao', conclusion: 'FAILURE' }, { name: 'revisao-cruzada', conclusion: 'FAILURE' }] };
+  assert.equal(vigia.devolucoesPorCI(g, [vermelho]).length, 1, 'teste real vermelho continua devolvendo');
+  assert.equal(vigia.pendenciasDosPRs([vermelho])[0].agente, 'claude');
+});
+
+test('devolucoesPorCI: só lê `PR #N` em `resultado`, não número solto de issue', () => {
+  assert.deepEqual(vigia.devolucoesPorCI(grafoEmRevisao('corrige issue #30'), [pr(30, true)]), []);
+  assert.equal(vigia.devolucoesPorCI(grafoEmRevisao('aberto como pr #30'), [pr(30, true)]).length, 1);
+});
