@@ -9,7 +9,7 @@ const { spawnSync } = require("node:child_process");
 const PASTA = path.resolve(__dirname, "..", "ferramentas", "treino-kaggle");
 
 test("geradores, verificadores e laço de rodadas passam (python)", { timeout: 300000 }, () => {
-  const r = spawnSync("python3", ["-W", "error::ResourceWarning", path.join(PASTA, "test_ciclo.py")], { encoding: "utf8", timeout: 280000 });
+  const r = spawnSync("python3", ["-W", "error::ResourceWarning", path.join(PASTA, "test_ciclo.py")], { encoding: "utf8", timeout: 280000, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
   assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}`);
 });
 
