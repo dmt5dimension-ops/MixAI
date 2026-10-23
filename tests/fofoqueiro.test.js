@@ -301,3 +301,99 @@ test('morte incerta de agente pago também mantém tarefa em andamento', () => {
   vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false }), log: () => {}, escreverCanal: () => {} });
   assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_andamento');
 });
+
+// --- Revisão do Claude no #29: cinco pontos --------------------------------------------------------------------------
+
+test('revisão: label revisado-por de um head antigo não vale depois de um commit novo (compara o head revisado com o atual)', () => {
+  const pr = (sha) => ({ number: 40, headRefOid: sha, labels: [{ name: 'feito-por:codex' }, { name: 'revisado-por:claude' }], statusCheckRollup: [] });
+  // o head revisado é o que estava quando a label foi vista pela primeira vez
+  const revisados = { 40: 'aaaaaaaa11111111' };
+  assert.deepEqual(vigia.pendenciasDosPRs([pr('aaaaaaaa11111111')], revisados), [], 'mesmo head: nada a fazer');
+  const novo = vigia.pendenciasDosPRs([pr('bbbbbbbb22222222')], revisados);
+  assert.deepEqual(novo.map((x) => [x.agente, x.tipo]), [['claude', 'acordar']], 'commit novo depois da revisão chama o revisor de novo');
+  assert.match(novo[0].motivo, /nova revisão|commit novo|precisa de revisão/i);
+});
+
+test('revisão: passo grava o head em que viu a label e depois chama o revisor quando o head muda', () => {
+  let estado = {}, chamadas = [];
+  let head = 'aaaaaaaa11111111';
+  const deps = () => ({
+    agora: () => AGORA, lerGrafo: () => grafo.novo(), lerEstado: () => estado, salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    listarPRs: () => [{ number: 41, headRefOid: head, labels: [{ name: 'feito-por:codex' }, { name: 'revisado-por:claude' }], statusCheckRollup: [] }],
+    executar: (a) => chamadas.push(a.motivo), simular: false,
+  });
+  vigia.passo(deps(), CFG);
+  assert.deepEqual(chamadas, [], 'label no head visto: nada a fazer');
+  assert.equal(estado.revisados[41], 'aaaaaaaa11111111');
+  head = 'bbbbbbbb22222222';
+  vigia.passo(deps(), CFG);
+  assert.equal(chamadas.length, 1);
+  assert.match(chamadas[0], /#41/);
+});
+
+test('canal: uma resposta em sentido contrário fecha só o pedido a que responde, não todos', () => {
+  const canal = [
+    '### 2026-10-23 — Claude → Codex (pedido 1)\nFaça A.\n',
+    '### 2026-10-23 — Claude → Codex (pedido 2)\nFaça B.\n',
+    '### 2026-10-23 — Codex → Claude (resposta)\nFiz.\n',
+  ].join('\n');
+  const pend = vigia.pendenciasDoCanal(canal);
+  assert.equal(pend.filter((x) => x.agente === 'codex').length, 1, 'sobra um pedido sem resposta');
+  assert.match(pend.find((x) => x.agente === 'codex').motivo, /pedido 1/, 'a resposta fecha o pedido mais recente (pedido 2) e mantém o outro');
+});
+
+test('CLI inexistente (status null com ENOENT) vira falha da tarefa e é escalada, não fica em andamento', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-enoent-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  const avisos = [];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false, error: { code: 'ENOENT' } }), log: () => {}, escreverCanal: (t) => avisos.push(t) });
+  const atual = grafo.carregar(arquivo).tarefas.a;
+  assert.notEqual(atual.estado, 'em_andamento');
+  assert.equal(atual.tentativas, 1, 'contou como falha');
+  assert.equal(avisos.length, 1);
+  assert.match(avisos[0], /não encontr|inexistente|ENOENT/i);
+  // timeout continua sendo morte incerta: segue em andamento
+  grafo.salvar(arquivo, criar(tarefa('b')));
+  const b = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(b, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false, error: { code: 'ETIMEDOUT' } }), log: () => {}, escreverCanal: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.b.estado, 'em_andamento');
+});
+
+test('escada inexistente (ENOENT) também vira falha escalada', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-enoent-escada-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('q', 'local')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  const avisos = [];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarEscada: () => ({ status: null, error: { code: 'ENOENT' } }), log: () => {}, escreverCanal: (t) => avisos.push(t) });
+  assert.notEqual(grafo.carregar(arquivo).tarefas.q.estado, 'em_andamento');
+  assert.equal(avisos.length, 1);
+});
+
+test('status de commit com falha em `state` (StatusContext) aciona o autor, como a conclusão de um check run', () => {
+  const base = { number: 50, headRefOid: 'cccccccc33333333', labels: [{ name: 'feito-por:claude' }] };
+  for (const state of ['FAILURE', 'ERROR', 'failure']) {
+    const a = vigia.pendenciasDosPRs([{ ...base, statusCheckRollup: [{ __typename: 'StatusContext', state }] }]);
+    assert.deepEqual(a.map((x) => [x.agente, x.motivo.includes('vermelho')]), [['claude', true]], state);
+  }
+  assert.ok(vigia.pendenciasDosPRs([{ ...base, statusCheckRollup: [{ __typename: 'StatusContext', state: 'SUCCESS' }] }]).every((x) => !/vermelho/.test(x.motivo)));
+});
+
+test('falha ao consultar os PRs é registrada e escalada (uma vez por janela), não silenciosa', () => {
+  for (const consulta of [() => null, () => { throw new Error('gh caiu'); }]) {
+    let estado = {}; const escaladas = [], logs = [];
+    const deps = {
+      agora: () => AGORA, lerGrafo: () => grafo.novo(), lerEstado: () => estado, salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+      listarPRs: consulta, executar: (a) => escaladas.push(a), log: (t) => logs.push(t), simular: false,
+    };
+    vigia.passo(deps, CFG);
+    vigia.passo(deps, CFG);
+    assert.equal(escaladas.length, 1, 'escalou uma vez e deduplicou');
+    assert.equal(escaladas[0].tipo, 'escalar');
+    assert.match(escaladas[0].motivo, /PRs/);
+    assert.doesNotMatch(escaladas[0].motivo, /gh caiu/);
+    assert.ok(logs.length >= 1, 'registrou no log');
+  }
+});

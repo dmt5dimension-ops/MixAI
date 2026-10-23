@@ -54,26 +54,46 @@ function pendenciasDoCanal(texto) {
   for (const p of partes) {
     const m = ultimaMensagem(p);
     if (!m?.de || !m.para || m.de === m.para) continue;
+    // Uma resposta (sentido contrário) fecha só o pedido mais recente a que responde; os outros continuam pendentes.
     for (let i = pendentes.length - 1; i >= 0; i--) {
-      if (pendentes[i].de === m.para && pendentes[i].para === m.de) pendentes.splice(i, 1);
+      if (pendentes[i].de === m.para && pendentes[i].para === m.de) { pendentes.splice(i, 1); break; }
     }
     pendentes.push(m);
   }
   return pendentes.map((m) => ({ tipo: 'acordar', agente: m.para, motivo: `Nova mensagem no canal: ${m.titulo}`, ids: [], chave: m.chave }));
 }
-function pendenciasDosPRs(prs) {
+// `revisados`: número do PR -> head em que a label de revisão foi vista. A label sozinha não prova revisão do head atual:
+// um commit novo depois da revisão chama o revisor de novo.
+const CONCLUSOES_RUINS = ['FAILURE', 'ERROR', 'TIMED_OUT'];
+const checkFalhou = (c) => CONCLUSOES_RUINS.includes(String(c.conclusion || '').toUpperCase()) || ['FAILURE', 'ERROR'].includes(String(c.state || '').toUpperCase()); // check run usa `conclusion`, status de commit usa `state`
+function pendenciasDosPRs(prs, revisados = {}) {
   const acoes = [];
   for (const pr of prs || []) {
     const labels = (pr.labels || []).map((l) => l.name);
     const feito = AGENTES.find((a) => labels.includes(`feito-por:${a}`));
     if (!feito) continue;
     const revisor = feito === 'claude' ? 'codex' : 'claude';
-    const falhou = (pr.statusCheckRollup || []).some((c) => ['FAILURE', 'ERROR', 'TIMED_OUT'].includes(String(c.conclusion || '').toUpperCase()));
+    const falhou = (pr.statusCheckRollup || []).some(checkFalhou);
     const sha = String(pr.headRefOid || '').slice(0, 8);
+    const revisadoEm = revisados?.[pr.number];
+    const revisaoVale = labels.includes(`revisado-por:${revisor}`) && (revisadoEm === undefined || revisadoEm === pr.headRefOid);
     if (falhou) acoes.push({ tipo: 'acordar', agente: feito, ids: [], motivo: `PR #${pr.number} está com teste vermelho`, chave: `ci:${pr.number}:${sha}` });
-    else if (!labels.includes(`revisado-por:${revisor}`)) acoes.push({ tipo: 'acordar', agente: revisor, ids: [], motivo: `PR #${pr.number} precisa de revisão cruzada`, chave: `rev:${pr.number}:${sha}` });
+    else if (!revisaoVale) acoes.push({ tipo: 'acordar', agente: revisor, ids: [], motivo: labels.includes(`revisado-por:${revisor}`) ? `PR #${pr.number} recebeu commit novo depois da revisão; precisa de nova revisão cruzada` : `PR #${pr.number} precisa de revisão cruzada`, chave: `rev:${pr.number}:${sha}` });
   }
   return acoes;
+}
+// Atualiza o mapa de heads revisados: guarda o head em que a label foi vista pela primeira vez e esquece PRs que saíram da lista.
+function atualizarRevisados(prs, revisados = {}) {
+  const novo = {};
+  for (const pr of prs || []) {
+    const labels = (pr.labels || []).map((l) => l.name);
+    const feito = AGENTES.find((a) => labels.includes(`feito-por:${a}`));
+    if (!feito) continue;
+    const revisor = feito === 'claude' ? 'codex' : 'claude';
+    if (!labels.includes(`revisado-por:${revisor}`)) continue;
+    novo[pr.number] = revisados?.[pr.number] ?? pr.headRefOid; // head novo com label antiga continua apontando o head revisado
+  }
+  return novo;
 }
 
 const escopoConflita = (a, b) => {
@@ -188,7 +208,19 @@ function passo(deps, cfg = configPadrao) {
     return escalarErro(acoes[0], g);
   }
   if (deps.lerCanal) acoes.push(...filtrarExternas(pendenciasDoCanal(deps.lerCanal()), estado, agora, c));
-  if (!deps.simular && deps.listarPRs) acoes.push(...filtrarExternas(pendenciasDosPRs(deps.listarPRs()), estado, agora, c));
+  if (!deps.simular && deps.listarPRs) {
+    let prs = null;
+    try { prs = deps.listarPRs(); } catch { prs = null; }
+    if (!Array.isArray(prs)) {
+      // Consulta falhou: nunca vale como "nenhum PR". Registra e escala uma vez por janela (sem copiar o erro do gh para o canal).
+      deps.log?.('falha ao consultar os PRs no GitHub');
+      acoes.push({ tipo: 'escalar', id: null, motivo: 'não consegui consultar os PRs no GitHub; confira o gh e a rede', chave: 'prs:consulta' });
+    } else {
+      acoes.push(...filtrarExternas(pendenciasDosPRs(prs, estado.revisados), estado, agora, c));
+      const revisados = atualizarRevisados(prs, estado.revisados);
+      if (JSON.stringify(revisados) !== JSON.stringify(estado.revisados || {})) { estado = { ...estado, revisados }; deps.salvarEstado(estado); }
+    }
+  }
   const usadas = new Set(), realizadas = [];
   for (const a of acoes) {
     if (noPrazo(a.chave)) continue;
@@ -271,8 +303,10 @@ function acordar(a, cfg, g) {
   const args = a.agente === 'codex' ? ['exec', '-s', 'workspace-write', '-'] : ['-p', prompt, '--output-format', 'json'];
   const r = spawnSync(a.agente, args, { input: a.agente === 'codex' ? prompt : undefined, cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
   const saida = String(r.stdout || '') + String(r.stderr || '');
-  return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0 };
+  return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0, error: r.error ? { code: r.error.code } : undefined };
 }
+// O processo nem nasceu (comando inexistente ou sem permissão): é falha da chamada, não "morte incerta".
+const nemNasceu = (r) => r?.status == null && ['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR'].includes(r?.error?.code);
 function executarReal(a, g, cfg, deps = {}) {
   const arquivoGrafo = deps.arquivoGrafo || ARQ_GRAFO;
   const chamarAgente = deps.chamarAgente || ((acao) => acordar(acao, cfg, g));
@@ -301,6 +335,12 @@ function executarReal(a, g, cfg, deps = {}) {
     try { r = executarEscada(microtarefas); }
     catch (e) { r = { status: 1 }; log(`falha ao iniciar escada: ${e.code || 'erro'}`); }
     log(`escada ${a.ids.join(',')}: status=${r.status ?? 1}`);
+    if (nemNasceu(r)) {
+      for (const id of a.ids) grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[id]?.estado === 'em_andamento' ? grafoApi.falhar(x, id, `escada não encontrada ou sem permissão (${r.error.code})`) : x));
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (escada não encontrada)\n\nLote local ${a.ids.join(', ')} não foi iniciado: comando não encontrado ou sem permissão (${r.error.code}). Contou como falha.\n`);
+      log(`escada ${a.ids.join(',')}: não iniciou (${r.error.code})`);
+      return;
+    }
     if (r.status == null) {
       escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (lote sem morte confirmada)\n\nLote local ${a.ids.join(', ')} terminou sem confirmação de saída; tarefas mantidas em andamento. Confira os processos antes de retomar.\n`);
       return;
@@ -324,6 +364,12 @@ function executarReal(a, g, cfg, deps = {}) {
     try { r = chamarAgente(a); }
     catch (e) { r = { status: 1, limite: false }; log(`falha ao chamar ${a.agente}: ${e.code || 'erro'}`); }
     log(`${a.tipo} ${a.agente}: status=${r.status}${r.limite ? ' cota' : ''}`);
+    if (nemNasceu(r)) {
+      if (a.tipo === 'acordar' && a.ids?.length) grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.ids[0]]?.estado === 'em_andamento' ? grafoApi.falhar(x, a.ids[0], `CLI ${a.agente} não encontrada ou sem permissão (${r.error.code})`) : x));
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (CLI não encontrada)\n\n${a.agente} não foi iniciado: comando não encontrado ou sem permissão (${r.error.code}). Contou como falha da tarefa; instale ou ajuste o caminho da CLI.\n`);
+      log(`${a.tipo} ${a.agente}: não iniciou (${r.error.code})`);
+      return;
+    }
     if (r.status == null) {
       escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (agente sem morte confirmada)\n\n${a.agente} terminou sem confirmação de saída; tarefa mantida em andamento. Confira os processos antes de retomar.\n`);
       return;
@@ -388,5 +434,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, decidir, registrar, passo, pegarTrava, promptDe, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });
