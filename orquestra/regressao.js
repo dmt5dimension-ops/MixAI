@@ -5,10 +5,17 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const RAIZ = path.resolve(__dirname, '..');
 const ARQUIVO = path.join(__dirname, 'regressao', 'acertos.jsonl');
+
+// Identidade do caso: o que a tarefa É (tipo, pedido, verificador e resposta certa), não o rótulo `id`. O gerador de planos repete
+// os mesmos ids entre sementes ("data-iso-001"), então só o id não distingue casos diferentes; o mesmo caso repetido tem a mesma chave.
+function chaveDe(c) {
+  return crypto.createHash('sha256').update(JSON.stringify([c.tipo, c.entrada, c.verificar, c.saidaCerta])).digest('hex').slice(0, 16);
+}
 
 function lerAcertos(arquivo = ARQUIVO) {
   if (!fs.existsSync(arquivo)) return [];
@@ -31,11 +38,15 @@ function registrar(tarefa, saidaCerta, { arquivo = ARQUIVO, modelo, data = new D
   }
   if (typeof saidaCerta !== 'string' || !saidaCerta.trim()) return { ok: false, motivo: 'sem resposta certa' };
   if (dependeDeTemporario(tarefa.verificar)) return { ok: false, motivo: 'o verificador usa arquivo temporário' };
-  if (lerAcertos(arquivo).some((c) => c.id === tarefa.id)) return { ok: false, motivo: `já existe o caso "${tarefa.id}"` };
+  const existentes = lerAcertos(arquivo);
+  const chave = chaveDe({ tipo: tarefa.tipo, entrada: tarefa.entrada, verificar: tarefa.verificar, saidaCerta });
+  if (existentes.some((c) => chaveDe(c) === chave)) return { ok: false, motivo: `já existe o caso "${tarefa.id}" (mesmo pedido, verificador e resposta)` };
+  // mesmo id de outro caso diferente (outra semente): mantém os dois, com o id do novo diferenciado
+  const id = existentes.some((c) => c.id === tarefa.id) ? `${tarefa.id}-${chave.slice(0, 6)}` : tarefa.id;
   if (!rodarVerificador(tarefa.verificar, saidaCerta, cwd)) return { ok: false, motivo: 'o verificador não aprova a resposta dada' };
   if (rodarVerificador(tarefa.verificar, saidaCerta + '\n#adulterada#', cwd)) return { ok: false, motivo: 'o verificador aprova até resposta adulterada (não confere nada)' };
   fs.mkdirSync(path.dirname(arquivo), { recursive: true });
-  fs.appendFileSync(arquivo, JSON.stringify({ id: tarefa.id, tipo: tarefa.tipo, entrada: tarefa.entrada, verificar: tarefa.verificar, saidaCerta, ...(modelo ? { modelo } : {}), data }) + '\n');
+  fs.appendFileSync(arquivo, JSON.stringify({ id, tipo: tarefa.tipo, entrada: tarefa.entrada, verificar: tarefa.verificar, saidaCerta, ...(modelo ? { modelo } : {}), data }) + '\n');
   return { ok: true, motivo: '' };
 }
 
@@ -68,4 +79,4 @@ function principal(argumentos) {
 
 if (require.main === module) process.exit(principal(process.argv.slice(2)));
 
-module.exports = { registrar, importarDoPlano, lerAcertos, rodarVerificador, dependeDeTemporario, ARQUIVO };
+module.exports = { chaveDe, registrar, importarDoPlano, lerAcertos, rodarVerificador, dependeDeTemporario, ARQUIVO };
