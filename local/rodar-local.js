@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const MODELO = 'mixai-local';
 const SAIDA_SEM_MEMORIA = 75;
@@ -25,25 +25,51 @@ function minimoGB() {
   return JSON.parse(fs.readFileSync(path.join(__dirname, 'protecao.json'), 'utf8')).memoriaLivreMinimaGB;
 }
 
-// Memória que o próprio mixai-local já ocupa, se ele estiver carregado: ela já saiu da memória livre do Windows,
-// então sem este desconto o guarda recusaria toda chamada depois da primeira (o modelo se bloqueia sozinho).
-// Qualquer falha ao consultar vale 0: sem certeza, não desconta.
+// RAM do Windows que o processo do modelo (llama-server) usa de verdade agora, em bytes; 0 se não der para medir.
+// Não vale o `size` do /api/ps: ele é o tamanho do modelo, que pode estar todo na placa sem gastar RAM.
+function ramDoRunner() {
+  if (process.env.MIXAI_RAM_RUNNER_GB !== undefined) return Number(process.env.MIXAI_RAM_RUNNER_GB) * GB;
+  try {
+    if (process.platform === 'win32') {
+      const r = spawnSync('tasklist', ['/FI', 'IMAGENAME eq llama-server.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000 });
+      let kb = 0;
+      for (const linha of String(r.stdout || '').split(/\r?\n/)) {
+        const campos = linha.match(/"([^"]*)"/g);
+        if (campos && campos.length >= 5) kb += Number(campos[4].replace(/[^0-9]/g, '')) || 0;
+      }
+      return kb * 1024;
+    }
+    const r = spawnSync('ps', ['-C', 'llama-server', '-o', 'rss='], { encoding: 'utf8', timeout: 5000 });
+    return String(r.stdout || '').split(/\s+/).reduce((s, x) => s + (Number(x) || 0), 0) * 1024;
+  } catch {
+    return 0;
+  }
+}
+
+// Memória que o próprio mixai-local já ocupa, se o /api/ps o mostra carregado: ela já saiu da memória livre do
+// Windows, então sem este crédito o guarda recusaria toda chamada depois da primeira. O crédito é a RAM medida
+// do processo do modelo, nunca mais que o `size` dele. Qualquer falha ao consultar ou medir vale 0.
 async function memoriaDoModeloCarregado() {
   try {
     const r = await fetch(`${SERVIDOR}/api/ps`);
     if (!r.ok) return 0;
     const lista = await r.json();
     const m = Array.isArray(lista && lista.models) && lista.models.find((x) => x.name === MODELO || x.name === `${MODELO}:latest`);
-    return m && typeof m.size === 'number' && m.size > 0 ? m.size : 0;
+    if (!m || typeof m.size !== 'number' || m.size <= 0) return 0;
+    return Math.max(0, Math.min(m.size, ramDoRunner()));
   } catch {
     return 0;
   }
 }
 
+// Com o modelo já carregado não há carga nova, mas a RAM livre sozinha não pode passar de um piso: se outro programa
+// esvaziou a máquina, nenhum crédito libera a chamada.
+const PISO_LIVRE_GB = 0.25;
+
 async function memoriaSuficiente() {
   const livreGB = process.env.MIXAI_MEMORIA_LIVRE_GB !== undefined ? Number(process.env.MIXAI_MEMORIA_LIVRE_GB) : os.freemem() / GB;
   const minimo = minimoGB();
-  const doModeloGB = (await memoriaDoModeloCarregado()) / GB;
+  const doModeloGB = livreGB >= PISO_LIVRE_GB ? (await memoriaDoModeloCarregado()) / GB : 0;
   if (livreGB + doModeloGB >= minimo) return true;
   console.error(`Modelo local não chamado: memória livre ${livreGB.toFixed(1)} GB (mais ${doModeloGB.toFixed(1)} GB do modelo já carregado), mínimo ${minimo} GB. A tarefa passa para o próximo da escada.`);
   return false;

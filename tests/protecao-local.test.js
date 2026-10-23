@@ -89,11 +89,27 @@ test("com pouca memória livre o modelo local nem é carregado e a tarefa sobe n
 test("modelo já carregado: a memória que ele mesmo ocupa é descontada e a chamada seguinte não é recusada", async () => {
   const dir = pastaTemporaria();
   const { comando } = ollamaFalso(dir);
-  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5" }, { tamanho: 4 * 1024 ** 3 });
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5", MIXAI_RAM_RUNNER_GB: "4" }, { tamanho: 4 * 1024 ** 3 });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(r.stdout, "TAREFA");
 });
 
+test("o /api/ps sozinho não vale como RAM: modelo na placa sem RAM medida no processo não libera a chamada", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5", MIXAI_RAM_RUNNER_GB: "0" }, { tamanho: 4 * 1024 ** 3 });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /memória livre/i);
+  assert.deepStrictEqual(r.pedidos, []);
+});
+
+test("outro programa esvaziou a RAM: com o modelo já carregado e a RAM livre abaixo do piso, a chamada é recusada", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.05", MIXAI_RAM_RUNNER_GB: "4" }, { tamanho: 4 * 1024 ** 3 });
+  assert.notStrictEqual(r.status, 0);
+  assert.deepStrictEqual(r.pedidos, []);
+});
 test("sem modelo carregado nada é descontado: memória livre baixa continua recusando", async () => {
   const dir = pastaTemporaria();
   const { comando } = ollamaFalso(dir);
