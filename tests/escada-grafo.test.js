@@ -144,3 +144,15 @@ test("ligarAoGrafo: maiúsculas contam fora do Windows e não contam no Windows 
   escada.ligarAoGrafo(arq2, [planoDe({ escopo: ["t/a.js"] })], { plataforma: "win32" }).iniciar();
   assert.equal(estado(arq2, "a"), "em_andamento");
 });
+
+test("ligarAoGrafo: `..` no escopo do plano não escapa da pasta da tarefa", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-pontos-"));
+  const arq = path.join(dir, "grafo.json");
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/a/"] }, AGORA));
+  for (const escopo of ["t/a/../fora.js", "t/a/sub/../../fora.js", "t/a/..", "t/a/../*.js", "t\\a\\..\\fora.js"]) {
+    assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: [escopo] })]).iniciar(), /fora do escopo/, escopo);
+  }
+  assert.equal(estado(arq, "a"), "pendente");
+  escada.ligarAoGrafo(arq, [planoDe({ escopo: ["./t/a//x.js", "t/a/./y.js"] })]).iniciar(); // `.` e barras repetidas são só forma
+  assert.equal(estado(arq, "a"), "em_andamento");
+});
