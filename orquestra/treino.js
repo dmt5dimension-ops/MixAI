@@ -29,7 +29,7 @@ const SEGREDOS = [
   /\b(?:senha|password|passwd|token|secret|api[_-]?key)\s*[:=]\s*\S{6,}/i,
 ];
 
-const PADRAO = { validacao: 0.1, maxChars: 6000, minimo: 20 };
+const PADRAO = { validacao: 0.1, maxChars: 6000, minimo: 20, minimoValidacao: null };
 
 function hash(texto) {
   return crypto.createHash('sha256').update(texto).digest('hex');
@@ -56,7 +56,9 @@ function ladoDe(entrada, fracaoValidacao) {
 }
 
 function prepararDataset(casos, opcoes = {}) {
-  const { validacao: fracao, maxChars, minimo } = { ...PADRAO, ...opcoes };
+  const { validacao: fracao, maxChars, minimo, minimoValidacao } = { ...PADRAO, ...opcoes };
+  // pedindo validação (fração > 0), tem de sobrar pelo menos 1 exemplo de validação; sem ele não há nota antes/depois
+  const exigeValidacao = minimoValidacao ?? (fracao > 0 ? 1 : 0);
   const descartados = [];
   const porEntrada = new Map(); // entrada -> caso; o mais recente vence
   casos.forEach((caso, i) => {
@@ -88,7 +90,7 @@ function prepararDataset(casos, opcoes = {}) {
     descartados: descartados.length,
     motivos,
     porQuem,
-    pronto: treino.length >= minimo,
+    pronto: treino.length >= minimo && validacao.length >= exigeValidacao,
     minimo,
   };
   return { treino, validacao, descartados, resumo };
@@ -120,7 +122,7 @@ function principal(argumentos) {
     const opcoes = { ...(iMin >= 0 ? { minimo: Number(resto[iMin + 1]) } : {}), ...(iMod >= 0 ? { modelo: resto[iMod + 1] } : {}) };
     const r = preparar(ARQUIVOS, opcoes);
     console.log(`${r.aproveitados} de ${r.lidos} casos aproveitados (${r.treino} treino, ${r.validacao} validação); ${r.descartados} descartados.`);
-    if (!r.pronto) console.log(`Ainda é pouco para treinar: precisa de pelo menos ${r.minimo} exemplos de treino.`);
+    if (!r.pronto) console.log(`Ainda não dá para treinar: precisa de pelo menos ${r.minimo} exemplos de treino e de pelo menos 1 de validação (treino ${r.treino}, validação ${r.validacao}).`);
     return r.pronto ? 0 : 2;
   }
   console.error('Uso: node orquestra/treino.js preparar [--minimo N] [--modelo <nome>]');

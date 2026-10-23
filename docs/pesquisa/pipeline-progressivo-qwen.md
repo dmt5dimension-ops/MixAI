@@ -34,8 +34,8 @@ Objetivo: o Qwen (`mixai-local`) passa a executar o trabalho do próprio MixAI, 
 - Fazer: limite de regras por prompt (cabe em 4096/8192 tokens), fusão de regras parecidas, remoção de regra que deixou de ajudar (medida pelo `avaliar.js` com e sem a regra).
 - Portão: regra nova não piora a nota dos outros tipos.
 
-**Fase 4 — Treino LoRA.** Quando houver volume (sugestão: 200+ exemplos limpos), treinar no PC com `treino.jsonl`, avaliar em `validacao.jsonl`.
-- Fazer: script de treino no PC (Windows, GPU de 8 GB), versão do modelo com nome (`mixai-local-v2`), troca só se a nota subir e nada piorar; volta fácil para a anterior.
+**Fase 4 — Treino LoRA.** Quando houver volume (sugestão: 200+ exemplos limpos), treinar com `treino.jsonl` e avaliar em `validacao.jsonl` (o treino roda no Colab/Kaggle, ver "Onde treinar"; no PC fica só baixar o GGUF e medir).
+- Fazer: notebook de treino na nuvem (Colab T4; o PC com GPU AMD de 8 GB não treina bem), versão do modelo com nome (`mixai-local-v2`), troca só se a nota subir e nada piorar; volta fácil para a anterior.
 - Portão: nota nova maior que a antiga em validação separada.
 
 **Fase 5 — O Qwen executa o próprio desenvolvimento.** Tarefas do grafo do tipo "pequena e mecânica" são entregues ao Qwen pelo supervisor; o autor do PR é o Qwen mais verificador, e a revisão cruzada continua obrigatória (Claude ou Codex).
