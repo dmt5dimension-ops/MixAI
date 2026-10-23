@@ -8,7 +8,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const MODELO = 'mixai-local';
 const SAIDA_SEM_MEMORIA = 75;
@@ -25,14 +25,48 @@ function minimoGB() {
   return JSON.parse(fs.readFileSync(path.join(__dirname, 'protecao.json'), 'utf8')).memoriaLivreMinimaGB;
 }
 
-function memoriaSuficiente() {
-  const livreGB = os.freemem() / GB;
-  const minimo = minimoGB();
-  if (livreGB >= minimo) return true;
-  console.error(`Modelo local não chamado: memória livre ${livreGB.toFixed(1)} GB, mínimo ${minimo} GB. A tarefa passa para o próximo da escada.`);
-  return false;
+// RAM PRIVADA, em bytes, dos runners do Ollama que o MixAI iniciou (local/ram-runner.ps1, o mesmo critério do
+// uso-windows.ps1: PID e data do registro do modo.ps1, só descendentes, nomes exatos). Runner de outro programa não
+// conta, e o working set (que inclui páginas compartilhadas) também não. Sem como atribuir a RAM ao MixAI, 0.
+function ramDoRunner() {
+  if (process.env.MIXAI_RAM_RUNNER_GB !== undefined) return Number(process.env.MIXAI_RAM_RUNNER_GB) * GB;
+  if (process.platform !== 'win32') return 0;
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'ram-runner.ps1')], { encoding: 'utf8', timeout: 20000 });
+    const bytes = Number(String(r.stdout || '').trim());
+    return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  } catch {
+    return 0;
+  }
+}
+// Memória que o próprio mixai-local já ocupa, se o /api/ps o mostra carregado: ela já saiu da memória livre do
+// Windows, então sem este crédito o guarda recusaria toda chamada depois da primeira. O crédito é a RAM medida
+// do processo do modelo, nunca mais que o `size` dele. Qualquer falha ao consultar ou medir vale 0.
+async function memoriaDoModeloCarregado() {
+  try {
+    const r = await fetch(`${SERVIDOR}/api/ps`);
+    if (!r.ok) return 0;
+    const lista = await r.json();
+    const m = Array.isArray(lista && lista.models) && lista.models.find((x) => x.name === MODELO || x.name === `${MODELO}:latest`);
+    if (!m || typeof m.size !== 'number' || m.size <= 0) return 0;
+    return Math.max(0, Math.min(m.size, ramDoRunner()));
+  } catch {
+    return 0;
+  }
 }
 
+// Com o modelo já carregado não há carga nova, mas a RAM livre sozinha não pode passar de um piso: se outro programa
+// esvaziou a máquina, nenhum crédito libera a chamada.
+const PISO_LIVRE_GB = 0.25;
+
+async function memoriaSuficiente() {
+  const livreGB = process.env.MIXAI_MEMORIA_LIVRE_GB !== undefined ? Number(process.env.MIXAI_MEMORIA_LIVRE_GB) : os.freemem() / GB;
+  const minimo = minimoGB();
+  const doModeloGB = livreGB >= PISO_LIVRE_GB ? (await memoriaDoModeloCarregado()) / GB : 0;
+  if (livreGB + doModeloGB >= minimo) return true;
+  console.error(`Modelo local não chamado: memória livre ${livreGB.toFixed(1)} GB (mais ${doModeloGB.toFixed(1)} GB do modelo já carregado), mínimo ${minimo} GB. A tarefa passa para o próximo da escada.`);
+  return false;
+}
 // Carrega o modelo sem rodar tarefa (pedido sem prompt). Devolve null se carregou; senão, o erro.
 async function carregar() {
   try {
@@ -85,12 +119,12 @@ function chamarOllama(tarefa) {
 
 async function principal() {
   const tarefa = fs.readFileSync(0, 'utf8');
-  if (!memoriaSuficiente()) return SAIDA_SEM_MEMORIA;
+  if (!(await memoriaSuficiente())) return SAIDA_SEM_MEMORIA;
 
   let erro = await carregar();
   if (erro && FALTA_DE_ESPACO.test(erro)) {
     await new Promise((ok) => setTimeout(ok, ESPERA_ANTES_DE_REPETIR_MS));
-    if (!memoriaSuficiente()) return SAIDA_SEM_MEMORIA;
+    if (!(await memoriaSuficiente())) return SAIDA_SEM_MEMORIA;
     erro = await carregar();
   }
   if (erro) {
