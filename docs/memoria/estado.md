@@ -33,6 +33,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Local sem resposta (memória/placa) não conta como falha do Qwen: não gasta tentativa nem vira regressão; a tarefa sobe direto | `tests/escada.test.js` |
 | Aplicação de resposta limitada ao escopo: recusa caminhos fora da raiz ou do escopo sem gravar, e lista alterações fora do escopo | `tests/aplicar.test.js` |
 | Mapa do código e da memória (etapa 4): índice de funções por arquivo e linha e do que já foi feito, gerado localmente e no CI, sem arquivos versionados (`node orquestra/mapa.js gerar`, `conferir`, `buscar`; saída em `docs/memoria/mapa.json` e `mapa.md`) | `tests/mapa.test.js` (geração determinística, busca atual e arquivos ignorados) |
+| Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
 
 ## Em andamento
 
