@@ -33,7 +33,7 @@ function ollamaFalso(dir, codigo = 0) {
 // falham por falta de espaço), psStatus (código HTTP do /api/ps), semModelo (/api/ps sem o mixai-local).
 // Anota os pedidos feitos ao /api/generate (carregar e descarregar). Roda o rodar-local.js apontando para ele.
 async function rodar(entrada, env, opcoes = {}) {
-  const { naPlaca = 1, falhasCarga = 0, psStatus = 200, semModelo = false } = opcoes;
+  const { naPlaca = 1, falhasCarga = 0, psStatus = 200, semModelo = false, tamanho = 1000 } = opcoes;
   const pedidos = [];
   const servidor = http.createServer((req, res) => {
     let corpo = "";
@@ -41,7 +41,7 @@ async function rodar(entrada, env, opcoes = {}) {
       if (req.url === "/api/ps") {
         res.statusCode = psStatus;
         if (psStatus !== 200) return res.end(JSON.stringify({ error: "falha" }));
-        const models = semModelo ? [] : [{ name: "mixai-local:latest", size: 1000, size_vram: Math.round(1000 * naPlaca) }];
+        const models = semModelo ? [] : [{ name: "mixai-local:latest", size: tamanho, size_vram: Math.round(tamanho * naPlaca) }];
         return res.end(JSON.stringify({ models }));
       }
       if (req.url === "/api/generate") {
@@ -86,6 +86,30 @@ test("com pouca memória livre o modelo local nem é carregado e a tarefa sobe n
   assert.ok(!fs.existsSync(marca), "o Ollama não pode ser chamado com a memória no limite");
 });
 
+test("modelo já carregado: a memória que ele mesmo ocupa é descontada e a chamada seguinte não é recusada", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5" }, { tamanho: 4 * 1024 ** 3 });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(r.stdout, "TAREFA");
+});
+
+test("sem modelo carregado nada é descontado: memória livre baixa continua recusando", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5" }, { semModelo: true });
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /memória livre/i);
+  assert.deepStrictEqual(r.pedidos, []);
+});
+
+test("falha ao consultar o /api/ps não desconta nada e a memória baixa continua recusando", async () => {
+  const dir = pastaTemporaria();
+  const { comando } = ollamaFalso(dir);
+  const r = await rodar("tarefa", { MIXAI_OLLAMA: comando, MIXAI_MEMORIA_MINIMA_GB: "2", MIXAI_MEMORIA_LIVRE_GB: "0.5" }, { psStatus: 500, tamanho: 4 * 1024 ** 3 });
+  assert.notStrictEqual(r.status, 0);
+  assert.deepStrictEqual(r.pedidos, []);
+});
 test("com memória suficiente o modelo carrega na placa, roda a tarefa e a resposta volta inteira", async () => {
   const dir = pastaTemporaria();
   const { comando, marca } = ollamaFalso(dir);

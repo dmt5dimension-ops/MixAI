@@ -25,14 +25,29 @@ function minimoGB() {
   return JSON.parse(fs.readFileSync(path.join(__dirname, 'protecao.json'), 'utf8')).memoriaLivreMinimaGB;
 }
 
-function memoriaSuficiente() {
-  const livreGB = os.freemem() / GB;
-  const minimo = minimoGB();
-  if (livreGB >= minimo) return true;
-  console.error(`Modelo local não chamado: memória livre ${livreGB.toFixed(1)} GB, mínimo ${minimo} GB. A tarefa passa para o próximo da escada.`);
-  return false;
+// Memória que o próprio mixai-local já ocupa, se ele estiver carregado: ela já saiu da memória livre do Windows,
+// então sem este desconto o guarda recusaria toda chamada depois da primeira (o modelo se bloqueia sozinho).
+// Qualquer falha ao consultar vale 0: sem certeza, não desconta.
+async function memoriaDoModeloCarregado() {
+  try {
+    const r = await fetch(`${SERVIDOR}/api/ps`);
+    if (!r.ok) return 0;
+    const lista = await r.json();
+    const m = Array.isArray(lista && lista.models) && lista.models.find((x) => x.name === MODELO || x.name === `${MODELO}:latest`);
+    return m && typeof m.size === 'number' && m.size > 0 ? m.size : 0;
+  } catch {
+    return 0;
+  }
 }
 
+async function memoriaSuficiente() {
+  const livreGB = process.env.MIXAI_MEMORIA_LIVRE_GB !== undefined ? Number(process.env.MIXAI_MEMORIA_LIVRE_GB) : os.freemem() / GB;
+  const minimo = minimoGB();
+  const doModeloGB = (await memoriaDoModeloCarregado()) / GB;
+  if (livreGB + doModeloGB >= minimo) return true;
+  console.error(`Modelo local não chamado: memória livre ${livreGB.toFixed(1)} GB (mais ${doModeloGB.toFixed(1)} GB do modelo já carregado), mínimo ${minimo} GB. A tarefa passa para o próximo da escada.`);
+  return false;
+}
 // Carrega o modelo sem rodar tarefa (pedido sem prompt). Devolve null se carregou; senão, o erro.
 async function carregar() {
   try {
@@ -85,12 +100,12 @@ function chamarOllama(tarefa) {
 
 async function principal() {
   const tarefa = fs.readFileSync(0, 'utf8');
-  if (!memoriaSuficiente()) return SAIDA_SEM_MEMORIA;
+  if (!(await memoriaSuficiente())) return SAIDA_SEM_MEMORIA;
 
   let erro = await carregar();
   if (erro && FALTA_DE_ESPACO.test(erro)) {
     await new Promise((ok) => setTimeout(ok, ESPERA_ANTES_DE_REPETIR_MS));
-    if (!memoriaSuficiente()) return SAIDA_SEM_MEMORIA;
+    if (!(await memoriaSuficiente())) return SAIDA_SEM_MEMORIA;
     erro = await carregar();
   }
   if (erro) {
