@@ -51,6 +51,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Sombra recusa plano com tarefa sem `verificar` antes de chamar o modelo (não vira erro do Qwen) | `orquestra/sombra.js` | `tests/sombra.test.js` |
 | Medida de regras considera as outras regras que disparam junto e marca "sem medida" quando o agente falha por recurso | `orquestra/medir-regras.js` | `tests/medir-regras.test.js` |
 | Plano da sombra autossuficiente: dados da regex vão dentro do comando `verificar` (planos de sementes diferentes não se atropelam) | `orquestra/sombra-plano/gerar-plano.js`, `orquestra/sombra-plano/confere.js` | `tests/sombra-plano.test.js` |
+| Aluno estático: regra vale só para o pedido inteiro (ancorada, sem responder instrução negada ou com sufixo) e regex roda com prazo (backtracking exponencial é abortado) | `orquestra/estatico.js`, `orquestra/regras-estaticas.json` | `tests/estatico.test.js` |
 
 ## Em andamento
 
