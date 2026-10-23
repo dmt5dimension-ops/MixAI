@@ -2026,7 +2026,7 @@ test("Windows de verdade: SEM o arquivo de liberação o wrapper sai com 124 e n
   const r = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WRAPPER], { env: { ...process.env, MIXAI_COMANDO: `echo x> "${marca}"`, MIXAI_JOB: `Local\\MixAI-sem-liberar-${process.pid}-${Date.now()}`, MIXAI_LIBERAR: path.join(dir, "nunca.liberar"), MIXAI_LIBERAR_ESPERA_S: "2" }, encoding: "utf8", timeout: 120000, windowsHide: true });
   assert.strictEqual(r.status, 124, r.stderr);
   assert.ok(!fs.existsSync(marca), "o comando não rodou");
-  assert.match(r.stderr, /sem liberação do Node/);
+  assert.match(r.stderr, /do Node em 2 s/); // trecho ASCII: o stderr do PowerShell 5.1 não vem em UTF-8
 });
 
 test("o wrapper aceita a espera configurável por MIXAI_LIBERAR_ESPERA_S (padrão 60 s)", () => {
