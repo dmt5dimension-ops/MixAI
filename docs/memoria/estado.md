@@ -48,6 +48,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Verificador de código do treino sem supervisão isolado (árvore conferida, funções embutidas fechadas, processo sem ambiente/rede/arquivo) e trainer compatível com o TRL instalado | `ferramentas/treino-kaggle/geradores.py`, `modelo_unsloth.py` | `ferramentas/treino-kaggle/test_ciclo.py` (via `tests/treino-kaggle.test.js`) |
 | Sombra recusa plano com tarefa sem `verificar` antes de chamar o modelo (não vira erro do Qwen) | `orquestra/sombra.js` | `tests/sombra.test.js` |
 | Medida de regras considera as outras regras que disparam junto e marca "sem medida" quando o agente falha por recurso | `orquestra/medir-regras.js` | `tests/medir-regras.test.js` |
+| Plano da sombra autossuficiente: dados da regex vão dentro do comando `verificar` (planos de sementes diferentes não se atropelam) | `orquestra/sombra-plano/gerar-plano.js`, `orquestra/sombra-plano/confere.js` | `tests/sombra-plano.test.js` |
 
 ## Em andamento
 
