@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { escolherRegras, montarPrompt } = require('./escada.js');
 const { avaliar, lerValidacao } = require('./avaliar.js');
+const { MODELO_PADRAO, regrasDoModelo } = require('./por-modelo.js');
 
 const REGRAS = path.join(__dirname, 'regras-locais.json');
 
@@ -15,9 +16,9 @@ function veredito(sem, com) {
 }
 
 // `agente(prompt)` é injetado (o modelo local ou um falso). Devolve um item por regra.
-async function medirRegras({ regras, exemplos, agente, minimo = 5 }) {
+async function medirRegras({ regras, exemplos, agente, minimo = 5, modelo = MODELO_PADRAO }) {
   const itens = [];
-  for (const regra of regras.filter((r) => r.status === 'confirmada')) {
+  for (const regra of regrasDoModelo(regras, modelo).filter((r) => r.status === 'confirmada')) {
     const dela = exemplos.filter((e) => escolherRegras([regra], e.entrada).length > 0);
     if (dela.length < minimo) {
       itens.push({ id: regra.id, veredito: 'sem exemplos suficientes', exemplos: dela.length, minimo });
