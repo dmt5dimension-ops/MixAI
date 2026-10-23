@@ -1,0 +1,32 @@
+{
+  "aviso": "Regras do aluno estático (sem LLM). Só entra regra confirmada: acertou o exemplo e todos os casos de regressão (node orquestra/estatico.js aprender). As três primeiras são sementes para os tipos do plano da sombra.",
+  "regras": [
+    {
+      "id": "data-para-iso",
+      "quando": "Converta a data (?<d>\\d{2})[/.-](?<m>\\d{2})[/.-](?<a>\\d{4}) \\(dia, mês, ano\\) para o formato ISO",
+      "saida": "{a}-{m}-{d}",
+      "exemplo": { "entrada": "Converta a data 21/10/2026 (dia, mês, ano) para o formato ISO AAAA-MM-DD.", "saida": "2026-10-21" },
+      "status": "confirmada",
+      "origem": "semente",
+      "criadaEm": "2026-10-23T00:00:00.000Z"
+    },
+    {
+      "id": "contar-vogais-do-texto",
+      "quando": "Quantas vogais \\(a, e, i, o, u\\) tem o texto \"(?<t>[^\"]*)\"",
+      "saida": "{t|vogais}",
+      "exemplo": { "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"abcde\"? Responda só com o número.", "saida": "2" },
+      "status": "confirmada",
+      "origem": "semente",
+      "criadaEm": "2026-10-23T00:00:00.000Z"
+    },
+    {
+      "id": "inverter-o-texto",
+      "quando": "Escreva o texto \"(?<t>[^\"]*)\" de trás para frente",
+      "saida": "{t|inverter}",
+      "exemplo": { "entrada": "Escreva o texto \"abc\" de trás para frente. Responda só com o resultado.", "saida": "cba" },
+      "status": "confirmada",
+      "origem": "semente",
+      "criadaEm": "2026-10-23T00:00:00.000Z"
+    }
+  ]
+}
