@@ -44,6 +44,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Treino sem supervisão do Qwen (Kaggle/Colab): gera tarefas conferíveis por máquina (data, regex, função Python), Qwen tenta, treina nos acertos e corrigidos, só promove o modelo se a nota da prova fixa subir, guarda estado e continua na sessão seguinte (`ferramentas/treino-kaggle/`). Só o laço e os verificadores estão provados; o código da GPU (`modelo_unsloth.py`) nunca rodou numa placa | `tests/treino-kaggle.test.js` |
 | Verificador de código do treino sem supervisão isolado (árvore conferida, funções embutidas fechadas, processo sem ambiente/rede/arquivo) e trainer compatível com o TRL instalado | `ferramentas/treino-kaggle/geradores.py`, `modelo_unsloth.py` | `ferramentas/treino-kaggle/test_ciclo.py` (via `tests/treino-kaggle.test.js`) |
 | Verificador de código do Kaggle sem acesso transitivo: módulos permitidos entram como fachada (sem `sys`/outros módulos), sem `operator`/`string`, atributos de quadro de execução barrados | `ferramentas/treino-kaggle/geradores.py` | `ferramentas/treino-kaggle/test_ciclo.py` |
+| Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
 
 ## Em andamento
 
