@@ -98,6 +98,16 @@ function devolucoesPorCI(g, prs) {
   }
   return acoes;
 }
+// Números de PR (`PR #N` em `resultado`) das tarefas em revisão.
+function prsCitados(g) {
+  const numeros = new Set();
+  for (const t of Object.values(g?.tarefas || {})) {
+    if (t.estado !== 'em_revisao') continue;
+    const m = /\bPR\s*#(\d+)/i.exec(String(t.resultado || ''));
+    if (m) numeros.add(Number(m[1]));
+  }
+  return [...numeros];
+}
 // PR que já saiu da lista de abertos: mesclado conclui a tarefa em revisão que o cita; fechado sem mesclar escala (alguém decide).
 function fechamentosDePR(g, fechados) {
   const acoes = [];
@@ -264,9 +274,10 @@ function passo(deps, cfg = configPadrao) {
         return { ...pr, labels: pr.labels.filter((l) => l.name !== rotulo) };
       });
       acoes.push(...devolucoesPorCI(g, prs));
-      if (deps.listarPRsFechados) {
+      const citados = prsCitados(g);
+      if (deps.listarPRsFechados && citados.length) {
         let fechados = null;
-        try { fechados = deps.listarPRsFechados(); } catch { fechados = null; }
+        try { fechados = deps.listarPRsFechados(citados); } catch { fechados = null; }
         if (Array.isArray(fechados)) acoes.push(...fechamentosDePR(g, fechados));
         else deps.log?.('falha ao consultar os PRs fechados no GitHub');
       }
@@ -354,10 +365,17 @@ function listarPRs(cfg, spawn = spawnSync, plataforma = process.platform) {
   if (r.status !== 0) return null;
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
-function listarPRsFechados(cfg, spawn = spawnSync, plataforma = process.platform) {
-  const r = chamarCli('gh', ['pr', 'list', '--repo', cfg.repo, '--state', 'closed', '--limit', '30', '--json', 'number,state'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, spawn, plataforma);
-  if (r.status !== 0) return null;
-  try { return JSON.parse(r.stdout); } catch { return null; }
+// Consulta o estado de cada PR citado por tarefa em revisão (`gh pr view N`), sem depender de janela de PRs recentes:
+// o grafo é persistente e o supervisor pode ficar desligado por muito tempo. PR que não deu para consultar fica de fora;
+// se nenhum deu, devolve null.
+function listarPRsFechados(cfg, numeros = [], spawn = spawnSync, plataforma = process.platform) {
+  const achados = [];
+  for (const n of numeros) {
+    const r = chamarCli('gh', ['pr', 'view', String(n), '--repo', cfg.repo, '--json', 'number,state'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, spawn, plataforma);
+    if (r.status !== 0) continue;
+    try { const pr = JSON.parse(r.stdout); if (pr && Number(pr.number) === Number(n)) achados.push(pr); } catch { /* ignora este PR */ }
+  }
+  return numeros.length && !achados.length ? null : achados;
 }
 function promptDe(a, g) {
   const ids = a.ids?.length ? a.ids : a.id ? [a.id] : [];
@@ -493,7 +511,7 @@ function depsReais(simular, cfg) {
     lerSemCota: () => lerJson(ARQ_SEM_COTA, {}),
     lerCanal: () => { try { return fs.readFileSync(ARQ_CANAL, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; } },
     listarPRs: () => listarPRs(cfg),
-    listarPRsFechados: () => listarPRsFechados(cfg),
+    listarPRsFechados: (numeros) => listarPRsFechados(cfg, numeros),
     removerLabelRevisao: (numero, revisor) => chamarCli('gh', ['pr', 'edit', String(numero), '--repo', cfg.repo, '--remove-label', `revisado-por:${revisor}`], { encoding: 'utf8', timeout: 30000, windowsHide: true }),
     executar: (a, g) => executarReal(a, g, cfg),
     log: logPadrao,
@@ -518,5 +536,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, devolucoesPorCI, fechamentosDePR, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, devolucoesPorCI, prsCitados, fechamentosDePR, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });

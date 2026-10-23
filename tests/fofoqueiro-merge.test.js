@@ -64,13 +64,40 @@ test('passo: falha ao listar PRs fechados não derruba o passo nem conclui nada'
   assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_revisao');
 });
 
-test('listarPRsFechados: usa gh com argumentos fixos e devolve null se o gh falha', () => {
+test('listarPRsFechados: consulta cada PR citado pelo número, mesmo fora dos 30 mais recentes', () => {
   const chamadas = [];
-  const ok = vigia.listarPRsFechados({ repo: 'dmt5dimension-ops/MixAI' }, (cmd, args, o) => { chamadas.push([cmd, args]); return { status: 0, stdout: '[{"number":1,"state":"MERGED"}]' }; }, 'linux');
-  assert.deepEqual(ok, [{ number: 1, state: 'MERGED' }]);
-  assert.equal(chamadas[0][0], 'gh');
-  assert.ok(chamadas[0][1].includes('--state') && chamadas[0][1].includes('closed'));
-  assert.equal(vigia.listarPRsFechados({ repo: 'x/y' }, () => ({ status: 1, stdout: '' }), 'linux'), null);
+  const gh = (cmd, args) => {
+    chamadas.push([cmd, args]);
+    const n = Number(args[2]);
+    return n === 7 ? { status: 1, stdout: '' } : { status: 0, stdout: JSON.stringify({ number: n, state: n === 3 ? 'MERGED' : 'OPEN' }) };
+  };
+  const g = grafoEmRevisao('PR #3');
+  assert.deepEqual(vigia.prsCitados(g), [3]);
+  const ok = vigia.listarPRsFechados({ repo: 'dmt5dimension-ops/MixAI' }, [3, 7, 9], gh, 'linux');
+  assert.deepEqual(ok, [{ number: 3, state: 'MERGED' }, { number: 9, state: 'OPEN' }], 'PR 7 falhou: fica de fora, não derruba os outros');
+  assert.deepEqual(chamadas.map((c) => [c[0], c[1].slice(0, 3)]), [['gh', ['pr', 'view', '3']], ['gh', ['pr', 'view', '7']], ['gh', ['pr', 'view', '9']]]);
+  assert.ok(chamadas.every((c) => !c[1].includes('--limit')), 'sem janela fixa');
+  assert.equal(vigia.listarPRsFechados({ repo: 'x/y' }, [3], () => ({ status: 1, stdout: '' }), 'linux'), null);
+  assert.deepEqual(vigia.listarPRsFechados({ repo: 'x/y' }, [], () => { throw new Error('não chama'); }, 'linux'), []);
+});
+
+test('passo: PR antigo, fora de qualquer janela, ainda conclui a tarefa; sem PR citado não consulta', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-janela-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, grafoEmRevisao('PR #12'));
+  let estado = {};
+  const consultas = [];
+  const deps = {
+    agora: () => AGORA, simular: false, lerGrafo: () => grafo.carregar(arquivo), lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}), listarPRs: () => [], log: () => {},
+    listarPRsFechados: (numeros) => { consultas.push(numeros); return numeros.map((number) => ({ number, state: 'MERGED' })); },
+    executar: (a, gr) => vigia.executarReal(a, gr, CFG, { arquivoGrafo: arquivo, log: () => {}, escreverCanal: () => {} }),
+  };
+  vigia.passo(deps, CFG);
+  assert.deepEqual(consultas, [[12]]);
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'feita');
+  vigia.passo(deps, CFG);
+  assert.equal(consultas.length, 1, 'sem tarefa em revisão com PR: não consulta o GitHub');
 });
 
 test('fechamentosDePR: só lê `PR #N` em `resultado`, não número solto de issue', () => {
