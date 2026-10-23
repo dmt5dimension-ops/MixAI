@@ -797,15 +797,25 @@ function ligarAoGrafo(arquivo, microtarefas, { plataforma = process.platform } =
   const forma = (p) => String(p).replace(/\\/g, '/').replace(/\/+/g, '/').replace(/(^|\/)(\.\/)+/g, '$1');
   const temPontos = (p) => p.split('/').includes('..'); // `..` pode sair da pasta: recusa em vez de resolver
   const caixa = (p) => (plataforma === 'win32' ? p.toLowerCase() : p); // como o aplicar.js: maiúsculas contam fora do Windows
-  const temCuringa = (p) => /[*?[]/.test(p);
-  const casa = (padrao, caminho) => new RegExp(`^${padrao.replace(/[.+^${}()|\\\]\[]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '.*')}$`).test(caminho);
+  const temCuringa = (p) => /[*?]/.test(p);
+  // Mesmo glob da trava do CI (.github/scripts/trava_de_escopo.py): `**/` vale zero ou mais pastas, `**` atravessa, `*` e `?` não.
+  const casa = (padrao, caminho) => {
+    let re = '';
+    for (let i = 0; i < padrao.length;) {
+      if (padrao.startsWith('**/', i)) { re += '(?:.*/)?'; i += 3; } else if (padrao.startsWith('**', i)) { re += '.*'; i += 2; } else {
+        const c = padrao[i++];
+        re += c === '*' ? '[^/]*' : c === '?' ? '[^/]' : c.replace(/[.+^${}()|\\[\]\\]/g, '\\$&');
+      }
+    }
+    return new RegExp(`^${re}$`).test(caminho);
+  };
   const cabe = (p, t) => {
     const [x, y] = [caixa(forma(p)), caixa(forma(t))];
     if (temPontos(x) || temPontos(y)) return false;
     if (x === y) return true;
     if (temCuringa(y)) return !temCuringa(x) && casa(y, x);
     if (!y.endsWith('/')) return false; // arquivo: só ele mesmo
-    const fixo = temCuringa(x) ? x.slice(0, x.search(/[*?[]/)).replace(/[^/]*$/, '') : x; // parte fixa do padrão do plano
+    const fixo = temCuringa(x) ? x.slice(0, x.search(/[*?]/)).replace(/[^/]*$/, '') : x; // parte fixa do padrão do plano
     return fixo.startsWith(y);
   };
   return {
