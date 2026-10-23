@@ -45,6 +45,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Aluno estático da escada, sem LLM (`orquestra/estatico.js`, regras em `orquestra/regras-estaticas.json`): regex + modelo de saída, só regra confirmada (acerta o exemplo e todos os casos, cobre 2+, sem repetição aninhada); sem regra diz que não sabe e a tarefa sobe; entra na sombra como modelo `estatico`. Ainda não ligado à escada nem ao que o modelo grande ensina; o "Model One/Laia" do dono não foi achado no repositório | `tests/estatico.test.js` |
 | Regras e casos por modelo (`orquestra/por-modelo.js`): regra com `modelos` só vale para eles (sem o campo, vale para todos); caso sem `modelo` é do Qwen; `treino.js preparar --modelo` e `medir-regras` filtram por modelo. A escada ainda não grava `modelo` nos casos nem filtra regras por modelo (mexe em `escada.js`) | `tests/por-modelo.test.js` |
 | Regressão para acertos: tarefa em que o aluno acertou vira caso permanente (resposta certa passa, adulterada reprova), 18 casos semente | `orquestra/regressao.js`, `orquestra/regressao/acertos.jsonl` | `tests/regressao-acertos.test.js` |
+| Escada por modelo: `resolver`/`resolverComLoop` aceitam `modelo` (só regras desse aluno, caso e regra nova marcados com ele); sem `modelo` nada muda | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
 
 ## Em andamento
 
