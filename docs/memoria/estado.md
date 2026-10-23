@@ -37,7 +37,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 
 ## Em andamento
 
-- (nada)
+- Ligação do `escada.js lote` com as transições do grafo quando o lote é chamado diretamente (etapa 2, tarefa separada). O supervisor já registra o início e o resultado dos lotes que ele próprio dispara; o `escada.js` independente ainda não registra `iniciar/concluir/falhar` no grafo.
 
 ## Apps a trazer para o sistema (`/integrar-app`)
 
