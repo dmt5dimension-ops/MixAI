@@ -7,7 +7,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const RAIZ = path.resolve(__dirname, "..");
-const { rodarSombra, relatorio, liberados, gravarLiberados, tipoLiberado, lerRegistros, validar } = require(path.join(RAIZ, "orquestra", "sombra.js"));
+const { rodarSombra, relatorio, liberados, liberadosDeTodos, comparar, gravarLiberados, tipoLiberado, lerRegistros, validar, MODELO_PADRAO } = require(path.join(RAIZ, "orquestra", "sombra.js"));
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "mixai-sombra-"));
 const tarefa = (id, tipo = "data") => ({ id, tipo, entrada: `faça ${id}` });
@@ -51,18 +51,56 @@ test("tipoLiberado: tipo ausente, arquivo ausente ou corrompido nunca libera", (
   const dir = tmp();
   try {
     const arq = path.join(dir, "l.json");
-    assert.strictEqual(tipoLiberado("a", arq), false);
-    gravarLiberados(arq, liberados([...regs("a", 20, 0), ...regs("b", 5, 5)]));
-    assert.strictEqual(tipoLiberado("a", arq), true);
-    assert.strictEqual(tipoLiberado("b", arq), false);
-    assert.strictEqual(tipoLiberado("c", arq), false);
+    assert.strictEqual(tipoLiberado("a", MODELO_PADRAO, arq), false);
+    gravarLiberados(arq, liberadosDeTodos([...regs("a", 20, 0), ...regs("b", 5, 5)]));
+    assert.strictEqual(tipoLiberado("a", MODELO_PADRAO, arq), true);
+    assert.strictEqual(tipoLiberado("b", MODELO_PADRAO, arq), false);
+    assert.strictEqual(tipoLiberado("c", MODELO_PADRAO, arq), false);
+    assert.strictEqual(tipoLiberado("a", "outro-modelo", arq), false, "modelo sem dados nunca libera");
     fs.writeFileSync(arq, "{lixo");
-    assert.strictEqual(tipoLiberado("a", arq), false);
+    assert.strictEqual(tipoLiberado("a", MODELO_PADRAO, arq), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+const doModelo = (modelo, lista) => lista.map((r) => ({ ...r, modelo }));
+
+test("cada modelo tem a sua nota e a sua liberação; registro antigo sem modelo é do Qwen", async () => {
+  const dir = tmp();
+  try {
+    const arquivo = path.join(dir, "s.jsonl");
+    const verificar = async (t, saida) => ({ ok: saida === "certo", motivo: "x" });
+    await rodarSombra({ tarefas: [tarefa("a1")], local: async () => "certo", verificar, arquivo });
+    await rodarSombra({ tarefas: [tarefa("a1")], local: async () => "errado", verificar, arquivo, modelo: "gemma3:1b" });
+    const reg = lerRegistros(arquivo);
+    assert.deepStrictEqual(reg.map((r) => [r.modelo, r.acertou]), [[MODELO_PADRAO, true], ["gemma3:1b", false]]);
+    assert.strictEqual(relatorio(reg).data.acertos, 1);
+    assert.strictEqual(relatorio(reg, { modelo: "gemma3:1b" }).data.acertos, 0);
+    assert.deepStrictEqual(relatorio([{ tipo: "t", acertou: true }]).t.acertos, 1, "sem campo modelo conta para o Qwen");
+    await assert.rejects(rodarSombra({ tarefas: [tarefa("x")], local: async () => "", verificar, arquivo, modelo: " " }), /modelo sem nome/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a tabela de liberados é por modelo: um modelo bom não libera o outro", () => {
+  const reg = [...doModelo("qwen", regs("data", 20, 0)), ...doModelo("gemma", regs("data", 10, 10))];
+  const tabela = liberadosDeTodos(reg);
+  assert.strictEqual(tabela.qwen.data.liberado, true);
+  assert.strictEqual(tabela.gemma.data.liberado, false);
+  assert.deepStrictEqual(Object.keys(tabela).sort(), ["gemma", "qwen"]);
+});
+
+test("comparar mostra tipo x modelo", () => {
+  const reg = [...doModelo("qwen", regs("data", 9, 1)), ...doModelo("gemma", regs("data", 5, 5)), ...doModelo("gemma", regs("regex", 3, 0))];
+  const c = comparar(reg);
+  assert.strictEqual(c.data.qwen.taxa, 0.9);
+  assert.strictEqual(c.data.gemma.taxa, 0.5);
+  assert.deepStrictEqual(Object.keys(c.regex), ["gemma"], "modelo sem tentativas do tipo não aparece");
 });
 
 test("a linha de comando recusa comando desconhecido", () => {
   const r = spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "sombra.js"), "xyz"], { encoding: "utf8" });
   assert.strictEqual(r.status, 1);
   assert.match(r.stderr, /Uso: node orquestra\/sombra\.js/);
+  const outro = spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "sombra.js"), "rodar", "plano-que-nao-existe.json", "--modelo", "gemma3:1b"], { encoding: "utf8" });
+  assert.strictEqual(outro.status, 1);
+  assert.match(outro.stderr, /precisa de --comando/);
 });
