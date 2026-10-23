@@ -134,3 +134,52 @@ test("a ponte em Python existe, faz a pergunta certa e usa o checkpoint multilí
   assert.match(py, /"type": "noul"/);
   assert.match(py, /probabilidade/);
 });
+
+// Revisão do Codex no PR #52: Number(x) || padrão trocava zero e lixo pelos padrões sem avisar.
+function rodarCli(extras) {
+  const dir = pastaTemp();
+  const casos = path.join(dir, "casos.jsonl");
+  jsonl(casos, Array.from({ length: 50 }, (_, i) => ({ entrada: `tarefa ${i}`, resolvidoPor: i % 2 ? "local" : "codex" })));
+  const falso = path.join(dir, "falso.js");
+  fs.writeFileSync(
+    falso,
+    `const rl = require('readline').createInterface({ input: process.stdin });
+rl.on('line', (l) => { const c = JSON.parse(l); console.log(JSON.stringify({ id: c.id, probabilidade: 0.5 })); });`
+  );
+  const saida = path.join(dir, "relatorio.json");
+  const r = spawnSync(process.execPath, [path.join(raiz, "orquestra", "laya-teste.js"), "medir", casos, "--modelo", `node "${falso}"`, "--saida", saida, ...extras], { encoding: "utf8" });
+  return { r, relatorio: () => JSON.parse(fs.readFileSync(saida, "utf8")) };
+}
+
+test("CLI: --limite e --limiar explícitos valem de verdade, inclusive o limiar zero", () => {
+  const { r, relatorio } = rodarCli(["--limite", "7", "--limiar", "0"]);
+  assert.strictEqual(r.status, 0, r.stderr);
+  const rel = relatorio();
+  assert.strictEqual(rel.total, 7);
+  assert.strictEqual(rel.limiar, 0);
+  assert.strictEqual(rel.matriz.localComoGrande + rel.matriz.grandeComoGrande, 0); // limiar 0: tudo vira "local"
+  const um = rodarCli(["--limiar", "1"]);
+  assert.strictEqual(um.r.status, 0, um.r.stderr);
+  assert.strictEqual(um.relatorio().limiar, 1);
+  assert.strictEqual(um.relatorio().total, 50); // sem --limite usa o padrão de 50
+});
+
+test("CLI: --limite 0 não roda nada e explica; não vira 50 casos", () => {
+  const { r } = rodarCli(["--limite", "0"]);
+  assert.notStrictEqual(r.status, 0);
+  assert.match(r.stderr, /limite 0/i);
+});
+
+test("CLI: valores inválidos dão erro claro em vez de virar o padrão", () => {
+  for (const extras of [["--limite", "abc"], ["--limite", "-3"], ["--limite", "2.5"], ["--limiar", "abc"], ["--limiar", "1.5"], ["--limiar", "-0.1"], ["--limite"], ["--limiar"]]) {
+    const { r } = rodarCli(extras);
+    assert.strictEqual(r.status, 2, `${extras.join(" ")}: ${r.stderr}`);
+    assert.match(r.stderr, /--limite|--limiar/);
+  }
+});
+
+test("carregarCasos com limite 0 devolve lista vazia", () => {
+  const arq = path.join(pastaTemp(), "casos.jsonl");
+  jsonl(arq, [{ entrada: "a", resolvidoPor: "local" }]);
+  assert.strictEqual(laya.carregarCasos(arq, 0).length, 0);
+});

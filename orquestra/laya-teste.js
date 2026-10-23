@@ -20,13 +20,14 @@ function rotular(caso) {
 
 function carregarCasos(arquivo, limite) {
   const casos = [];
+  if (limite === 0) return casos;
   for (const linha of fs.readFileSync(arquivo, 'utf8').split(/\r?\n/)) {
     if (!linha.trim()) continue;
     let c;
     try { c = JSON.parse(linha); } catch { continue; }
     if (!c || typeof c.entrada !== 'string' || !c.entrada.trim()) continue;
     casos.push({ entrada: c.entrada, esperado: rotular(c) });
-    if (limite && casos.length >= limite) break;
+    if (limite !== undefined && casos.length >= limite) break;
   }
   return casos;
 }
@@ -111,6 +112,15 @@ function opcao(args, nome) {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
+// Número explícito vale como está (zero inclusive); ausente usa o padrão; lixo é erro, nunca o padrão.
+function numeroDaOpcao(args, nome, padrao, valido, descricao) {
+  if (!args.includes(nome)) return padrao;
+  const texto = opcao(args, nome);
+  const n = typeof texto === 'string' && texto.trim() !== '' && !texto.startsWith('--') ? Number(texto) : NaN;
+  if (!Number.isFinite(n) || !valido(n)) throw new Error(`${nome} precisa ser ${descricao} (recebi ${texto === undefined ? 'nada' : `"${texto}"`}).`);
+  return n;
+}
+
 async function principal(args) {
   if (args[0] !== 'medir') {
     console.error('Uso: node orquestra/laya-teste.js medir [casos.jsonl] --modelo "<comando>" [--limite 50] [--limiar 0.5] [--saida relatorio.json]');
@@ -120,10 +130,17 @@ async function principal(args) {
   const modelo = opcao(args, '--modelo');
   if (!modelo) { console.error('Falta --modelo "<comando>", por exemplo "python orquestra/laya-ponte.py".'); return 2; }
   if (!fs.existsSync(arquivo)) { console.error(`Não encontrei o arquivo de casos: ${arquivo}`); return 2; }
-  const casos = carregarCasos(arquivo, Number(opcao(args, '--limite')) || LIMITE_PADRAO);
+  let limite, limiar;
+  try {
+    limite = numeroDaOpcao(args, '--limite', LIMITE_PADRAO, Number.isInteger, 'um número inteiro de 0 para cima');
+    if (limite < 0) throw new Error(`--limite precisa ser um número inteiro de 0 para cima (recebi "${opcao(args, '--limite')}").`);
+    limiar = numeroDaOpcao(args, '--limiar', LIMIAR_PADRAO, (n) => n >= 0 && n <= 1, 'um número de 0 a 1');
+  } catch (e) { console.error(e.message); return 2; }
+  if (limite === 0) { console.error('Com --limite 0 não sobra nenhum caso para medir; use 1 ou mais.'); return 2; }
+  const casos = carregarCasos(arquivo, limite);
   if (!casos.length) { console.error('O arquivo não tem nenhum caso com "entrada".'); return 2; }
   const probs = await chamarModelo(modelo, casos);
-  const r = medir(casos, probs, Number(opcao(args, '--limiar')) || LIMIAR_PADRAO);
+  const r = medir(casos, probs, limiar);
   console.log(textoRelatorio(r));
   const saida = opcao(args, '--saida');
   if (saida) fs.writeFileSync(saida, JSON.stringify(r, null, 2) + '\n');
