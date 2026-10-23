@@ -44,6 +44,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Modo sombra do Qwen (fase 1) e tabela de tipos liberados (fase 2): o Qwen tenta tarefas verificáveis sem que a resposta valha, registra acerto por tipo (sem resposta não conta contra ele) e só libera o tipo com 20 tentativas e 90% de acerto nas últimas (`node orquestra/sombra.js rodar|relatorio|liberar`; `tipoLiberado()` para a escada consultar). A escada ainda não consulta a tabela | `tests/sombra.test.js` |
 | Notebook do Colab com TRL novo ou antigo (montar_trainer) e treino só "pronto" com pelo menos 1 exemplo de validação | `ferramentas/treino-colab/treino-qwen.ipynb`, `orquestra/treino.js` | `tests/treino-colab.test.js` |
 | Verificador de código do treino sem supervisão isolado (árvore conferida, funções embutidas fechadas, processo sem ambiente/rede/arquivo) e trainer compatível com o TRL instalado | `ferramentas/treino-kaggle/geradores.py`, `modelo_unsloth.py` | `ferramentas/treino-kaggle/test_ciclo.py` (via `tests/treino-kaggle.test.js`) |
+| Sombra recusa plano com tarefa sem `verificar` antes de chamar o modelo (não vira erro do Qwen) | `orquestra/sombra.js` | `tests/sombra.test.js` |
 
 ## Em andamento
 
