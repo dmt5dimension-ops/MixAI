@@ -55,6 +55,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Medida de regras considera as outras regras que disparam junto e marca "sem medida" quando o agente falha por recurso | `orquestra/medir-regras.js` | `tests/medir-regras.test.js` |
 | Plano da sombra autossuficiente: dados da regex vão dentro do comando `verificar` (planos de sementes diferentes não se atropelam) | `orquestra/sombra-plano/gerar-plano.js`, `orquestra/sombra-plano/confere.js` | `tests/sombra-plano.test.js` |
 | Regressão de acertos deduplica pela identidade do caso (tipo, pedido, verificador, resposta), não pelo id: planos de sementes diferentes entram | `orquestra/regressao.js` | `tests/regressao-acertos.test.js` |
+| Escada sem `modelo` = Qwen padrão: regra exclusiva de outro aluno nunca entra no prompt dele (resolver e resolverComLoop) | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
 
 ## Em andamento
 

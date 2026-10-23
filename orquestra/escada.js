@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync, execFile, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
-const { regrasDoModelo } = require('./por-modelo.js');
+const { regrasDoModelo, MODELO_PADRAO } = require('./por-modelo.js');
 
 const pasta = __dirname;
 const ARQUIVOS = {
@@ -46,9 +46,10 @@ function salvarRegra(arquivo, regra) {
   fs.writeFileSync(arquivo, JSON.stringify({ aviso, regras }, null, 2) + '\n');
 }
 
-// Sem `modelo`, todas as regras valem (comportamento de antes); com ele, só as que valem para esse aluno.
-function regrasParaModelo(regras, modelo) {
-  return modelo ? regrasDoModelo(regras, modelo) : regras;
+// Sem `modelo` o aluno é o Qwen padrão (mixai-local), como em todos os registros antigos: regra ensinada só a outro aluno
+// (`modelos: [...]` sem o mixai-local) nunca entra no prompt dele. Regra sem o campo `modelos` continua valendo para todos.
+function regrasParaModelo(regras, modelo = MODELO_PADRAO) {
+  return regrasDoModelo(regras, modelo);
 }
 
 function escolherRegras(regras, entrada) {

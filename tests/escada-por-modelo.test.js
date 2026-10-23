@@ -23,12 +23,25 @@ test('escada com modelo só aplica as regras que valem para ele e grava o modelo
   assert.strictEqual(lerCasos(arquivos.casos)[0].modelo, 'mixai-local');
 });
 
-test('escada sem modelo mantém o comportamento de antes (todas as regras, caso sem campo modelo)', async () => {
+test('escada sem modelo trata o aluno como o Qwen padrão: não usa regra exclusiva de outro aluno; caso sem campo modelo', async () => {
   const arquivos = pasta();
-  const agentes = { local: async () => 'ok', superiores: [] };
+  const prompts = [];
+  const agentes = { local: async (p) => { prompts.push(p); return 'ok'; }, superiores: [] };
   const r = await resolver({ entrada: 'converta a data', cabeNoLocal: true, verificar: async () => ({ ok: true }), agentes, arquivos });
-  assert.strictEqual(r.regrasUsadas.length, 3);
+  assert.deepStrictEqual(r.regrasUsadas.sort(), ['geral', 'so-qwen']);
+  assert.ok(!prompts[0].includes('regra so-outro'), 'regra de outro aluno vazou para o Qwen padrão');
   assert.strictEqual('modelo' in lerCasos(arquivos.casos)[0], false);
+});
+
+test('o lote real (resolverComLoop) sem modelo também não vaza regra de outro aluno', async () => {
+  const arquivos = pasta();
+  const prompts = [];
+  const agentes = { local: async (p) => { prompts.push(p); return 'ok'; }, superiores: [{ nome: 'claude', chamar: async () => 'ok' }] };
+  const { resolverComLoop } = require('../orquestra/escada.js');
+  const r = await resolverComLoop({ entrada: 'converta a data', verificar: async () => ({ ok: true }), agentes, arquivos });
+  assert.ok(r.ok);
+  assert.ok(prompts.length > 0 && prompts.every((p) => !p.includes('regra so-outro')));
+  assert.ok(prompts.every((p) => p.includes('regra geral')));
 });
 
 test('regra aprendida para um modelo nasce limitada a ele', async () => {
