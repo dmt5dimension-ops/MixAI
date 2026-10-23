@@ -791,7 +791,17 @@ function ligarAoGrafo(arquivo, microtarefas) {
   const grafoApi = require('./grafo.js');
   const ids = (g) => microtarefas.map((m) => m.id).filter((id) => Object.hasOwn(g.tarefas, id));
   // O escopo que o lote usa é o do plano: precisa caber no escopo da tarefa no grafo, senão a trava de escopo do grafo é contornada.
-  const cabe = (p, t) => { const [x, y] = [grafoApi.normaliza(p), grafoApi.normaliza(t)]; return y === '' || x === y || x.startsWith(`${y}/`); };
+  // Sem alargar curinga (normaliza() reduziria `t/*.js` a `t`): com curinga na tarefa, o plano só passa se o padrão for
+  // idêntico ou se o caminho (sem curinga) casar com ele (`*` e `?` não atravessam pasta). Sem curinga, vale pasta ou arquivo abaixo.
+  const forma = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '').toLowerCase();
+  const temCuringa = (p) => /[*?[]/.test(p);
+  const casa = (padrao, caminho) => new RegExp(`^${padrao.replace(/[.+^${}()|\\\]]/g, '\\$&').replace(/\[/g, '\\[').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '.*')}$`).test(caminho);
+  const cabe = (p, t) => {
+    if (temCuringa(t)) { const [x, y] = [forma(p), forma(t)]; return x === y || (!temCuringa(x) && casa(y, x)); }
+    if (temCuringa(p)) { const y = grafoApi.normaliza(t); const x = forma(p).replace(/[*?[].*$/, '').replace(/\/?[^/]*$/, ''); return y === '' || x === y || x.startsWith(`${y}/`); }
+    const [x, y] = [grafoApi.normaliza(p), grafoApi.normaliza(t)];
+    return y === '' || x === y || x.startsWith(`${y}/`);
+  };
   return {
     iniciar() {
       validarPlano(microtarefas); // antes de qualquer gravação: plano inválido não pode deixar tarefa presa em_andamento

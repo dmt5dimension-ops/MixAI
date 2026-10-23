@@ -89,3 +89,34 @@ test("ligarAoGrafo: escopo do plano fora do escopo da tarefa no grafo é recusad
   escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/x.js"] })]).iniciar();
   assert.equal(estado(arq, "a"), "em_andamento");
 });
+
+test("ligarAoGrafo: curinga do grafo não é alargado; plano só passa se o arquivo casa com o padrão", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-glob-"));
+  const arq = path.join(dir, "grafo.json");
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/*.js"] }, AGORA));
+  const tenta = (escopo) => escada.ligarAoGrafo(arq, [planoDe({ escopo })]).iniciar();
+  assert.throws(() => tenta(["t/segredo.md"]), /fora do escopo/);
+  assert.throws(() => tenta(["t/"]), /fora do escopo/);
+  assert.throws(() => tenta(["t/*"]), /fora do escopo/, "padrão mais largo que o da tarefa");
+  assert.throws(() => tenta(["t/sub/x.js"]), /fora do escopo/, "* não atravessa pasta");
+  assert.equal(estado(arq, "a"), "pendente");
+  tenta(["t/ok.js"]);
+  assert.equal(estado(arq, "a"), "em_andamento");
+});
+
+test("ligarAoGrafo: padrão igual ao da tarefa passa", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-glob2-"));
+  const arq = path.join(dir, "grafo.json");
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/*.js"] }, AGORA));
+  escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/*.js"] })]).iniciar();
+  assert.equal(estado(arq, "a"), "em_andamento");
+});
+
+test("ligarAoGrafo: plano com curinga dentro de pasta da tarefa passa; curinga que sai da pasta, não", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-glob3-"));
+  const arq = path.join(dir, "grafo.json");
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/a/"] }, AGORA));
+  assert.throws(() => escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/*.js"] })]).iniciar(), /fora do escopo/);
+  escada.ligarAoGrafo(arq, [planoDe({ escopo: ["t/a/*.js"] })]).iniciar();
+  assert.equal(estado(arq, "a"), "em_andamento");
+});
