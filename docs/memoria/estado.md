@@ -38,6 +38,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Treino sem supervisão do Qwen (Kaggle/Colab): gera tarefas conferíveis por máquina (data, regex, função Python), Qwen tenta, treina nos acertos e corrigidos, só promove o modelo se a nota da prova fixa subir, guarda estado e continua na sessão seguinte (`ferramentas/treino-kaggle/`). Só o laço e os verificadores estão provados; o código da GPU (`modelo_unsloth.py`) nunca rodou numa placa | `tests/treino-kaggle.test.js` |
 | Modo sombra do Qwen (fase 1) e tabela de tipos liberados (fase 2): o Qwen tenta tarefas verificáveis sem que a resposta valha, registra acerto por tipo (sem resposta não conta contra ele) e só libera o tipo com 20 tentativas e 90% de acerto nas últimas (`node orquestra/sombra.js rodar|relatorio|liberar`; `tipoLiberado()` para a escada consultar). A escada ainda não consulta a tabela | `tests/sombra.test.js` |
 | Medida das regras do Qwen com e sem (fase 3): para cada regra confirmada, compara o acerto sem a regra no prompt e com ela, só nos exemplos em que ela dispararia; diz ajuda, neutra ou piora (`node orquestra/medir-regras.js rodar validacao.jsonl`, só no PC) | `tests/medir-regras.test.js` |
+| Plano de tarefas da fase 0/1 do Qwen: gerador determinístico de tarefas conferíveis por máquina (data ISO, contar vogais, inverter texto, regex) com verificador próprio (`node orquestra/sombra-plano/gerar-plano.js 30 > plano.json`, depois `sombra.js rodar plano.json`); a resposta de referência não vai ao Qwen | `tests/sombra-plano.test.js` |
 
 ## Em andamento
 
