@@ -156,3 +156,18 @@ test("ligarAoGrafo: `..` no escopo do plano não escapa da pasta da tarefa", () 
   escada.ligarAoGrafo(arq, [planoDe({ escopo: ["./t/a//x.js", "t/a/./y.js"] })]).iniciar(); // `.` e barras repetidas são só forma
   assert.equal(estado(arq, "a"), "em_andamento");
 });
+
+test("ligarAoGrafo: `**/` casa zero ou mais pastas, como a trava do CI; os escapes continuam recusados", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "escada-grafo-estrela2-"));
+  const arq = path.join(dir, "grafo.json");
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/**/*.js"] }, AGORA));
+  const tenta = (e) => escada.ligarAoGrafo(arq, [planoDe({ escopo: [e] })], { plataforma: "linux" }).iniciar();
+  for (const fora of ["t/ok.md", "t/sub/ok.md", "u/ok.js", "t/../ok.js", "t/sub/../../ok.js"]) assert.throws(() => tenta(fora), /fora do escopo/, fora);
+  assert.equal(estado(arq, "a"), "pendente");
+  tenta("t/ok.js"); // zero subpastas
+  assert.equal(estado(arq, "a"), "em_andamento");
+  const arq2 = path.join(dir, "g2.json");
+  grafo.salvar(arq2, grafo.adicionar(grafo.novo(), { id: "a", titulo: "A", agente: "local", escopo: ["t/**/*.js"] }, AGORA));
+  escada.ligarAoGrafo(arq2, [planoDe({ escopo: ["t/sub/ok.js", "t/a/b/c.js"] })], { plataforma: "linux" }).iniciar();
+  assert.equal(estado(arq2, "a"), "em_andamento");
+});
