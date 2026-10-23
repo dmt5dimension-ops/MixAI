@@ -141,3 +141,155 @@ test('CLI --simular --uma-vez lê um grafo real sem executar comandos', () => {
   assert.match(r.stdout, /acordar/);
   assert.equal(fs.existsSync(path.join(dir, 'fofoqueiro-estado.json')), false);
 });
+
+test('grafo, canal e PR pedindo o mesmo agente geram um disparo por passo', () => {
+  const g = criar(tarefa('a', 'codex'));
+  let estado = {}, chamadas = 0;
+  const a = vigia.passo({
+    agora: () => AGORA, lerGrafo: () => g, lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    lerCanal: () => '### 2026-10-23 — Claude → Codex (pedido)\nFaça a tarefa.\n',
+    listarPRs: () => [{ number: 29, headRefOid: 'a1234567', labels: [{ name: 'feito-por:claude' }], statusCheckRollup: [] }],
+    executar: () => { chamadas++; }, simular: false,
+  }, { ...CFG, maxDisparosPorHora: 1 });
+  assert.equal(a.filter((x) => x.tipo === 'acordar' && x.agente === 'codex').length, 1);
+  assert.equal(chamadas, 1);
+  assert.equal(estado.disparos.codex.length, 1);
+});
+
+test('simulação mostra só as ações que caberiam no mesmo passo', () => {
+  const a = vigia.passo({
+    agora: () => AGORA, lerGrafo: () => criar(tarefa('a', 'codex')),
+    lerEstado: () => ({}), lerSemCota: () => ({}),
+    lerCanal: () => '### 2026-10-23 — Claude → Codex (pedido)\nFaça a tarefa.\n',
+    executar: () => { throw new Error('não pode executar'); }, simular: true,
+  }, CFG);
+  assert.equal(a.filter((x) => x.tipo === 'acordar' && x.agente === 'codex').length, 1);
+});
+
+test('lote local inicia e encerra tarefa no grafo; não roda outra vez no ciclo seguinte', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-local-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('q', 'local')));
+  let chamadas = 0;
+  const acao = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(acao, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarEscada: () => { chamadas++; return { status: 0 }; }, log: () => {} });
+  assert.equal(chamadas, 1);
+  assert.equal(grafo.carregar(arquivo).tarefas.q.estado, 'feita');
+  assert.deepEqual(vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG), []);
+});
+
+test('passo reconsulta o grafo e não cobra tarefa concluída durante outra ação', () => {
+  const g = criar(tarefa('a', 'codex'), tarefa('b', 'claude'));
+  for (const t of Object.values(g.tarefas)) { t.estado = 'em_andamento'; t.atualizado = new Date(AGORA.getTime() - 31 * 60000).toISOString(); }
+  let estado = {}, chamadas = [];
+  vigia.passo({
+    agora: () => AGORA, lerGrafo: () => g, lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    executar: (a) => { chamadas.push(a.id); if (a.id === 'a') g.tarefas.b.estado = 'feita'; }, simular: false,
+  }, CFG);
+  assert.deepEqual(chamadas, ['a']);
+});
+
+test('saída zero de agente tira tarefa do estado em_andamento', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-ok-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: 0, limite: false }), log: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_revisao');
+});
+
+test('grafo inválido não repete escalada dentro do prazo', () => {
+  let estado = {}, chamadas = 0;
+  const deps = {
+    agora: () => AGORA, lerGrafo: () => ({ versao: 0 }), lerEstado: () => estado,
+    salvarEstado: (x) => { estado = x; }, lerSemCota: () => ({}),
+    executar: () => { chamadas++; }, simular: false,
+  };
+  vigia.passo(deps, CFG);
+  vigia.passo(deps, CFG);
+  assert.equal(chamadas, 1);
+});
+
+test('simulação não consulta GitHub nem executa agente', () => {
+  const a = vigia.passo({
+    agora: () => AGORA, lerGrafo: () => criar(tarefa('a')), lerEstado: () => ({}), lerSemCota: () => ({}),
+    listarPRs: () => { throw new Error('gh foi chamado'); },
+    executar: () => { throw new Error('agente foi chamado'); }, simular: true,
+  }, CFG);
+  assert.equal(a[0].tipo, 'acordar');
+});
+
+test('mensagem posterior do supervisor não encobre pedido do Claude sem resposta', () => {
+  const canal = [
+    '### 2026-10-23 — Claude → Codex (corrigir)\nCorrija o PR.\n',
+    '### 2026-10-23 — Fofoqueiro → Claude (escalada)\nAviso.\n',
+  ].join('\n');
+  assert.equal(vigia.pendenciasDoCanal(canal).some((x) => x.agente === 'codex'), true);
+});
+
+test('trava antiga de PID reutilizado não bloqueia nova instância', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-pid-'));
+  fs.writeFileSync(path.join(dir, 'fofoqueiro.trava.00000001'), `${process.pid}:inicio-antigo:token`);
+  const t = vigia.pegarTrava(dir, { inicioDe: () => 'inicio-atual' });
+  try { assert.equal(t.ok, true); } finally { t.soltar?.(); }
+});
+
+test('se falta de cota não foi registrada, tarefa não volta para pendente', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-cota-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  let avisos = 0;
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, {
+    arquivoGrafo: arquivo, chamarAgente: () => ({ status: 1, limite: true }),
+    marcarSemCota: () => ({ status: 1 }), escreverCanal: () => { avisos++; }, log: () => {},
+  });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_andamento');
+  assert.equal(avisos, 1);
+});
+
+test('erro de leitura com mensagem sensível não vai para canal', () => {
+  let motivo;
+  vigia.passo({
+    agora: () => AGORA, lerGrafo: () => { throw new Error('marcador-confidencial-123'); },
+    lerEstado: () => ({}), salvarEstado: () => {}, lerSemCota: () => ({}),
+    executar: (a) => { motivo = a.motivo; }, simular: false,
+  }, CFG);
+  assert.doesNotMatch(motivo, /marcador-confidencial-123/);
+});
+
+test('detalhes de grafo inválido não são copiados ao canal', () => {
+  const g = criar(tarefa('a'));
+  g.tarefas.a.depende = ['marcador-confidencial-123'];
+  const a = vigia.decidir(g, {}, AGORA, CFG)[0];
+  assert.equal(a.tipo, 'escalar');
+  assert.doesNotMatch(a.motivo, /marcador-confidencial-123/);
+});
+
+test('dois lotes locais prontos respeitam o limite de um disparo por hora', () => {
+  const g = criar(tarefa('a', 'local'), tarefa('b', 'local'));
+  const a = vigia.decidir(g, {}, AGORA, { ...CFG, maxDisparosPorHora: 1 });
+  assert.equal(a.filter((x) => x.tipo === 'escada').length, 1);
+  const estado = vigia.registrar({}, a.find((x) => x.tipo === 'escada'), AGORA);
+  assert.equal(estado.disparos.local.length, 1);
+});
+
+test('morte incerta do lote não devolve tarefa local à fila', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-incerto-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('q', 'local')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarEscada: () => ({ status: null, error: { code: 'ETIMEDOUT' } }), log: () => {}, escreverCanal: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.q.estado, 'em_andamento');
+});
+
+test('morte incerta de agente pago também mantém tarefa em andamento', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-cli-incerto-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false }), log: () => {}, escreverCanal: () => {} });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_andamento');
+});

@@ -49,10 +49,17 @@ function ultimaMensagem(texto) {
   return null;
 }
 function pendenciasDoCanal(texto) {
-  const m = ultimaMensagem(texto);
-  return m && m.de && m.para && m.de !== m.para
-    ? [{ tipo: 'acordar', agente: m.para, motivo: `Nova mensagem no canal: ${m.titulo}`, ids: [], chave: m.chave }]
-    : [];
+  const partes = String(texto).split(/^(?=### )/m).filter((p) => p.startsWith('### '));
+  const pendentes = [];
+  for (const p of partes) {
+    const m = ultimaMensagem(p);
+    if (!m?.de || !m.para || m.de === m.para) continue;
+    for (let i = pendentes.length - 1; i >= 0; i--) {
+      if (pendentes[i].de === m.para && pendentes[i].para === m.de) pendentes.splice(i, 1);
+    }
+    pendentes.push(m);
+  }
+  return pendentes.map((m) => ({ tipo: 'acordar', agente: m.para, motivo: `Nova mensagem no canal: ${m.titulo}`, ids: [], chave: m.chave }));
 }
 function pendenciasDosPRs(prs) {
   const acoes = [];
@@ -85,7 +92,7 @@ function decidir(g, estado = {}, agora = new Date(), cfg = {}) {
     || Object.entries(tarefas).some(([id, x]) => !x || typeof x !== 'object' || Array.isArray(x) || x.id !== id
       || !Array.isArray(x.depende) || !Array.isArray(x.escopo) || !['pendente', 'em_andamento', 'em_revisao', 'feita', 'falhou'].includes(x.estado));
   const erros = formatoRuim ? ['formato inválido'] : grafoApi.validar(g);
-  if (erros.length) return [{ tipo: 'escalar', id: null, motivo: `grafo inválido: ${erros.join('; ')}`, chave: `grafo:invalido:${hash(erros.join(';'))}` }];
+  if (erros.length) return [{ tipo: 'escalar', id: null, motivo: 'grafo inválido; confira o arquivo antes de continuar', chave: `grafo:invalido:${hash(erros.join(';'))}` }];
   const saida = [];
   const usadas = Object.values(tarefas).filter((x) => x.estado === 'em_andamento');
   const visto = estado.visto || {};
@@ -97,7 +104,7 @@ function decidir(g, estado = {}, agora = new Date(), cfg = {}) {
   const podeDisparar = (a) => {
     if (semCota[a] && ms(semCota[a]) > t) return 'sem cota';
     const recentes = (disparos[a] || []).filter((x) => t - ms(x) < 3600000 && t >= ms(x));
-    if (recentes.length + saida.filter((x) => (x.tipo === 'acordar' || x.tipo === 'cobrar') && x.agente === a).length >= limite) return 'limite por hora';
+    if (recentes.length + saida.filter((x) => ['acordar', 'cobrar', 'escada'].includes(x.tipo) && x.agente === a).length >= limite) return 'limite por hora';
     return null;
   };
   const adicionar = (acao) => { if (!jaVisto(acao.chave)) saida.push(acao); };
@@ -106,7 +113,11 @@ function decidir(g, estado = {}, agora = new Date(), cfg = {}) {
     if (usadas.some((u) => conflita(x, u))) continue; // o grafo só valida os dois já em andamento; não abrir conflito novo
     if (x.agente === 'local' || /^qwen:/.test(x.agente || '')) {
       if (!x.verificar) adicionar({ tipo: 'escalar', id: x.id, motivo: 'tarefa local sem verificador', chave: `verificar:${x.id}` });
-      else { adicionar({ tipo: 'escada', ids: [x.id], motivo: `Tarefa ${x.id} pronta para a escada`, chave: `escada:${x.id}` }); usadas.push(x); }
+      else {
+        const impedimento = podeDisparar('local');
+        if (impedimento) adicionar({ tipo: 'registrar', id: x.id, motivo: `local ${impedimento}; tarefa adiada`, chave: `adiar:${x.id}:${impedimento}` });
+        else { adicionar({ tipo: 'escada', agente: 'local', ids: [x.id], motivo: `Tarefa ${x.id} pronta para a escada`, chave: `escada:${x.id}` }); usadas.push(x); }
+      }
     } else if (AGENTES.includes(x.agente)) {
       const chave = `acordar:${x.id}`;
       const impedimento = podeDisparar(x.agente);
@@ -135,7 +146,7 @@ function registrar(estado, acao, agora = new Date()) {
   const chaves = Object.keys(visto).sort((a, b) => ms(visto[a]) - ms(visto[b]));
   for (const k of chaves.slice(0, Math.max(0, chaves.length - 200))) delete visto[k];
   const disparos = { ...(estado.disparos || {}) };
-  if ((acao.tipo === 'acordar' || acao.tipo === 'cobrar') && AGENTES.includes(acao.agente)) {
+  if (['acordar', 'cobrar', 'escada'].includes(acao.tipo) && [...AGENTES, 'local'].includes(acao.agente)) {
     disparos[acao.agente] = [...(disparos[acao.agente] || []).filter((x) => ms(x) > ms(agora) - 3600000), quando];
   }
   return { ...estado, visto, disparos };
@@ -157,46 +168,85 @@ function passo(deps, cfg = configPadrao) {
   const agora = deps.agora();
   let estado = deps.lerEstado();
   const c = { ...configuracao(cfg), semCota: deps.lerSemCota() };
+  const noPrazo = (chave) => Number.isFinite(ms(estado.visto?.[chave])) && ms(agora) - ms(estado.visto[chave]) < c.esperaMinimaMinutos * 60000;
+  const escalarErro = (a, grafoAtual = null) => {
+    if (noPrazo(a.chave)) return [];
+    if (!deps.simular) {
+      estado = registrar(estado, a, agora);
+      deps.salvarEstado(estado);
+      deps.executar(a, grafoAtual);
+    }
+    return [a];
+  };
   let g;
   try { g = deps.lerGrafo(); }
   catch (e) {
-    const a = { tipo: 'escalar', id: null, motivo: `não consegui ler o grafo: ${e.message}`, chave: `grafo:leitura:${hash(e.message)}` };
-    if (!deps.simular) { estado = registrar(estado, a, agora); deps.salvarEstado(estado); deps.executar(a, null); }
-    return [a];
+    return escalarErro({ tipo: 'escalar', id: null, motivo: 'não consegui ler o grafo; confira o arquivo', chave: `grafo:leitura:${hash(e.code || e.message)}` });
   }
   let acoes = decidir(g, estado, agora, c);
   if (acoes.length === 1 && acoes[0].tipo === 'escalar' && acoes[0].id === null) {
-    if (!deps.simular) { estado = registrar(estado, acoes[0], agora); deps.salvarEstado(estado); deps.executar(acoes[0], g); }
-    return acoes;
+    return escalarErro(acoes[0], g);
   }
   if (deps.lerCanal) acoes.push(...filtrarExternas(pendenciasDoCanal(deps.lerCanal()), estado, agora, c));
-  if (deps.listarPRs) acoes.push(...filtrarExternas(pendenciasDosPRs(deps.listarPRs()), estado, agora, c));
-  if (deps.simular) return acoes;
+  if (!deps.simular && deps.listarPRs) acoes.push(...filtrarExternas(pendenciasDosPRs(deps.listarPRs()), estado, agora, c));
+  const usadas = new Set(), realizadas = [];
   for (const a of acoes) {
+    if (noPrazo(a.chave)) continue;
+    const disparo = ['acordar', 'cobrar', 'escada'].includes(a.tipo);
+    if (disparo) {
+      if (usadas.has(a.agente) || (c.semCota[a.agente] && ms(c.semCota[a.agente]) > ms(agora))) continue;
+      const recentes = (estado.disparos?.[a.agente] || []).filter((x) => ms(agora) - ms(x) < 3600000 && ms(agora) >= ms(x));
+      if (recentes.length >= c.maxDisparosPorHora) continue;
+    }
+    let atual = g;
+    if (!deps.simular && (a.ids?.length || a.id != null)) {
+      try { atual = deps.lerGrafo(); } catch { break; }
+      if (!decidir(atual, estado, agora, c).some((x) => x.chave === a.chave && x.tipo === a.tipo)) continue;
+    }
     estado = registrar(estado, a, agora);
-    deps.salvarEstado(estado); // antes do efeito: queda no meio não duplica execução
-    if (a.tipo === 'registrar') deps.log?.(a.motivo);
-    else deps.executar(a, g);
+    if (!deps.simular) {
+      deps.salvarEstado(estado); // antes do efeito: queda no meio não duplica execução
+      if (a.tipo === 'registrar') deps.log?.(a.motivo);
+      else deps.executar(a, atual);
+    }
+    if (disparo) usadas.add(a.agente);
+    realizadas.push(a);
   }
-  return acoes;
+  return realizadas;
 }
 
-// Trava por gerações com PID: nunca sobrescreve a trava de um processo vivo.
-function pegarTrava(pasta = PASTA_CANAL) {
+// A data de início distingue um PID reaproveitado de seu dono original.
+function inicioDoProcesso(pid) {
+  const r = process.platform === 'win32'
+    ? spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { encoding: 'utf8', timeout: 5000, windowsHide: true })
+    : spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 5000 });
+  return r.status === 0 && r.stdout?.trim() ? r.stdout.trim() : null;
+}
+
+// Trava por gerações com PID e início: nunca sobrescreve a trava de um processo vivo.
+function pegarTrava(pasta = PASTA_CANAL, deps = {}) {
   fs.mkdirSync(pasta, { recursive: true });
   const prefixo = 'fofoqueiro.trava.';
   const arquivos = () => fs.readdirSync(pasta).filter((x) => /^fofoqueiro\.trava\.\d+$/.test(x)).sort();
   const vivo = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  const inicioDe = deps.inicioDe || inicioDoProcesso;
+  const meuInicio = inicioDe(process.pid) || '?';
   for (let i = 0; i < 5; i++) {
     const todos = arquivos(), ultimo = todos.at(-1);
     if (ultimo) {
       const conteudo = fs.readFileSync(path.join(pasta, ultimo), 'utf8');
-      const pid = /^(\d+):/.exec(conteudo);
-      if (conteudo !== 'livre' && (!pid || vivo(Number(pid[1])))) return { ok: false };
+      const dono = /^(\d+):([^:]+):/.exec(conteudo);
+      if (conteudo !== 'livre') {
+        if (!dono) return { ok: false };
+        if (vivo(Number(dono[1]))) {
+          const inicioAtual = inicioDe(Number(dono[1]));
+          if (dono[2] === '?' || !inicioAtual || inicioAtual === dono[2]) return { ok: false };
+        }
+      }
     }
     const proximo = String((ultimo ? Number(ultimo.slice(prefixo.length)) : 0) + 1).padStart(8, '0');
     const arq = path.join(pasta, prefixo + proximo);
-    try { fs.writeFileSync(arq, `${process.pid}:${crypto.randomBytes(8).toString('hex')}`, { flag: 'wx' }); }
+    try { fs.writeFileSync(arq, `${process.pid}:${meuInicio}:${crypto.randomBytes(8).toString('hex')}`, { flag: 'wx' }); }
     catch (e) { if (e.code === 'EEXIST') continue; throw e; }
     if (arquivos().at(-1) !== path.basename(arq)) { fs.writeFileSync(arq, 'livre'); continue; }
     let solta = false;
@@ -214,20 +264,27 @@ function promptDe(a, g) {
   const ids = a.ids?.length ? a.ids : a.id ? [a.id] : [];
   const tarefas = ids.map((id) => g?.tarefas?.[id]).filter(Boolean)
     .map((t) => `Tarefa ${t.id}: ${t.titulo}\nEscopo: ${t.escopo.join(', ')}\nVerificar: ${t.verificar || 'não definido'}`);
-  return [a.motivo, ...tarefas, `Leia AGENTS.md e ${ARQ_CANAL}. Siga somente a tarefa indicada, crie branch/worktree antes de alterar arquivos, registre o progresso no canal e não faça merge do próprio PR.`].join('\n\n');
+  return [a.motivo, ...tarefas, `Leia AGENTS.md e ${ARQ_CANAL}. Siga somente a tarefa indicada, crie branch/worktree antes de alterar arquivos, registre o progresso no canal e, ao terminar, atualize a tarefa no grafo com revisar ou concluir. Não faça merge do próprio PR.`].join('\n\n');
 }
 function acordar(a, cfg, g) {
   const prompt = promptDe(a, g);
   const args = a.agente === 'codex' ? ['exec', '-s', 'workspace-write', '-'] : ['-p', prompt, '--output-format', 'json'];
   const r = spawnSync(a.agente, args, { input: a.agente === 'codex' ? prompt : undefined, cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
   const saida = String(r.stdout || '') + String(r.stderr || '');
-  return { status: r.status ?? 1, limite: LIMITE.test(saida) && r.status !== 0 };
+  return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0 };
 }
 function executarReal(a, g, cfg, deps = {}) {
   const arquivoGrafo = deps.arquivoGrafo || ARQ_GRAFO;
   const chamarAgente = deps.chamarAgente || ((acao) => acordar(acao, cfg, g));
   const log = deps.log || logPadrao;
   const escreverCanal = deps.escreverCanal || ((texto) => fs.appendFileSync(ARQ_CANAL, texto));
+  const executarEscada = deps.chamarEscada || ((microtarefas) => {
+    fs.mkdirSync(PASTA_CANAL, { recursive: true });
+    const plano = path.join(PASTA_CANAL, `fofoqueiro-plano-${crypto.randomBytes(8).toString('hex')}.json`);
+    fs.writeFileSync(plano, JSON.stringify(microtarefas), { flag: 'wx', mode: 0o600 });
+    try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
+    finally { fs.rmSync(plano, { force: true }); }
+  });
   if (a.tipo === 'escalar') {
     const para = /login|aprova|decis[aã]o/.test(a.motivo) ? 'Fernando' : 'Claude';
     escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → ${para} (escalada)\n\n${a.motivo}\n`);
@@ -239,13 +296,19 @@ function executarReal(a, g, cfg, deps = {}) {
       const t = g.tarefas[id];
       return { id, instrucao: t.titulo, verificar: t.verificar, escopo: t.escopo };
     });
-    fs.mkdirSync(PASTA_CANAL, { recursive: true });
-    const plano = path.join(PASTA_CANAL, `fofoqueiro-plano-${crypto.randomBytes(8).toString('hex')}.json`);
-    fs.writeFileSync(plano, JSON.stringify(microtarefas), { flag: 'wx', mode: 0o600 });
-    try {
-      const r = spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true });
-      log(`escada ${a.ids.join(',')}: status=${r.status ?? 1}`);
-    } finally { fs.rmSync(plano, { force: true }); }
+    for (const id of a.ids) grafoApi.atualizar(arquivoGrafo, (x) => grafoApi.iniciar(x, id, 'local'));
+    let r;
+    try { r = executarEscada(microtarefas); }
+    catch (e) { r = { status: 1 }; log(`falha ao iniciar escada: ${e.code || 'erro'}`); }
+    log(`escada ${a.ids.join(',')}: status=${r.status ?? 1}`);
+    if (r.status == null) {
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (lote sem morte confirmada)\n\nLote local ${a.ids.join(', ')} terminou sem confirmação de saída; tarefas mantidas em andamento. Confira os processos antes de retomar.\n`);
+      return;
+    }
+    for (const id of a.ids) grafoApi.atualizar(arquivoGrafo, (x) => {
+      if (x.tarefas[id]?.estado !== 'em_andamento') return x;
+      return r.status === 0 ? grafoApi.concluir(x, id, 'lote local verificado') : grafoApi.falhar(x, id, `lote saiu com código ${r.status ?? 1}`);
+    });
     return;
   }
   if (a.tipo === 'acordar' || a.tipo === 'cobrar') {
@@ -259,10 +322,24 @@ function executarReal(a, g, cfg, deps = {}) {
     }
     let r;
     try { r = chamarAgente(a); }
-    catch (e) { r = { status: 1, limite: false }; log(`falha ao chamar ${a.agente}: ${e.message}`); }
+    catch (e) { r = { status: 1, limite: false }; log(`falha ao chamar ${a.agente}: ${e.code || 'erro'}`); }
     log(`${a.tipo} ${a.agente}: status=${r.status}${r.limite ? ' cota' : ''}`);
+    if (r.status == null) {
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (agente sem morte confirmada)\n\n${a.agente} terminou sem confirmação de saída; tarefa mantida em andamento. Confira os processos antes de retomar.\n`);
+      return;
+    }
+    if (r.limite) {
+      const marcar = deps.marcarSemCota || ((agente) => spawnSync(process.execPath, [path.join(__dirname, 'chamar.js'), 'sem-cota', agente], { encoding: 'utf8', windowsHide: true }));
+      const marcado = marcar(a.agente);
+      if (marcado.status !== 0) {
+        escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (cota não registrada)\n\nFalha ao registrar falta de cota de ${a.agente}; tarefa mantida em andamento para impedir novo disparo automático.\n`);
+        log(`sem-cota de ${a.agente}: falha ao registrar`);
+        return;
+      }
+    }
     if (a.tipo === 'acordar' && a.ids?.length && r.status !== 0) {
       grafoApi.atualizar(arquivoGrafo, (x) => {
+        if (x.tarefas[a.ids[0]]?.estado !== 'em_andamento') return x;
         if (r.limite) {
           const y = JSON.parse(JSON.stringify(x));
           y.tarefas[a.ids[0]].estado = 'pendente';
@@ -273,7 +350,10 @@ function executarReal(a, g, cfg, deps = {}) {
         return grafoApi.falhar(x, a.ids[0], `agente saiu com código ${r.status}`);
       });
     }
-    if (r.limite) spawnSync(process.execPath, [path.join(__dirname, 'chamar.js'), 'sem-cota', a.agente], { encoding: 'utf8', windowsHide: true });
+    if (a.tipo === 'acordar' && a.ids?.length && r.status === 0) {
+      grafoApi.atualizar(arquivoGrafo, (x) => x.tarefas[a.ids[0]]?.estado === 'em_andamento'
+        ? grafoApi.revisar(x, a.ids[0], 'CLI terminou; aguarda revisão') : x);
+    }
   }
 }
 function depsReais(simular, cfg) {
@@ -303,7 +383,7 @@ async function principal(args) {
   try {
     if (umaVez) { passo(deps, cfg); return 0; }
     for (;;) {
-      try { passo(deps, cfg); } catch (e) { logPadrao(`erro no passo: ${e.message}`); }
+      try { passo(deps, cfg); } catch (e) { logPadrao(`erro no passo: ${e.code || e.name || 'erro'}`); }
       await new Promise((ok) => setTimeout(ok, cfg.intervaloSegundos * 1000));
     }
   } finally { trava.soltar(); }
