@@ -103,7 +103,7 @@ function fechamentosDePR(g, fechados) {
   const acoes = [];
   for (const t of Object.values(g?.tarefas || {})) {
     if (t.estado !== 'em_revisao') continue;
-    const m = /#(\d+)/.exec(String(t.resultado || ''));
+    const m = /\bPR\s*#(\d+)/i.exec(String(t.resultado || ''));
     const pr = m && (fechados || []).find((p) => p.number === Number(m[1]));
     if (!pr) continue;
     const estado = String(pr.state || '').toUpperCase();

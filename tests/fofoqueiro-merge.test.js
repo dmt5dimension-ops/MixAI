@@ -72,3 +72,7 @@ test('listarPRsFechados: usa gh com argumentos fixos e devolve null se o gh falh
   assert.ok(chamadas[0][1].includes('--state') && chamadas[0][1].includes('closed'));
   assert.equal(vigia.listarPRsFechados({ repo: 'x/y' }, () => ({ status: 1, stdout: '' }), 'linux'), null);
 });
+
+test('fechamentosDePR: só lê `PR #N` em `resultado`, não número solto de issue', () => {
+  assert.deepEqual(vigia.fechamentosDePR(grafoEmRevisao('corrige issue #30'), [{ number: 30, state: 'MERGED' }]), []);
+});
