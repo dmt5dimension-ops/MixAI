@@ -787,18 +787,19 @@ function exportar(arquivos = ARQUIVOS) {
 // Liga um lote ao grafo (`--grafo`): as microtarefas que são tarefas do grafo vão a em_andamento antes do lote e a
 // feita/falha depois. Microtarefa que não existe no grafo é ignorada. Tudo ou nada no início; no fim só mexe no que
 // ainda está em_andamento (alguém pode ter concluído por outro caminho).
-function ligarAoGrafo(arquivo, microtarefas) {
+function ligarAoGrafo(arquivo, microtarefas, { plataforma = process.platform } = {}) {
   const grafoApi = require('./grafo.js');
   const ids = (g) => microtarefas.map((m) => m.id).filter((id) => Object.hasOwn(g.tarefas, id));
   // O escopo que o lote usa é o do plano: precisa caber no escopo da tarefa no grafo, senão a trava de escopo do grafo é contornada.
   // Mesma regra do projeto para o escopo: com `/` no fim é pasta (libera o que está abaixo); sem `/` é arquivo (só ele mesmo, nunca filhos);
   // curinga (`*`, `?`) casa só dentro da mesma pasta. Nada é alargado: na dúvida, recusa. `normaliza()` do grafo não serve aqui
   // porque tira a barra final e reduz curinga à pasta.
-  const forma = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+  const forma = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '');
+  const caixa = (p) => (plataforma === 'win32' ? p.toLowerCase() : p); // como o aplicar.js: maiúsculas contam fora do Windows
   const temCuringa = (p) => /[*?[]/.test(p);
   const casa = (padrao, caminho) => new RegExp(`^${padrao.replace(/[.+^${}()|\\\]\[]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '.*')}$`).test(caminho);
   const cabe = (p, t) => {
-    const [x, y] = [forma(p), forma(t)];
+    const [x, y] = [caixa(forma(p)), caixa(forma(t))];
     if (x === y) return true;
     if (temCuringa(y)) return !temCuringa(x) && casa(y, x);
     if (!y.endsWith('/')) return false; // arquivo: só ele mesmo
