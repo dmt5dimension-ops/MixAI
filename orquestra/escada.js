@@ -853,20 +853,30 @@ async function principal(argumentos) {
     const microtarefas = JSON.parse(fs.readFileSync(path.resolve(alvo), 'utf8'));
     const ig = resto.indexOf('--grafo');
     if (ig >= 0 && !resto[ig + 1]) throw new Error('a opção --grafo precisa do caminho do arquivo do grafo');
+    // Pré-voo: tudo que o lote recusaria antes de iniciar qualquer agente é conferido ANTES de marcar o grafo. Erro depois de
+    // marcar deixaria a tarefa em_andamento sem processo nenhum (só vale em_andamento quando pode haver processo vivo).
+    const paralelo = ip >= 0 && resto[ip + 1] === 'auto' ? 'auto' : ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1;
+    if (paralelo !== 'auto' && (!Number.isInteger(paralelo) || paralelo < 1)) throw new Error('paralelismo precisa ser um número inteiro maior que zero.');
+    const it = resto.indexOf('--tentativas');
+    const tentativas = it >= 0 ? Number(resto[it + 1]) : undefined;
+    if (it >= 0 && (!Number.isInteger(tentativas) || tentativas < 1)) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
+    validarPlano(microtarefas);
+    const controle = paralelo === 'auto'
+      ? require('./paralelismo.js').criarControle({ refrescarMs: 5000, aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
+      : paralelo;
+    const agentes = {
+      local: chamarComando(COMANDOS.local),
+      superiores: cfgLote.superiores.map((nome) => ({ nome, chamar: chamarComando(COMANDOS[nome]) })),
+    };
     const ligacao = ig >= 0 ? ligarAoGrafo(path.resolve(resto[ig + 1]), microtarefas) : null;
     ligacao?.iniciar();
     const resultados = await lote({
       microtarefas,
       verificadorDe: (m) => verificadorPorComando(m.verificar),
-      paralelismo: ip >= 0 && resto[ip + 1] === 'auto'
-        ? require('./paralelismo.js').criarControle({ refrescarMs: 5000, aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
-        : ip >= 0 ? Number(resto[ip + 1]) : cfgLote.paralelismoPadrao || 1,
-      maxTentativas: resto.includes('--tentativas') ? Number(resto[resto.indexOf('--tentativas') + 1]) : undefined,
+      paralelismo: controle,
+      maxTentativas: tentativas,
       antagonico: resto.includes('--antagonico'),
-      agentes: {
-        local: chamarComando(COMANDOS.local),
-        superiores: cfgLote.superiores.map((nome) => ({ nome, chamar: chamarComando(COMANDOS[nome]) })),
-      },
+      agentes,
     });
     // Se o lote lançar erro, as tarefas ficam em_andamento (morte de processo não confirmada): nunca voltam à fila sozinhas.
     ligacao?.terminar(resultados);

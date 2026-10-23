@@ -171,3 +171,16 @@ test("ligarAoGrafo: `**/` casa zero ou mais pastas, como a trava do CI; os escap
   escada.ligarAoGrafo(arq2, [planoDe({ escopo: ["t/sub/ok.js", "t/a/b/c.js"] })], { plataforma: "linux" }).iniciar();
   assert.equal(estado(arq2, "a"), "em_andamento");
 });
+
+test("linha de comando: parâmetro inválido do lote (--paralelo, --tentativas) para antes de marcar o grafo", () => {
+  const arq = arquivoComTarefas();
+  const plano = path.join(path.dirname(arq), "plano2.json");
+  fs.writeFileSync(plano, JSON.stringify([planoDe({ id: "a" })]));
+  const roda = (...extra) => spawnSync(process.execPath, [path.join(RAIZ, "orquestra", "escada.js"), "lote", plano, "--grafo", arq, ...extra], { encoding: "utf8", timeout: 30000 });
+  for (const [extra, msg] of [[["--paralelo", "abc"], /paralelismo/], [["--paralelo", "0"], /paralelismo/], [["--paralelo"], /paralelismo/], [["--tentativas", "0"], /tentativas/], [["--tentativas", "x"], /tentativas/]]) {
+    const r = roda(...extra);
+    assert.notEqual(r.status, 0, extra.join(" "));
+    assert.match(r.stderr, msg);
+    assert.equal(estado(arq, "a"), "pendente", `${extra.join(" ")}: tarefa não pode ficar em_andamento`);
+  }
+});
