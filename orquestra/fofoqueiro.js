@@ -216,8 +216,25 @@ function passo(deps, cfg = configPadrao) {
       deps.log?.('falha ao consultar os PRs no GitHub');
       acoes.push({ tipo: 'escalar', id: null, motivo: 'não consegui consultar os PRs no GitHub; confira o gh e a rede', chave: 'prs:consulta' });
     } else {
-      acoes.push(...filtrarExternas(pendenciasDosPRs(prs, estado.revisados), estado, agora, c));
-      const revisados = atualizarRevisados(prs, estado.revisados);
+      // Um head novo invalida a label antiga. Retire-a antes de aceitar outra revisão;
+      // quando o revisor recolocá-la, o head novo será gravado e a cobrança termina.
+      const atuais = prs.map((pr) => {
+        const antigo = estado.revisados?.[pr.number];
+        const feito = AGENTES.find((agente) => (pr.labels || []).some((l) => l.name === `feito-por:${agente}`));
+        if (!feito) return pr;
+        const revisor = feito === 'claude' ? 'codex' : 'claude';
+        const rotulo = `revisado-por:${revisor}`;
+        if (!antigo || antigo === pr.headRefOid || !(pr.labels || []).some((l) => l.name === rotulo) || !deps.removerLabelRevisao) return pr;
+        let removido;
+        try { removido = deps.removerLabelRevisao(pr.number, revisor); } catch { removido = null; }
+        if (removido?.status !== 0) {
+          acoes.push({ tipo: 'escalar', id: null, motivo: `não consegui retirar a revisão antiga do PR #${pr.number}`, chave: `rev:rotulo:${pr.number}:${String(pr.headRefOid).slice(0, 8)}` });
+          return pr;
+        }
+        return { ...pr, labels: pr.labels.filter((l) => l.name !== rotulo) };
+      });
+      acoes.push(...filtrarExternas(pendenciasDosPRs(atuais, estado.revisados), estado, agora, c));
+      const revisados = atualizarRevisados(atuais, estado.revisados);
       if (JSON.stringify(revisados) !== JSON.stringify(estado.revisados || {})) { estado = { ...estado, revisados }; deps.salvarEstado(estado); }
     }
   }
@@ -287,8 +304,16 @@ function pegarTrava(pasta = PASTA_CANAL, deps = {}) {
   return { ok: false };
 }
 
-function listarPRs(cfg) {
-  const r = spawnSync('gh', ['pr', 'list', '--repo', cfg.repo, '--state', 'open', '--json', 'number,title,headRefOid,labels,statusCheckRollup'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+// No Windows os instaladores npm podem fornecer apenas .cmd. Tenta executável nativo primeiro;
+// o fallback usa shell somente com argumentos estáticos/validados, nunca com o prompt.
+function chamarCli(comando, args, opcoes, spawn = spawnSync, plataforma = process.platform) {
+  const r = spawn(comando, args, opcoes);
+  if (plataforma !== 'win32' || r?.error?.code !== 'ENOENT') return r;
+  if (![comando, ...args].every((x) => /^[A-Za-z0-9_./:=,-]+$/.test(String(x)))) return { status: null, error: { code: 'EINVAL' } };
+  return spawn([comando, ...args].join(' '), [], { ...opcoes, shell: true });
+}
+function listarPRs(cfg, spawn = spawnSync, plataforma = process.platform) {
+  const r = chamarCli('gh', ['pr', 'list', '--repo', cfg.repo, '--state', 'open', '--json', 'number,title,headRefOid,labels,statusCheckRollup'], { encoding: 'utf8', timeout: 30000, windowsHide: true }, spawn, plataforma);
   if (r.status !== 0) return null;
   try { return JSON.parse(r.stdout); } catch { return null; }
 }
@@ -298,10 +323,10 @@ function promptDe(a, g) {
     .map((t) => `Tarefa ${t.id}: ${t.titulo}\nEscopo: ${t.escopo.join(', ')}\nVerificar: ${t.verificar || 'não definido'}`);
   return [a.motivo, ...tarefas, `Leia AGENTS.md e ${ARQ_CANAL}. Siga somente a tarefa indicada, crie branch/worktree antes de alterar arquivos, registre o progresso no canal e, ao terminar, atualize a tarefa no grafo com revisar ou concluir. Não faça merge do próprio PR.`].join('\n\n');
 }
-function acordar(a, cfg, g) {
+function acordar(a, cfg, g, spawn = spawnSync, plataforma = process.platform) {
   const prompt = promptDe(a, g);
-  const args = a.agente === 'codex' ? ['exec', '-s', 'workspace-write', '-'] : ['-p', prompt, '--output-format', 'json'];
-  const r = spawnSync(a.agente, args, { input: a.agente === 'codex' ? prompt : undefined, cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
+  const args = a.agente === 'codex' ? ['exec', '-s', 'workspace-write', '-'] : ['-p', '--output-format', 'json'];
+  const r = chamarCli(a.agente, args, { input: prompt, cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 }, spawn, plataforma);
   const saida = String(r.stdout || '') + String(r.stderr || '');
   return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0, error: r.error ? { code: r.error.code } : undefined };
 }
@@ -411,6 +436,7 @@ function depsReais(simular, cfg) {
     lerSemCota: () => lerJson(ARQ_SEM_COTA, {}),
     lerCanal: () => { try { return fs.readFileSync(ARQ_CANAL, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; } },
     listarPRs: () => listarPRs(cfg),
+    removerLabelRevisao: (numero, revisor) => chamarCli('gh', ['pr', 'edit', String(numero), '--repo', cfg.repo, '--remove-label', `revisado-por:${revisor}`], { encoding: 'utf8', timeout: 30000, windowsHide: true }),
     executar: (a, g) => executarReal(a, g, cfg),
     log: logPadrao,
   };
@@ -434,5 +460,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });
