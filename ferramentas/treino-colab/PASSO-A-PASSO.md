@@ -2,7 +2,7 @@
 
 O Colab é um computador do Google, de graça, com placa de vídeo. Você só precisa da sua conta Google. Não usa API da Anthropic nem da OpenAI.
 
-**Só faça quando o Claude avisar que há exemplos suficientes** (mínimo 20 de treino; o ideal é mais de 200).
+**Só faça quando o Claude avisar que há exemplos suficientes** (mínimo 20 de treino e pelo menos 1 de validação; o ideal é mais de 200). O `preparar` avisa se faltar alguma das duas coisas.
 
 1. No PC, abra a pasta do MixAI e rode `node orquestra/treino.js preparar`. Ele cria `treino.jsonl` e `validacao.jsonl` em `orquestra\casos`.
 2. Entre em https://colab.research.google.com com a sua conta Google e escolha **Arquivo > Fazer upload do notebook**. Envie `ferramentas\treino-colab\treino-qwen.ipynb`.

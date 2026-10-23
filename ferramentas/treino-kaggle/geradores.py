@@ -3,7 +3,9 @@
 Cada caso tem: tipo, prompt, referencia (resposta certa conhecida) e dados para o verificador.
 Os casos são determinísticos pela semente, então a validação é sempre a mesma.
 """
+import ast
 import json
+import os
 import random
 import re
 import subprocess
@@ -27,11 +29,62 @@ def extrair(resposta):
     return (m.group(1) if m else r).strip()
 
 
+# Código vindo do modelo nunca roda solto: (1) a árvore do código é conferida antes (sem import fora da lista, sem open/exec/eval,
+# sem nome ou atributo com "__"), (2) ele roda com uma lista fechada de funções embutidas (não existe open nem __import__ livre),
+# (3) em outro processo, pasta vazia, sem variáveis do ambiente, com limite de tempo, memória e processos.
+IMPORTS_OK = {"math", "re", "itertools", "functools", "collections", "string", "operator", "statistics"}
+NOMES_PROIBIDOS = {"open", "exec", "eval", "compile", "__import__", "input", "breakpoint", "globals", "locals", "vars",
+                   "getattr", "setattr", "delattr", "exit", "quit", "memoryview", "help", "dir", "type", "super", "object"}
+EMBUTIDAS_OK = ["abs", "all", "any", "bin", "bool", "chr", "dict", "divmod", "enumerate", "filter", "float", "frozenset", "hex",
+                "int", "isinstance", "iter", "len", "list", "map", "max", "min", "next", "oct", "ord", "pow", "range", "repr",
+                "reversed", "round", "set", "slice", "sorted", "str", "sum", "tuple", "zip", "ValueError", "TypeError",
+                "KeyError", "IndexError", "ZeroDivisionError", "Exception", "True", "False", "None"]
+
+
+def codigo_seguro(codigo):
+    """True se a árvore do código não usa nada fora do permitido."""
+    try:
+        arvore = ast.parse(codigo)
+    except SyntaxError:
+        return False
+    for no in ast.walk(arvore):
+        if isinstance(no, ast.Import):
+            if any(a.name.split(".")[0] not in IMPORTS_OK for a in no.names):
+                return False
+        elif isinstance(no, ast.ImportFrom):
+            if no.level or (no.module or "").split(".")[0] not in IMPORTS_OK:
+                return False
+        elif isinstance(no, ast.Name):
+            if no.id in NOMES_PROIBIDOS or no.id.startswith("__"):
+                return False
+        elif isinstance(no, ast.Attribute):
+            if no.attr.startswith("__") or no.attr in NOMES_PROIBIDOS:
+                return False
+        elif isinstance(no, (ast.Global, ast.Nonlocal)):
+            return False
+    return True
+
+
+_LIMITES = '''
+import resource
+resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+resource.setrlimit(resource.RLIMIT_CPU, (%d, %d))
+resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
+'''
+
+
+# sem variáveis do ambiente (chaves, tokens); o Windows só precisa do SystemRoot para o Python subir
+_AMBIENTE = {} if os.name == "posix" else {"SystemRoot": os.environ.get("SystemRoot", "")}
+
+
 def _rodar(codigo):
-    """Roda o código em outro processo, com tempo máximo. Devolve True se saiu com 0."""
+    """Roda o código em outro processo isolado, com tempo máximo. Devolve True se saiu com 0."""
+    prefixo = (_LIMITES % (TEMPO_MAX_S, TEMPO_MAX_S)) if os.name == "posix" else ""
     with tempfile.TemporaryDirectory() as pasta:
         try:
-            p = subprocess.run([sys.executable, "-I", "-c", codigo], cwd=pasta, capture_output=True, timeout=TEMPO_MAX_S)
+            p = subprocess.run([sys.executable, "-I", "-c", prefixo + codigo], cwd=pasta, capture_output=True,
+                               timeout=TEMPO_MAX_S + 2, env=_AMBIENTE)
             return p.returncode == 0
         except subprocess.TimeoutExpired:
             return False
@@ -119,12 +172,17 @@ def _codigo(rng):
 
 def _ver_codigo(caso, resposta):
     codigo = extrair(resposta)
-    if not codigo:
+    if not codigo or not codigo_seguro(codigo):
         return False
     d = caso["dados"]
-    runner = ("import json\nd=json.loads(%r)\nns={}\nexec(compile(%r,'resposta','exec'),ns)\nf=ns[d['nome']]\n"
+    runner = ("import json, builtins\nd=json.loads(%r)\n"
+              "_ok=%r\n_imp=%r\n_real=builtins.__import__\n"
+              "def _imp_seguro(nome, *a, **k):\n    if nome.split('.')[0] not in _imp: raise ImportError(nome)\n    return _real(nome, *a, **k)\n"
+              "_b={n: getattr(builtins, n) for n in _ok}\n_b['__import__']=_imp_seguro\n_b['__build_class__']=builtins.__build_class__\n"
+              "ns={'__builtins__': _b, '__name__': 'resposta'}\n"
+              "exec(compile(%r,'resposta','exec'),ns)\nf=ns[d['nome']]\n"
               "for t in d['testes']:\n    assert f(*t['args'])==t['esperado'], t\n"
-              % (json.dumps({"nome": d["nome"], "testes": d["testes"]}), codigo))
+              % (json.dumps({"nome": d["nome"], "testes": d["testes"]}), EMBUTIDAS_OK, sorted(IMPORTS_OK), codigo))
     return _rodar(runner)
 
 

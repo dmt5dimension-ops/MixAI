@@ -34,6 +34,13 @@ function validar(tarefas) {
   }
 }
 
+// Para rodar de verdade cada tarefa precisa trazer o comando que confere a resposta; sem ele o Qwen seria chamado e marcado
+// como errado só por falta de verificador. Por isso o plano inteiro é recusado antes de qualquer chamada ao modelo.
+function exigirVerificar(tarefas) {
+  const sem = tarefas.filter((t) => typeof t?.verificar !== 'string' || !t.verificar.trim()).map((t) => t?.id ?? '?');
+  if (sem.length) throw new Error(`tarefa sem comando "verificar" (o modelo não foi chamado): ${sem.join(', ')}`);
+}
+
 // `local(prompt)` e `verificar(tarefa, saida)` são injetados; `verificar` devolve { ok, motivo }.
 async function rodarSombra({ tarefas, local, verificar, arquivo = ARQUIVOS.sombra, agora = () => new Date().toISOString() }) {
   validar(tarefas);
@@ -113,6 +120,8 @@ async function principal(argumentos) {
   if (comando === 'rodar' && alvo) {
     const escada = require('./escada.js');
     const tarefas = JSON.parse(fs.readFileSync(path.resolve(alvo), 'utf8'));
+    validar(tarefas);
+    exigirVerificar(tarefas);
     const chamarLocal = escada.chamarComando(`node "${path.join(pasta, '..', 'local', 'rodar-local.js')}"`);
     const rs = await rodarSombra({
       tarefas,
@@ -128,4 +137,4 @@ async function principal(argumentos) {
 
 if (require.main === module) principal(process.argv.slice(2)).then((c) => process.exit(c), (e) => { console.error(e.message); process.exit(1); });
 
-module.exports = { rodarSombra, relatorio, liberados, gravarLiberados, tipoLiberado, lerRegistros, validar, ARQUIVOS, PADRAO };
+module.exports = { exigirVerificar, rodarSombra, relatorio, liberados, gravarLiberados, tipoLiberado, lerRegistros, validar, ARQUIVOS, PADRAO };
