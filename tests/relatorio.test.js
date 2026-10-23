@@ -54,8 +54,11 @@ test('lê os arquivos reais, ignora linha quebrada e arquivo ausente', () => {
   }
 });
 
-test('o relatório do repositório roda com os arquivos de verdade', () => {
+test('o relatório do repositório bate com os arquivos de verdade', () => {
+  const grafo = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'orquestra', 'grafo.json'), 'utf8'));
+  const feitas = Object.values(grafo.tarefas).filter((t) => t.estado === 'feita').length;
   const r = relatorio();
-  assert.ok(r.casos.total >= 0);
+  assert.strictEqual(Object.values(r.tarefasFeitas).reduce((a, b) => a + b, 0), feitas);
+  assert.strictEqual(Object.values(r.tarefasPorEstado).reduce((a, b) => a + b, 0), Object.keys(grafo.tarefas).length);
   assert.ok(emTexto(r).includes('Casos resolvidos'));
 });
