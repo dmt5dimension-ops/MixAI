@@ -790,9 +790,19 @@ function exportar(arquivos = ARQUIVOS) {
 function ligarAoGrafo(arquivo, microtarefas) {
   const grafoApi = require('./grafo.js');
   const ids = (g) => microtarefas.map((m) => m.id).filter((id) => Object.hasOwn(g.tarefas, id));
+  // O escopo que o lote usa é o do plano: precisa caber no escopo da tarefa no grafo, senão a trava de escopo do grafo é contornada.
+  const cabe = (p, t) => { const [x, y] = [grafoApi.normaliza(p), grafoApi.normaliza(t)]; return y === '' || x === y || x.startsWith(`${y}/`); };
   return {
     iniciar() {
-      grafoApi.atualizar(arquivo, (g) => ids(g).reduce((x, id) => grafoApi.iniciar(x, id, 'local'), g));
+      validarPlano(microtarefas); // antes de qualquer gravação: plano inválido não pode deixar tarefa presa em_andamento
+      grafoApi.atualizar(arquivo, (g) => {
+        for (const m of microtarefas) {
+          const t = g.tarefas[m.id];
+          const fora = t && m.escopo.find((p) => !t.escopo.some((q) => cabe(p, q)));
+          if (fora !== undefined) throw new Error(`microtarefa ${m.id}: o escopo "${fora}" está fora do escopo da tarefa no grafo (${t.escopo.join(', ')}).`);
+        }
+        return ids(g).reduce((x, id) => grafoApi.iniciar(x, id, 'local'), g);
+      });
     },
     terminar(resultados) {
       for (const r of resultados) {
