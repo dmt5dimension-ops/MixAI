@@ -7,7 +7,7 @@
 # 3. Inicia o comando por cmd.exe, herdando stdin/stdout/stderr (o Node ligou os três a este processo), espera e
 #    sai com o mesmo código.
 # 3b. BARREIRA: depois de entrar no job e ANTES de iniciar o comando, espera o arquivo de $env:MIXAI_LIBERAR, que o Node só cria depois de
-#    gravar o PID deste processo e o nome do job na reserva de vagas. Se o arquivo não aparecer em 60 s (o Node morreu ou desistiu),
+#    gravar o PID deste processo e o nome do job na reserva de vagas. Se o arquivo não aparecer em 60 s (ou MIXAI_LIBERAR_ESPERA_S; o Node morreu ou desistiu),
 #    sai com 124 SEM rodar o comando; sem MIXAI_LIBERAR sai com 125. Assim nenhum comando roda sem estar registrado na reserva.
 # Se o job não puder ser criado, sai com 125 SEM rodar o comando (nunca roda um comando que não dá para matar direito).
 $ErrorActionPreference = 'Stop'
@@ -60,9 +60,12 @@ try {
 
 $libera = $env:MIXAI_LIBERAR
 if ([string]::IsNullOrEmpty($libera)) { [Console]::Error.WriteLine('MIXAI_LIBERAR vazio'); exit 125 }
-$limite = [DateTime]::UtcNow.AddSeconds(60)
+$espera = 60
+$esperaConfigurada = 0
+if ([int]::TryParse($env:MIXAI_LIBERAR_ESPERA_S, [ref]$esperaConfigurada) -and $esperaConfigurada -gt 0) { $espera = $esperaConfigurada } # configurável (os testes usam poucos segundos)
+$limite = [DateTime]::UtcNow.AddSeconds($espera)
 while (-not (Test-Path -LiteralPath $libera)) {
-  if ([DateTime]::UtcNow -gt $limite) { [Console]::Error.WriteLine('sem liberação do Node em 60 s: o comando não foi executado'); exit 124 }
+  if ([DateTime]::UtcNow -gt $limite) { [Console]::Error.WriteLine("sem liberação do Node em $espera s: o comando não foi executado"); exit 124 }
   Start-Sleep -Milliseconds 50
 }
 Remove-Item -LiteralPath $libera -Force -ErrorAction SilentlyContinue
