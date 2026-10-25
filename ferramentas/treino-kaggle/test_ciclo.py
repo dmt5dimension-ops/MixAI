@@ -109,6 +109,46 @@ class TestGeradores(unittest.TestCase):
                 self.assertFalse(geradores.verificar(c, a), a)
             self.assertFalse(os.path.exists(alvo), "um ataque conseguiu criar arquivo")
 
+    def test_acesso_transitivo_por_modulo_permitido_nao_alcanca_o_sistema(self):
+        import os
+        import tempfile
+        c = geradores.gerar(9, 1, ["codigo"])[0]
+        ref = c["referencia"]
+        antes = geradores.codigo_seguro
+        with tempfile.TemporaryDirectory() as pasta:
+            alvo = os.path.join(pasta, "canario")
+            caminhos = [
+                f"import statistics\nstatistics.sys.modules['os'].mkdir({alvo!r})\n",
+                f"import re\nre.enum.sys.modules['os'].mkdir({alvo!r})\n",
+                f"import functools\nfunctools.sys.modules['os'].mkdir({alvo!r})\n",
+                f"import collections\ncollections._sys.modules['os'].mkdir({alvo!r})\n",
+                f"import math\nmath.sys.modules['os'].mkdir({alvo!r})\n",
+                f"import itertools\nitertools.sys.modules['os'].mkdir({alvo!r})\n",
+                f"import operator\noperator.attrgetter('x')\n",
+                f"import string\nstring.Formatter().get_field('0.__globals__', (len,), {{}})\n",
+            ]
+            # 1) com a conferência da árvore ligada
+            for a in caminhos:
+                self.assertFalse(geradores.verificar(c, ref + "\n" + a), a)
+            # 2) desligando a conferência da árvore: só a fachada dos módulos e o executor já impedem o efeito
+            try:
+                geradores.codigo_seguro = lambda codigo: True
+                for a in caminhos[:6]:
+                    self.assertFalse(geradores.verificar(c, ref + "\n" + a), a)
+            finally:
+                geradores.codigo_seguro = antes
+            # 3) o truque do quadro de execução (gerador -> f_globals) é barrado pela árvore
+            self.assertFalse(geradores.verificar(c, ref + "\nx = (i for i in []).gi_frame.f_globals\n"))
+            self.assertFalse(os.path.exists(alvo), "um caminho transitivo criou a pasta fora do isolamento")
+
+    def test_funcao_que_usa_modulos_permitidos_continua_passando(self):
+        c = geradores.gerar(9, 1, ["codigo"])[0]
+        nome = c["dados"]["nome"]
+        self.assertTrue(geradores.verificar(c, c["referencia"]))
+        # a fachada ainda oferece o que a função precisa
+        c2 = {"tipo": "codigo", "dados": {"nome": "f", "testes": [{"args": [4], "esperado": 2.0}]}}
+        self.assertTrue(geradores.verificar(c2, "import math\nfrom functools import reduce\ndef f(n):\n    return reduce(lambda a, b: a, [math.sqrt(n)])\n"))
+
     def test_o_proprio_executor_nao_tem_open_nem_import_livre(self):
         # mesmo que a conferência da árvore falhasse, a lista fechada de funções embutidas impede o efeito
         c = geradores.gerar(9, 1, ["codigo"])[0]

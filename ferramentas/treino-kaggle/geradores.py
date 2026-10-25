@@ -32,7 +32,12 @@ def extrair(resposta):
 # Código vindo do modelo nunca roda solto: (1) a árvore do código é conferida antes (sem import fora da lista, sem open/exec/eval,
 # sem nome ou atributo com "__"), (2) ele roda com uma lista fechada de funções embutidas (não existe open nem __import__ livre),
 # (3) em outro processo, pasta vazia, sem variáveis do ambiente, com limite de tempo, memória e processos.
-IMPORTS_OK = {"math", "re", "itertools", "functools", "collections", "string", "operator", "statistics"}
+# Sem `operator` e `string`: attrgetter/methodcaller/Formatter alcançam atributo por texto e furam a conferência da árvore.
+# Cada módulo permitido entra no código do modelo como uma FACHADA: só as funções e classes públicas dele, nunca outro módulo
+# (statistics.sys, re.enum, functools.sys... não existem), então não há caminho de volta para os módulos do sistema.
+IMPORTS_OK = {"math", "re", "itertools", "functools", "collections", "statistics"}
+# atributos que dão acesso ao quadro de execução do interpretador (frame/código) e de lá aos globais reais
+ATRIBUTOS_DE_QUADRO = ("gi_", "cr_", "ag_", "f_", "tb_", "co_", "func_")
 NOMES_PROIBIDOS = {"open", "exec", "eval", "compile", "__import__", "input", "breakpoint", "globals", "locals", "vars",
                    "getattr", "setattr", "delattr", "exit", "quit", "memoryview", "help", "dir", "type", "super", "object"}
 EMBUTIDAS_OK = ["abs", "all", "any", "bin", "bool", "chr", "dict", "divmod", "enumerate", "filter", "float", "frozenset", "hex",
@@ -58,7 +63,7 @@ def codigo_seguro(codigo):
             if no.id in NOMES_PROIBIDOS or no.id.startswith("__"):
                 return False
         elif isinstance(no, ast.Attribute):
-            if no.attr.startswith("__") or no.attr in NOMES_PROIBIDOS:
+            if no.attr.startswith("__") or no.attr in NOMES_PROIBIDOS or no.attr.startswith(ATRIBUTOS_DE_QUADRO):
                 return False
         elif isinstance(no, (ast.Global, ast.Nonlocal)):
             return False
@@ -175,9 +180,13 @@ def _ver_codigo(caso, resposta):
     if not codigo or not codigo_seguro(codigo):
         return False
     d = caso["dados"]
-    runner = ("import json, builtins\nd=json.loads(%r)\n"
+    runner = ("import json, builtins, sys, types\nd=json.loads(%r)\n"
               "_ok=%r\n_imp=%r\n_real=builtins.__import__\n"
-              "def _imp_seguro(nome, *a, **k):\n    if nome.split('.')[0] not in _imp: raise ImportError(nome)\n    return _real(nome, *a, **k)\n"
+              "def _fachada(nome):\n    mod = _real(nome)\n    ns = types.SimpleNamespace()\n"
+              "    for k in dir(mod):\n        v = getattr(mod, k)\n        if k.startswith('_') or isinstance(v, types.ModuleType): continue\n        setattr(ns, k, v)\n    return ns\n"
+              "_fach = {n: _fachada(n) for n in _imp}\n"
+              "def _imp_seguro(nome, globals=None, locals=None, fromlist=(), level=0):\n    if level or nome not in _fach: raise ImportError(nome)\n    return _fach[nome]\n"
+              "for _m in ('os', 'posix', 'nt', 'subprocess', 'socket', 'shutil', 'ctypes', '_ctypes', 'pathlib'):\n    sys.modules.pop(_m, None)\n"
               "_b={n: getattr(builtins, n) for n in _ok}\n_b['__import__']=_imp_seguro\n_b['__build_class__']=builtins.__build_class__\n"
               "ns={'__builtins__': _b, '__name__': 'resposta'}\n"
               "exec(compile(%r,'resposta','exec'),ns)\nf=ns[d['nome']]\n"
