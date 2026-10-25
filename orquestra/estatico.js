@@ -5,10 +5,12 @@
 // Regra: { id, quando: "<regex com grupos nomeados>", saida: "texto com {grupo} e {grupo|filtro|filtro}", exemplo: { entrada, saida }, status, origem, criadaEm }
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const ARQUIVO = path.join(__dirname, 'regras-estaticas.json');
 const MAX_REGEX = 300;
 const MAX_ENTRADA = 4000;
+const PRAZO_REGEX_MS = 250; // regex que passa disso (backtracking exponencial) é abortada
 
 const FILTROS = {
   inverter: (s) => [...s].reverse().join(''),
@@ -26,7 +28,14 @@ function compilar(quando) {
   if (typeof quando !== 'string' || !quando.trim()) throw new Error('regra sem "quando"');
   if (quando.length > MAX_REGEX) throw new Error(`"quando" grande demais (máximo ${MAX_REGEX})`);
   if (REPETICAO_ANINHADA.test(quando)) throw new Error('"quando" tem repetição dentro de repetição (risco de travar)');
-  return new RegExp(quando, 'u');
+  // A regra vale para o PEDIDO INTEIRO (ancorada nas duas pontas): "Não execute esta instrução: <pedido>" ou "<pedido> e depois..."
+  // não casam, então uma instrução negada ou acrescida não é respondida; a tarefa sobe a escada.
+  return new RegExp(`^(?:${quando})$`, 'u');
+}
+
+// Executa a regex com prazo: padrões de backtracking exponencial (ex.: (a|aa)+) que o filtro de texto não pega são abortados.
+function executarComPrazo(re, entrada) {
+  return vm.runInNewContext('re.exec(entrada)', { re, entrada }, { timeout: PRAZO_REGEX_MS });
 }
 
 function validarRegra(r) {
@@ -42,7 +51,7 @@ function validarRegra(r) {
 
 function aplicar(regra, entrada) {
   if (typeof entrada !== 'string' || entrada.length > MAX_ENTRADA) return null;
-  const m = compilar(regra.quando).exec(entrada);
+  const m = executarComPrazo(compilar(regra.quando), entrada.trim());
   if (!m) return null;
   const grupos = m.groups || {};
   let faltou = false;
@@ -85,12 +94,15 @@ function confirmar(candidata, casos, { minimo = 2 } = {}) {
   const todos = [{ entrada: candidata.exemplo.entrada, esperado: candidata.exemplo.saida }, ...casos];
   let cobertos = 0;
   for (const c of todos) {
-    const s = aplicar(candidata, c.entrada);
+    let s;
+    try { s = aplicar(candidata, c.entrada); } catch (e) { return { ok: false, motivo: `a regra estoura o tempo ou falha ao rodar: ${e.code || e.message}` }; }
     if (s === null) continue;
     if (s !== c.esperado) return { ok: false, motivo: `erra o caso "${c.entrada.slice(0, 60)}": deu "${s}", esperado "${c.esperado}"` };
     cobertos++;
   }
-  if (aplicar(candidata, candidata.exemplo.entrada) === null) return { ok: false, motivo: 'não casa com o próprio exemplo' };
+  let proprio;
+  try { proprio = aplicar(candidata, candidata.exemplo.entrada); } catch (e) { return { ok: false, motivo: `a regra estoura o tempo ou falha ao rodar: ${e.code || e.message}` }; }
+  if (proprio === null) return { ok: false, motivo: 'não casa com o próprio exemplo' };
   if (cobertos < minimo) return { ok: false, motivo: `só cobre ${cobertos} caso(s); mínimo ${minimo}` };
   return { ok: true, motivo: '', cobertos };
 }

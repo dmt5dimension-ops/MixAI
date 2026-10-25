@@ -97,6 +97,7 @@ function modelosDe(registros) {
 }
 
 // Tabela tipo x modelo (acerto nas últimas tentativas), para ver qual modelo local serve para qual tipo.
+// Atenção: as taxas só são comparáveis se os modelos rodaram o mesmo plano e os mesmos casos.
 function comparar(registros, opcoes = {}) {
   const saida = {};
   for (const modelo of modelosDe(registros)) {

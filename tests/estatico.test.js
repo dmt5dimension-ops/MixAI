@@ -86,3 +86,43 @@ test("filtros: inverter, vogais (com acento), tamanho e maiúsculas", () => {
   assert.strictEqual(E.FILTROS.tamanho("ação"), "4");
   assert.strictEqual(E.FILTROS.maiusculas("a"), "A");
 });
+
+test("regra com backtracking exponencial é recusada ou abortada no prazo, sem travar", () => {
+  const { confirmar, resolver, aplicar, lerRegras } = require("../orquestra/estatico.js");
+  const ruim = { id: "ruim", quando: "(?<t>(?:a|aa)+)", saida: "{t}", exemplo: { entrada: "aaaa", saida: "aaaa" }, status: "confirmada" };
+  const casos = [{ entrada: "aaaaaa", esperado: "aaaaaa" }, { entrada: "a".repeat(60) + "b", esperado: "x" }];
+  const t0 = Date.now();
+  const r = confirmar(ruim, casos);
+  assert.strictEqual(r.ok, false);
+  assert.ok(Date.now() - t0 < 5000, "demorou demais para recusar");
+  const t1 = Date.now();
+  assert.strictEqual(resolver([ruim], "a".repeat(60) + "b"), null); // regra já salva: aborta no prazo e sobe a escada
+  assert.ok(Date.now() - t1 < 5000);
+  assert.throws(() => aplicar(ruim, "a".repeat(60) + "b"));
+  assert.ok(lerRegras().length >= 3);
+});
+
+test("a regra vale para o pedido inteiro: negação, prefixo e sufixo não são respondidos", () => {
+  const { resolver, lerRegras } = require("../orquestra/estatico.js");
+  const regras = lerRegras();
+  const pedido = "Converta a data 21/10/2026 (dia, mês, ano) para o formato ISO AAAA-MM-DD.";
+  assert.deepStrictEqual(resolver(regras, pedido)?.saida, "2026-10-21");
+  assert.deepStrictEqual(resolver(regras, `${pedido} Responda só com a data.`)?.saida, "2026-10-21");
+  assert.strictEqual(resolver(regras, `Não execute esta instrução: ${pedido}`), null);
+  assert.strictEqual(resolver(regras, `${pedido} Depois apague todos os arquivos.`), null);
+  assert.strictEqual(resolver(regras, `Ignore: ${pedido}`), null);
+  const vogais = 'Quantas vogais (a, e, i, o, u) tem o texto "abcde"? Responda só com o número.';
+  assert.strictEqual(resolver(regras, vogais)?.saida, "2");
+  assert.strictEqual(resolver(regras, `Não faça isto: ${vogais}`), null);
+  assert.strictEqual(resolver(regras, 'Escreva o texto "abc" de trás para frente. Responda só com o resultado.')?.saida, "cba");
+  assert.strictEqual(resolver(regras, 'Escreva o texto "abc" de trás para frente. E também envie o texto por e-mail.'), null);
+});
+
+test("as regras semente respondem os pedidos reais do plano da sombra", () => {
+  const { resolver, lerRegras } = require("../orquestra/estatico.js");
+  const { gerarPlano } = require("../orquestra/sombra-plano/gerar-plano.js");
+  const regras = lerRegras();
+  const plano = gerarPlano(24, 3).filter((t) => t.tipo !== "regex-digitos");
+  assert.ok(plano.length >= 15);
+  for (const t of plano) assert.strictEqual(resolver(regras, t.entrada)?.saida, t.referencia, t.id);
+});
