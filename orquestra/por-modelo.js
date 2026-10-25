@@ -20,8 +20,11 @@ function regrasDoModelo(regras, modelo) {
   return regras.filter((r) => regraVale(r, modelo));
 }
 
+// Só a AUSÊNCIA do campo significa registro antigo (do Qwen); campo presente e inválido ("", 0, null) não é de ninguém.
 function casoDoModelo(caso, modelo) {
-  return (caso.modelo || MODELO_PADRAO) === nomeValido(modelo);
+  const alvo = nomeValido(modelo);
+  if (!Object.hasOwn(caso, 'modelo') || caso.modelo === undefined) return alvo === MODELO_PADRAO;
+  return typeof caso.modelo === 'string' && caso.modelo.trim() !== '' && caso.modelo.trim() === alvo;
 }
 
 function casosDoModelo(casos, modelo) {
@@ -29,7 +32,7 @@ function casosDoModelo(casos, modelo) {
 }
 
 // Nome de modelo vira parte de nome de arquivo: só letras minúsculas, números, ponto, hífen e sublinhado, MAIS um hash do nome
-// exato. O hash garante que nomes diferentes nunca caiam no mesmo arquivo ("gemma3:1b" x "gemma3/1b", ou "Gemma" x "gemma" em
+// exato. O hash (curto) faz com que nomes diferentes, na prática, não caiam no mesmo arquivo ("gemma3:1b" x "gemma3/1b", ou "Gemma" x "gemma" em
 // sistema de arquivos sem diferença de caixa, como o do Windows).
 function sufixoDeArquivo(modelo) {
   const m = nomeValido(modelo);

@@ -83,3 +83,26 @@ test("treino de dois modelos de nome parecido grava arquivos e dados separados",
     assert.notStrictEqual(M.sufixoDeArquivo(a), M.sufixoDeArquivo(b));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("caso com 'modelo' presente mas inválido (vazio, 0, null) não é de ninguém; só a ausência do campo é do Qwen", () => {
+  for (const ruim of ["", "  ", 0, null, 5, []]) {
+    assert.strictEqual(M.casoDoModelo({ modelo: ruim }, M.MODELO_PADRAO), false, `modelo ${JSON.stringify(ruim)} virou caso do Qwen`);
+    assert.strictEqual(M.casoDoModelo({ modelo: ruim }, "gemma3:1b"), false);
+  }
+  assert.strictEqual(M.casoDoModelo({}, M.MODELO_PADRAO), true);
+  assert.strictEqual(M.casoDoModelo({ modelo: undefined }, M.MODELO_PADRAO), true);
+  assert.strictEqual(M.casoDoModelo({}, "gemma3:1b"), false);
+});
+
+test("medir regras de um modelo usa só os exemplos desse modelo", async () => {
+  const regraG = { id: "so-gemma", palavras: ["alfa"], regra: "regra so-gemma", exemplo: { entrada: "e", saida: "s" }, status: "confirmada", modelos: ["gemma"] };
+  const doQwen = Array.from({ length: 6 }, (_, i) => ({ entrada: `tarefa alfa ${i}`, esperado: `ok ${i}`, modelo: "mixai-local" }));
+  const agente = async (prompt) => (prompt.includes("regra so-gemma") ? "errado" : `ok ${prompt.match(/tarefa alfa (\d+)/)[1]}`);
+  const misturado = await medirRegras({ regras: [regraG], exemplos: doQwen, agente, modelo: "gemma" });
+  assert.strictEqual(misturado[0].veredito, "sem exemplos suficientes", "mediu exemplos do Qwen para o Gemma");
+  assert.strictEqual(misturado[0].exemplos, 0);
+  const doGemma = doQwen.map((e) => ({ ...e, modelo: "gemma" }));
+  const r = await medirRegras({ regras: [regraG], exemplos: [...doQwen, ...doGemma], agente, modelo: "gemma" });
+  assert.strictEqual(r[0].exemplos, 6);
+  assert.strictEqual(r[0].veredito, "piora");
+});
