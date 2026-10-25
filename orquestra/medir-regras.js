@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { escolherRegras, montarPrompt } = require('./escada.js');
 const { avaliar, lerValidacao } = require('./avaliar.js');
-const { MODELO_PADRAO, regrasDoModelo } = require('./por-modelo.js');
+const { MODELO_PADRAO, regrasDoModelo, casosDoModelo } = require('./por-modelo.js');
 
 const REGRAS = path.join(__dirname, 'regras-locais.json');
 
@@ -19,9 +19,10 @@ function veredito(sem, com) {
 // A medida é a que vale na escada real: para cada exemplo, o prompt SEM a regra alvo leva todas as OUTRAS regras que
 // disparariam para ele, e o prompt COM a regra alvo leva essas mesmas mais a alvo. Assim a interação entre regras entra na conta.
 // Se o agente falhar (memória, placa) em qualquer chamada, a regra fica "sem medida": falta de recurso não vira "piora" nem "ajuda".
-// Só contam as regras que valem para o `modelo` medido.
+// Só contam as regras e os exemplos (campo `modelo`; sem ele é do Qwen) que valem para o `modelo` medido.
 async function medirRegras({ regras, exemplos, agente, minimo = 5, modelo = MODELO_PADRAO }) {
   const confirmadas = regrasDoModelo(regras, modelo).filter((r) => r.status === 'confirmada');
+  exemplos = casosDoModelo(exemplos, modelo); // exemplo de outro modelo não entra na medida
   const itens = [];
   for (const regra of confirmadas) {
     const dela = exemplos.filter((e) => escolherRegras([regra], e.entrada).length > 0);
