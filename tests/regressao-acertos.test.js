@@ -3,7 +3,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { registrar, importarDoPlano, lerAcertos, rodarVerificador } = require('../orquestra/regressao.js');
+const { registrar, importarDoPlano, lerAcertos, rodarVerificador, dependeDeTemporario } = require('../orquestra/regressao.js');
+const RAIZ_TESTE = path.resolve(__dirname, '..');
 
 const tarefa = { id: 't1', tipo: 'data-iso', entrada: 'x', verificar: 'node orquestra/sombra-plano/confere.js igual "abc"' };
 const novoArquivo = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'acertos-')), 'a.jsonl');
@@ -60,4 +61,47 @@ test("planos de sementes diferentes (mesmos ids) viram casos novos; o caso idên
   const ids = lerAcertos(arq).map((c) => c.id);
   assert.strictEqual(new Set(ids).size, ids.length, "ids repetidos no arquivo");
   for (const c of lerAcertos(arq)) assert.ok(rodarVerificador(c.verificar, c.saidaCerta), c.id);
+});
+
+test("verificador que trava é derrubado com os filhos dele no prazo", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mixai-trava-"));
+  try {
+    const marca = path.join(dir, "marca.txt");
+    const neto = path.join(dir, "neto.js");
+    fs.writeFileSync(neto, `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marca)}, 'vivo'), 2500);`);
+    const pai = path.join(dir, "pai.js");
+    fs.writeFileSync(pai, `require('child_process').spawn(process.execPath, [${JSON.stringify(neto)}], { stdio: 'ignore' }); setInterval(() => {}, 1000);`);
+    const t0 = Date.now();
+    const ok = rodarVerificador(`node "${pai}"`, "x", RAIZ_TESTE, 600);
+    assert.strictEqual(ok, false);
+    assert.ok(Date.now() - t0 < 5000, "não respeitou o prazo");
+    const esperar = Date.now() + 3500;
+    while (Date.now() < esperar) { /* espera o neto, se estivesse vivo, gravar a marca */ }
+    assert.ok(!fs.existsSync(marca), "o filho do verificador continuou vivo depois do prazo");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("arquivo temporário é reconhecido com barra invertida, barra normal e caixa diferente no Windows", () => {
+  const tmp = "E:\\Terapix\\_infra\\temp";
+  const opc = { plataforma: "win32", tmp };
+  assert.ok(dependeDeTemporario("node E:\\Terapix\\_infra\\temp\\caso.js", opc));
+  assert.ok(dependeDeTemporario("node E:/Terapix/_infra/temp/caso.js", opc));
+  assert.ok(dependeDeTemporario("node e:/terapix/_INFRA/Temp/caso.js", opc));
+  assert.ok(!dependeDeTemporario("node tests/caso.js", opc));
+  assert.ok(!dependeDeTemporario("node e:/terapix/_INFRA/Temp/caso.js", { plataforma: "linux", tmp }), "no Linux a caixa conta");
+});
+
+test("verificador que sai com 0 mas deixa filho solto (detached) em segundo plano não deixa processo vivo", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mixai-solto-"));
+  try {
+    const marca = path.join(dir, "marca.txt");
+    const neto = path.join(dir, "neto.js");
+    fs.writeFileSync(neto, `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marca)}, 'vivo'), 2000);`);
+    const pai = path.join(dir, "pai.js");
+    fs.writeFileSync(pai, `require('child_process').spawn(process.execPath, [${JSON.stringify(neto)}], { detached: true, stdio: 'ignore' }).unref();`);
+    assert.strictEqual(rodarVerificador(`node "${pai}"`, "x", RAIZ_TESTE), true, "o pai saiu com 0");
+    const esperar = Date.now() + 3500;
+    while (Date.now() < esperar) { /* espera o filho solto, se vivo, gravar a marca */ }
+    assert.ok(!fs.existsSync(marca), "o filho solto do verificador sobreviveu à saída normal");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

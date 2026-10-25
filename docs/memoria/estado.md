@@ -56,6 +56,13 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Plano da sombra autossuficiente: dados da regex vão dentro do comando `verificar` (planos de sementes diferentes não se atropelam) | `orquestra/sombra-plano/gerar-plano.js`, `orquestra/sombra-plano/confere.js` | `tests/sombra-plano.test.js` |
 | Regressão de acertos deduplica pela identidade do caso (tipo, pedido, verificador, resposta), não pelo id: planos de sementes diferentes entram | `orquestra/regressao.js` | `tests/regressao-acertos.test.js` |
 | Escada sem `modelo` = Qwen padrão: regra exclusiva de outro aluno nunca entra no prompt dele (resolver e resolverComLoop) | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
+| Tarefa agendada do supervisor no Windows (`ferramentas/supervisor-tarefa.ps1`): inicia no login, reinicia se cair, log próprio em `D:\MixAI-coordenacao\supervisor-tarefa.log` (só o texto do script é testado; validação real pendente no PC) | `tests/supervisor-tarefa.test.js` |
+| Regressão para acertos: tarefa em que o aluno acertou vira caso permanente (resposta certa passa, adulterada reprova), 24 casos semente | `orquestra/regressao.js`, `orquestra/regressao/acertos.jsonl` | `tests/regressao-acertos.test.js` |
+| Arquivos por modelo não se misturam na prática: sufixo com hash curto do nome exato ("gemma3:1b" x "gemma3/1b", caixa no Windows) | `orquestra/por-modelo.js` | `tests/por-modelo.test.js` |
+| Aluno estático: regra vale só para o pedido inteiro (ancorada, sem responder instrução negada ou com sufixo) e regex roda com prazo (backtracking exponencial é abortado) | `orquestra/estatico.js`, `orquestra/regras-estaticas.json` | `tests/estatico.test.js` |
+| Medidor do Laya como porteiro "cabe no local?" (`orquestra/laya-teste.js` + ponte `orquestra/laya-ponte.py`). Só o medidor está pronto, com modelo simulado; o Laya real ainda não rodou | `tests/laya-teste.test.js` |
+| Verificador de código do Kaggle sem acesso transitivo: módulos permitidos entram como fachada (sem `sys`/outros módulos), sem `operator`/`string`, atributos de quadro de execução barrados | `ferramentas/treino-kaggle/geradores.py` | `ferramentas/treino-kaggle/test_ciclo.py` |
+| Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
 
 ## Em andamento
 
