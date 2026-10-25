@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { lerCasos, paraTreino } = require('./escada.js');
+const { MODELO_PADRAO, casosDoModelo, sufixoDeArquivo } = require('./por-modelo.js');
 
 const pasta = __dirname;
 const ARQUIVOS = {
@@ -100,11 +101,16 @@ function gravarJsonl(arquivo, itens) {
   fs.writeFileSync(arquivo, itens.map((i) => JSON.stringify(i)).join('\n') + (itens.length ? '\n' : ''));
 }
 
+// Com `modelo`, só os casos desse modelo entram e os arquivos ganham o nome dele (treino.<modelo>.jsonl);
+// sem ele, vale o Qwen e os nomes de sempre.
 function preparar(arquivos = ARQUIVOS, opcoes = {}) {
-  const r = prepararDataset(lerCasos(arquivos.casos), opcoes);
-  gravarJsonl(arquivos.treino, r.treino);
-  gravarJsonl(arquivos.validacao, r.validacao);
-  fs.writeFileSync(arquivos.relatorio, JSON.stringify({ resumo: r.resumo, descartados: r.descartados }, null, 2) + '\n');
+  const { modelo = MODELO_PADRAO, ...resto } = opcoes;
+  const sufixo = sufixoDeArquivo(modelo);
+  const comSufixo = (arq) => (sufixo ? arq.replace(/(\.[^.\\/]+)$/, `${sufixo}$1`) : arq);
+  const r = prepararDataset(casosDoModelo(lerCasos(arquivos.casos), modelo), resto);
+  gravarJsonl(comSufixo(arquivos.treino), r.treino);
+  gravarJsonl(comSufixo(arquivos.validacao), r.validacao);
+  fs.writeFileSync(comSufixo(arquivos.relatorio), JSON.stringify({ modelo, resumo: r.resumo, descartados: r.descartados }, null, 2) + '\n');
   return r.resumo;
 }
 
@@ -112,13 +118,14 @@ function principal(argumentos) {
   const [comando, ...resto] = argumentos;
   if (comando === 'preparar') {
     const iMin = resto.indexOf('--minimo');
-    const opcoes = iMin >= 0 ? { minimo: Number(resto[iMin + 1]) } : {};
+    const iMod = resto.indexOf('--modelo');
+    const opcoes = { ...(iMin >= 0 ? { minimo: Number(resto[iMin + 1]) } : {}), ...(iMod >= 0 ? { modelo: resto[iMod + 1] } : {}) };
     const r = preparar(ARQUIVOS, opcoes);
     console.log(`${r.aproveitados} de ${r.lidos} casos aproveitados (${r.treino} treino, ${r.validacao} validação); ${r.descartados} descartados.`);
     if (!r.pronto) console.log(`Ainda não dá para treinar: precisa de pelo menos ${r.minimo} exemplos de treino e de pelo menos 1 de validação (treino ${r.treino}, validação ${r.validacao}).`);
     return r.pronto ? 0 : 2;
   }
-  console.error('Uso: node orquestra/treino.js preparar [--minimo N]');
+  console.error('Uso: node orquestra/treino.js preparar [--minimo N] [--modelo <nome>]');
   return 1;
 }
 
