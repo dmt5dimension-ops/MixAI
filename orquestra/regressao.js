@@ -22,14 +22,32 @@ function lerAcertos(arquivo = ARQUIVO) {
   return fs.readFileSync(arquivo, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
 }
 
-function rodarVerificador(comando, resposta, cwd = RAIZ) {
-  const r = spawnSync(comando, { shell: true, cwd, input: resposta, encoding: 'utf8', timeout: 15000 });
+// `spawnSync(..., { timeout })` mata só o shell, não os filhos do verificador. Por isso o verificador roda dentro de um
+// processo ajudante que o dispara, espera o prazo e, se estourar, derruba a ÁRVORE inteira (matarArvore, igual ao avaliar.js).
+const AJUDANTE = `
+const { spawn } = require('node:child_process');
+const { matarArvore } = require(process.argv[1]);
+const [comando, cwd, prazo] = [process.argv[2], process.argv[3], Number(process.argv[4])];
+const filho = spawn(comando, { shell: true, cwd, stdio: ['inherit', 'ignore', 'ignore'], detached: process.platform !== 'win32' });
+const t = setTimeout(() => { matarArvore(filho); process.exit(124); }, prazo);
+filho.on('error', () => { clearTimeout(t); process.exit(1); });
+filho.on('close', (codigo) => { clearTimeout(t); process.exit(codigo === 0 ? 0 : 1); });
+`;
+
+function rodarVerificador(comando, resposta, cwd = RAIZ, prazoMs = 15000) {
+  const r = spawnSync(process.execPath, ['-e', AJUDANTE, path.join(__dirname, 'avaliar.js'), comando, cwd, String(prazoMs)],
+    { input: resposta, encoding: 'utf8', timeout: prazoMs + 10000, windowsHide: true });
   return r.status === 0;
 }
 
 // O comando não pode depender de arquivo temporário (some depois): caso assim não serve como regressão permanente.
-function dependeDeTemporario(comando) {
-  return comando.includes(os.tmpdir());
+// Compara sem diferença de separador (\\ ou /) e, no Windows, sem diferença de caixa; confere também o caminho real da pasta.
+function dependeDeTemporario(comando, { plataforma = process.platform, tmp = os.tmpdir() } = {}) {
+  const norma = (x) => { const t = String(x).replace(/\\/g, '/'); return plataforma === 'win32' ? t.toLowerCase() : t; };
+  const pastas = new Set([norma(tmp)]);
+  try { pastas.add(norma(fs.realpathSync(tmp))); } catch { /* pasta inexistente */ }
+  const texto = norma(comando);
+  return [...pastas].some((pasta) => pasta && texto.includes(pasta.replace(/\/+$/, '')));
 }
 
 function registrar(tarefa, saidaCerta, { arquivo = ARQUIVO, modelo, data = new Date().toISOString(), cwd = RAIZ } = {}) {
