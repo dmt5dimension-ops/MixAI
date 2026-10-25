@@ -22,20 +22,44 @@ function lerAcertos(arquivo = ARQUIVO) {
   return fs.readFileSync(arquivo, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
 }
 
-// `spawnSync(..., { timeout })` mata só o shell, não os filhos do verificador. Por isso o verificador roda dentro de um
-// processo ajudante que o dispara, espera o prazo e, se estourar, derruba a ÁRVORE inteira (matarArvore, igual ao avaliar.js).
+// `spawnSync(..., { timeout })` mata só o shell, e sair com código 0 deixa filhos em segundo plano vivos. Por isso o verificador roda
+// dentro de um processo ajudante que contém a árvore por TODA a execução, também na saída normal:
+// - Windows: o mesmo Job Object do `escada.js` (`job-windows.ps1`, KILL_ON_JOB_CLOSE): quando o wrapper sai ou é morto, o Windows
+//   mata tudo o que o verificador criou, inclusive filho "solto" (detached/unref).
+// - Outros sistemas: o verificador leva uma marca no ambiente; ao terminar (ou no prazo) o ajudante mata o grupo e todo processo
+//   que ainda carregue a marca (lida em /proc quando existe), mesmo os que saíram do grupo.
 const AJUDANTE = `
 const { spawn } = require('node:child_process');
-const { matarArvore } = require(process.argv[1]);
-const [comando, cwd, prazo] = [process.argv[2], process.argv[3], Number(process.argv[4])];
-const filho = spawn(comando, { shell: true, cwd, stdio: ['inherit', 'ignore', 'ignore'], detached: process.platform !== 'win32' });
-const t = setTimeout(() => { matarArvore(filho); process.exit(124); }, prazo);
+const fs = require('node:fs');
+const [comando, cwd, prazoTxt, wrapper, jobNome, liberar, marca] = process.argv.slice(1);
+const win = process.platform === 'win32';
+const limpar = (filho) => {
+  if (win) { try { filho.kill('SIGKILL'); } catch {} return; } // fechar o wrapper fecha o Job Object e mata a árvore
+  try { process.kill(-filho.pid, 'SIGKILL'); } catch {}
+  try {
+    for (const nome of fs.readdirSync('/proc')) {
+      if (!/^\\d+$/.test(nome) || Number(nome) === process.pid) continue;
+      try { if (fs.readFileSync('/proc/' + nome + '/environ', 'latin1').includes('MIXAI_VERIF=' + marca)) process.kill(Number(nome), 'SIGKILL'); } catch {}
+    }
+  } catch {}
+};
+let filho;
+if (win) {
+  fs.writeFileSync(liberar, '');
+  filho = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', wrapper],
+    { cwd, stdio: ['inherit', 'ignore', 'ignore'], windowsHide: true, env: { ...process.env, MIXAI_COMANDO: comando, MIXAI_JOB: jobNome, MIXAI_LIBERAR: liberar } });
+} else {
+  filho = spawn(comando, { shell: true, cwd, stdio: ['inherit', 'ignore', 'ignore'], detached: true, env: { ...process.env, MIXAI_VERIF: marca } });
+}
+const t = setTimeout(() => { limpar(filho); process.exit(124); }, Number(prazoTxt));
 filho.on('error', () => { clearTimeout(t); process.exit(1); });
-filho.on('close', (codigo) => { clearTimeout(t); process.exit(codigo === 0 ? 0 : 1); });
+filho.on('close', (codigo) => { clearTimeout(t); limpar(filho); process.exit(codigo === 0 ? 0 : 1); });
 `;
 
 function rodarVerificador(comando, resposta, cwd = RAIZ, prazoMs = 15000) {
-  const r = spawnSync(process.execPath, ['-e', AJUDANTE, path.join(__dirname, 'avaliar.js'), comando, cwd, String(prazoMs)],
+  const marca = crypto.randomBytes(12).toString('hex');
+  const liberar = path.join(os.tmpdir(), `mixai-verif-${marca}.liberar`);
+  const r = spawnSync(process.execPath, ['-e', AJUDANTE, comando, cwd, String(prazoMs), path.join(__dirname, 'job-windows.ps1'), `Local\\MixAI-verif-${marca}`, liberar, marca],
     { input: resposta, encoding: 'utf8', timeout: prazoMs + 10000, windowsHide: true });
   return r.status === 0;
 }

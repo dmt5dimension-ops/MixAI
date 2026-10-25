@@ -90,3 +90,18 @@ test("arquivo temporário é reconhecido com barra invertida, barra normal e cai
   assert.ok(!dependeDeTemporario("node tests/caso.js", opc));
   assert.ok(!dependeDeTemporario("node e:/terapix/_INFRA/Temp/caso.js", { plataforma: "linux", tmp }), "no Linux a caixa conta");
 });
+
+test("verificador que sai com 0 mas deixa filho solto (detached) em segundo plano não deixa processo vivo", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mixai-solto-"));
+  try {
+    const marca = path.join(dir, "marca.txt");
+    const neto = path.join(dir, "neto.js");
+    fs.writeFileSync(neto, `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marca)}, 'vivo'), 2000);`);
+    const pai = path.join(dir, "pai.js");
+    fs.writeFileSync(pai, `require('child_process').spawn(process.execPath, [${JSON.stringify(neto)}], { detached: true, stdio: 'ignore' }).unref();`);
+    assert.strictEqual(rodarVerificador(`node "${pai}"`, "x", RAIZ_TESTE), true, "o pai saiu com 0");
+    const esperar = Date.now() + 3500;
+    while (Date.now() < esperar) { /* espera o filho solto, se vivo, gravar a marca */ }
+    assert.ok(!fs.existsSync(marca), "o filho solto do verificador sobreviveu à saída normal");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
