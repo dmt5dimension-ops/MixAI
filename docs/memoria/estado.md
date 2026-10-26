@@ -60,6 +60,8 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Medidor do Laya como porteiro "cabe no local?" (`orquestra/laya-teste.js` + ponte `orquestra/laya-ponte.py`). Só o medidor está pronto, com modelo simulado; o Laya real ainda não rodou | `tests/laya-teste.test.js` |
 | Verificador de código do Kaggle sem acesso transitivo: módulos permitidos entram como fachada (sem `sys`/outros módulos), sem `operator`/`string`, atributos de quadro de execução barrados | `ferramentas/treino-kaggle/geradores.py` | `ferramentas/treino-kaggle/test_ciclo.py` |
 | Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
+| Escada por modelo: `resolver`/`resolverComLoop` aceitam `modelo` (só regras desse aluno, caso e regra nova marcados com ele); sem `modelo` nada muda | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
+| Escada sem `modelo` = Qwen padrão: regra exclusiva de outro aluno nunca entra no prompt dele (resolver e resolverComLoop) | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
 
 ## Em andamento
 
