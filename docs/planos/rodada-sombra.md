@@ -14,12 +14,12 @@ Precisa do PC ligado (Ollama + GPU). Nada disso roda na nuvem.
 ## Passo a passo (na raiz do repositório, no PC)
 
 1. `npm test` — confirma a linha de base verde (no PC, sem as 3 falhas da nuvem).
-2. `node orquestra/sombra.js rodar docs/planos/sombra-plano-80.json` — roda o Qwen nas 24 tarefas e grava cada tentativa no registro da sombra. Esperado (80 tarefas): "N certas, M erradas, K sem resposta".
+2. `node orquestra/sombra.js rodar docs/planos/sombra-plano-80.json` — roda o Qwen nas 80 tarefas e grava cada tentativa no registro da sombra. Esperado: "N certas, M erradas, K sem resposta".
 3. `node orquestra/sombra.js relatorio` — taxa de acerto por tipo.
 4. `node orquestra/sombra.js liberar` — grava a tabela de liberação (quais tipos o Qwen pode assumir).
 5. Opcional, para comparar outro aluno: `node orquestra/sombra.js rodar <plano> --modelo <nome> --comando "<comando>"` e depois `node orquestra/sombra.js comparar`.
-6. Se um tipo ficar perto de 90%, repetir 2 a 4 com outra semente (por exemplo 8) e olhar de novo: a janela considera as últimas 20 tentativas.
-7. Se a GPU estiver lenta, rodar em partes: gerar planos menores com `gerar-plano.js 40 <semente>` (as sementes diferentes somam no mesmo registro).
+6. Se um tipo ficar perto de 90%, gerar um plano novo com outra semente e rodar esse arquivo novo (rodar o mesmo arquivo de novo repete as mesmas tarefas e infla a taxa): `node orquestra/sombra-plano/gerar-plano.js 80 8 > docs/planos/sombra-plano-80-s8.json`, depois `node orquestra/sombra.js rodar docs/planos/sombra-plano-80-s8.json`, e repetir 3 e 4. A janela considera as últimas 20 tentativas por tipo.
+7. Se a GPU estiver lenta, não divida o arquivo à mão: gere planos menores com sementes diferentes (`gerar-plano.js 40 9 > plano-40-s9.json`, depois `gerar-plano.js 40 10 > plano-40-s10.json`) e rode cada arquivo uma vez; as tentativas somam no mesmo registro. Nunca rode o mesmo arquivo duas vezes para o mesmo fim.
 
 ## Como ler o resultado
 
