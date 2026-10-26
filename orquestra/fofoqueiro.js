@@ -122,6 +122,31 @@ function fechamentosDePR(g, fechados) {
   }
   return acoes;
 }
+// Tarefa `feita` por PR mesclado ("PR #30 mesclado" no resultado) cujo PR foi revertido por outro PR mesclado cujo título começa
+// com "Revert" e cita o número (título ou corpo, como o "Reverts ...#30" do GitHub): reabre. Depois de reaberta o resultado deixa de
+// dizer "mesclado", então não repete.
+// Números de PR das tarefas `feita` por PR mesclado ("PR #30 mesclado" no resultado).
+const prsFeitos = (g) => [...new Set(Object.values(g?.tarefas || {}).filter((t) => t.estado === 'feita').map((t) => /PR #(\d+) mesclado/.exec(String(t.resultado || ''))?.[1]).filter(Boolean).map(Number))];
+// PR revertido que um PR de revert declara: o corpo padrão do GitHub começa a linha com "Reverts <repo>#N" (ou a URL do PR).
+// Menção solta a outro número no título ou no corpo não conta.
+const alvoDoRevert = (p) => {
+  const m = /^[ \t]*Reverts[ \t]+(?:[\w.-]+\/[\w.-]+#|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/|#)(\d+)(?!\d)/im.exec(String(p.body || ''));
+  return m ? Number(m[1]) : null;
+};
+// Tarefa `feita` por PR mesclado cujo PR foi revertido por outro PR mesclado, de título "Revert...", que declara o número
+// como alvo do revert: reabre. Depois de reaberta o resultado deixa de dizer "mesclado", então não repete.
+function revertidosDePR(g, reverts) {
+  const acoes = [];
+  for (const t of Object.values(g?.tarefas || {})) {
+    if (t.estado !== 'feita') continue;
+    const m = /PR #(\d+) mesclado/.exec(String(t.resultado || ''));
+    if (!m) continue;
+    const n = Number(m[1]);
+    const rev = (reverts || []).find((p) => String(p.state || '').toUpperCase() === 'MERGED' && /^\s*revert\b/i.test(String(p.title || '')) && alvoDoRevert(p) === n);
+    if (rev) acoes.push({ tipo: 'reabrir', tarefa: t.id, pr: n, revert: rev.number, agente: t.agente, motivo: `PR #${n} revertido (#${rev.number}); tarefa ${t.id} reaberta`, chave: `reabrir:${t.id}:${n}:${rev.number}` });
+  }
+  return acoes;
+}
 // Atualiza o mapa de heads revisados: guarda o head em que a label foi vista pela primeira vez e esquece PRs que saíram da lista.
 function atualizarRevisados(prs, revisados = {}) {
   const novo = {};
@@ -281,6 +306,13 @@ function passo(deps, cfg = configPadrao) {
         if (Array.isArray(fechados)) acoes.push(...fechamentosDePR(g, fechados));
         else deps.log?.('falha ao consultar os PRs fechados no GitHub');
       }
+      const feitos = prsFeitos(g);
+      if (deps.listarReverts && feitos.length) {
+        let reverts = null;
+        try { reverts = deps.listarReverts(feitos); } catch { reverts = null; }
+        if (Array.isArray(reverts)) acoes.push(...revertidosDePR(g, reverts));
+        else deps.log?.('falha ao consultar os reverts no GitHub');
+      }
       acoes.push(...filtrarExternas(pendenciasDosPRs(atuais, estado.revisados), estado, agora, c));
       const revisados = atualizarRevisados(atuais, estado.revisados);
       if (JSON.stringify(revisados) !== JSON.stringify(estado.revisados || {})) { estado = { ...estado, revisados }; deps.salvarEstado(estado); }
@@ -377,6 +409,24 @@ function listarPRsFechados(cfg, numeros = [], spawn = spawnSync, plataforma = pr
   }
   return numeros.length && !achados.length ? null : achados;
 }
+// Quem cita cada PR feito (linha do tempo do GitHub, com paginação do próprio `gh`), sem janela de PRs recentes. Cada citação
+// vira {number,state,title,body}; só PR (não issue) entra, e `state` é MERGED quando já foi mesclado. PR que não deu para
+// consultar fica de fora; se nenhum deu, devolve null.
+const FILTRO_CITACOES = '.[] | select(.event == "cross-referenced") | .source.issue | select(.pull_request != null) | {number, title, body, state: (if .pull_request.merged_at != null then "MERGED" else "OPEN" end)}';
+function listarReverts(cfg, numeros = [], spawn = spawnSync, plataforma = process.platform) {
+  const achados = new Map();
+  let respondeu = 0;
+  for (const n of numeros) {
+    const r = chamarCli('gh', ['api', '--paginate', `repos/${cfg.repo}/issues/${n}/timeline?per_page=100`, '--jq', FILTRO_CITACOES], { encoding: 'utf8', timeout: 60000, windowsHide: true }, spawn, plataforma);
+    if (r.status !== 0) continue;
+    respondeu += 1;
+    for (const linha of String(r.stdout || '').split('\n')) {
+      if (!linha.trim()) continue;
+      try { const pr = JSON.parse(linha); if (pr && Number.isInteger(pr.number)) achados.set(pr.number, pr); } catch { /* linha ruim: ignora */ }
+    }
+  }
+  return numeros.length && !respondeu ? null : [...achados.values()];
+}
 function promptDe(a, g) {
   const ids = a.ids?.length ? a.ids : a.id ? [a.id] : [];
   const tarefas = ids.map((id) => g?.tarefas?.[id]).filter(Boolean)
@@ -404,6 +454,16 @@ function executarReal(a, g, cfg, deps = {}) {
     try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
     finally { fs.rmSync(plano, { force: true }); }
   });
+  if (a.tipo === 'reabrir') {
+    try { grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'feita' ? grafoApi.reabrir(x, a.tarefa, a.motivo) : x)); }
+    catch (e) {
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (revert sem reabrir)\n\nO PR #${a.pr} foi revertido (#${a.revert}), mas a tarefa ${a.tarefa} não pôde ser reaberta: ${e.message}. Decida o que fazer com o trabalho que depende dela.\n`);
+      log(`reabrir ${a.tarefa}: ${e.message}`);
+      return;
+    }
+    log(`reabrir ${a.tarefa}: ${a.motivo}`);
+    return;
+  }
   if (a.tipo === 'concluir') {
     grafoApi.atualizar(arquivoGrafo, (x) => (x.tarefas[a.tarefa]?.estado === 'em_revisao' ? grafoApi.concluir(x, a.tarefa, a.motivo) : x));
     log(`concluir ${a.tarefa}: ${a.motivo}`);
@@ -512,6 +572,7 @@ function depsReais(simular, cfg) {
     lerCanal: () => { try { return fs.readFileSync(ARQ_CANAL, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; } },
     listarPRs: () => listarPRs(cfg),
     listarPRsFechados: (numeros) => listarPRsFechados(cfg, numeros),
+    listarReverts: (numeros) => listarReverts(cfg, numeros),
     removerLabelRevisao: (numero, revisor) => chamarCli('gh', ['pr', 'edit', String(numero), '--repo', cfg.repo, '--remove-label', `revisado-por:${revisor}`], { encoding: 'utf8', timeout: 30000, windowsHide: true }),
     executar: (a, g) => executarReal(a, g, cfg),
     log: logPadrao,
@@ -536,5 +597,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, devolucoesPorCI, prsCitados, fechamentosDePR, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, listarReverts, prsFeitos, prsCitados, devolucoesPorCI, fechamentosDePR, revertidosDePR, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });

@@ -74,3 +74,23 @@ test('liberação vale por modelo: tipo liberado para um aluno não libera o out
   assert.strictEqual(r.resolvidoPor, 'claude');
   assert.strictEqual(local.n, 0);
 });
+
+for (const [nome, rodar] of [
+  ['resolver', (o) => resolver({ cabeNoLocal: true, ...o })],
+  ['resolverComLoop', (o) => resolverComLoop(o)],
+]) {
+  test(`${nome}: exceção do verificador do estático (naoConfirmado/abortada) sobe e nenhum agente é chamado`, async () => {
+    for (const erro of [{ naoConfirmado: true }, { abortada: true }, {}]) {
+      const { arquivos } = pasta();
+      const local = contador();
+      let superior = 0;
+      const verificar = async () => { throw Object.assign(new Error('verificador falhou'), erro); };
+      await assert.rejects(
+        () => rodar({ entrada: 'inverta abc', verificar, agentes: { local: local.fn, superiores: [{ nome: 'claude', chamar: async () => { superior++; return 'x'; } }] }, arquivos, estatico: [inverter] }),
+        /verificador falhou/,
+      );
+      assert.strictEqual(local.n, 0, 'o Qwen começou com o verificador anterior possivelmente vivo');
+      assert.strictEqual(superior, 0);
+    }
+  });
+}
