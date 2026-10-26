@@ -64,6 +64,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Relatório de uso por agente: quem resolveu cada caso, quanto subiu para Codex/Claude, tarefas feitas no grafo e quem está sem cota (`node orquestra/relatorio.js [--json]`, só leitura) | `tests/relatorio.test.js` |
 | Escada por modelo: `resolver`/`resolverComLoop` aceitam `modelo` (só regras desse aluno, caso e regra nova marcados com ele); sem `modelo` nada muda | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
 | Escada sem `modelo` = Qwen padrão: regra exclusiva de outro aluno nunca entra no prompt dele (resolver e resolverComLoop) | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
+| Testes de paralelismo não abrem mais janela do Terminal no Windows: todo `spawn` do teste leva `windowsHide: true` | `tests/paralelismo.test.js` | `tests/sem-janela-windows.test.js` |
 | Escada com aluno estático e liberação por tipo (opcionais): `estatico` tenta antes de qualquer LLM e só vale se o verificador aprovar; `liberacao: {tipo}` pula o Qwen enquanto o tipo não estiver liberado para o modelo na tabela da sombra. Sem as opções nada muda. No lote/CLI: `lote --estatico` (o estático lê só a `instrucao` da microtarefa, não o prompt com escopo) e `lote --liberacao` (o tipo vem do campo `tipo` da microtarefa; sem tipo nada é liberado) | `orquestra/escada.js` | `tests/escada-estatico-liberacao.test.js`, `tests/escada-lote-estatico.test.js` |
 
 ## Em andamento

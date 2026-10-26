@@ -98,7 +98,7 @@ test("verificador que sai com 0 mas deixa filho solto (detached) em segundo plan
     const neto = path.join(dir, "neto.js");
     fs.writeFileSync(neto, `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marca)}, 'vivo'), 2000);`);
     const pai = path.join(dir, "pai.js");
-    fs.writeFileSync(pai, `require('child_process').spawn(process.execPath, [${JSON.stringify(neto)}], { detached: true, stdio: 'ignore' }).unref();`);
+    fs.writeFileSync(pai, `require('child_process').spawn(process.execPath, [${JSON.stringify(neto)}], { detached: true, stdio: 'ignore', windowsHide: true }).unref();`);
     assert.strictEqual(rodarVerificador(`node "${pai}"`, "x", RAIZ_TESTE), true, "o pai saiu com 0");
     const esperar = Date.now() + 3500;
     while (Date.now() < esperar) { /* espera o filho solto, se vivo, gravar a marca */ }
