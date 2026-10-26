@@ -160,7 +160,7 @@ async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior,
   return { regra: nova, regraSalva: nova.id };
 }
 
-async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, liberacao }) {
+async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, entradaEstatica, liberacao }) {
   const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
@@ -169,7 +169,7 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   const base = { entrada, data: new Date().toISOString(), ...(modelo ? { modelo } : {}) };
   let saidaLocal = null;
 
-  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entrada, verificar) : null; // sem estático não ganha nem um turno a mais
+  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entradaEstatica ?? entrada, verificar) : null; // sem estático não ganha nem um turno a mais
   if (doEstatico) {
     registrarCaso(arquivos.casos, { ...base, regra: null, regrasUsadas: [], regraEstatica: doEstatico.regra, saida: doEstatico.saida, resolvidoPor: 'estatico' });
     return { ok: true, resolvidoPor: 'estatico', saida: doEstatico.saida, regrasUsadas: [], regraSalva: null };
@@ -493,7 +493,7 @@ function promptAntagonista(entrada, saida) {
 // Loop de tentativas: o Qwen tenta; se falha, o modelo grande lê o erro e reinstrui; repete até o limite.
 // Estourou o limite, o grande resolve direto. Cada falha resolvida vira caso de regressão (tests/falhas-escada.test.js).
 // Com `antagonico`, a resposta só vale se outro agente (nunca o que produziu) não achar defeito.
-async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, liberacao }) {
+async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, entradaEstatica, liberacao }) {
   const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   if (!Number.isInteger(maxTentativas) || maxTentativas < 1) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
@@ -525,7 +525,7 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
     return { ok: true, resolvidoPor, saida, tentativas, antagonista, regraSalva };
   };
 
-  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entrada, verificar) : null; // sem estático não ganha nem um turno a mais
+  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entradaEstatica ?? entrada, verificar) : null; // sem estático não ganha nem um turno a mais
   if (doEstatico) {
     registrarCaso(arquivos.casos, { ...base, regra: null, regrasUsadas: [], regraEstatica: doEstatico.regra, saida: doEstatico.saida, resolvidoPor: 'estatico' });
     return { ok: true, resolvidoPor: 'estatico', saida: doEstatico.saida, tentativas: 0, antagonista: null, regraSalva: null };
@@ -632,7 +632,7 @@ async function lote(opcoes) {
     }
   }
 }
-async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS, estatico, entradaEstatica, liberacao }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -805,9 +805,11 @@ async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes
           });
         },
       };
+      // `liberacao` (true ou { arquivo }) liga a trava por tipo: o tipo vem do campo `tipo` da microtarefa; sem tipo, nada é liberado.
+      const liberacaoDaMicro = liberacao ? { tipo: m.tipo, ...(liberacao.arquivo ? { arquivo: liberacao.arquivo } : {}) } : undefined;
       const execucao = maxTentativas !== undefined || antagonico
-        ? resolverComLoop({ entrada, verificar, agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
-        : resolver({ entrada, cabeNoLocal: true, verificar, agentes: agentesDaMicro, arquivos });
+        ? resolverComLoop({ entrada, verificar, agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos, estatico, entradaEstatica: m.instrucao.trim(), liberacao: liberacaoDaMicro })
+        : resolver({ entrada, cabeNoLocal: true, verificar, agentes: agentesDaMicro, arquivos, estatico, entradaEstatica: m.instrucao.trim(), liberacao: liberacaoDaMicro });
       const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
         .then((r) => {
@@ -928,6 +930,8 @@ async function principal(argumentos) {
       maxTentativas: tentativas,
       antagonico: resto.includes('--antagonico'),
       agentes,
+      estatico: resto.includes('--estatico') ? require('./estatico.js').lerRegras() : undefined,
+      liberacao: resto.includes('--liberacao') ? true : undefined,
     });
     // Se o lote lançar erro, as tarefas ficam em_andamento (morte de processo não confirmada): nunca voltam à fila sozinhas.
     ligacao?.terminar(resultados);
@@ -939,7 +943,7 @@ async function principal(argumentos) {
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--grafo <arquivo>] | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--estatico] [--liberacao] [--grafo <arquivo>] | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');
