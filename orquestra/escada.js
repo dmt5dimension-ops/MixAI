@@ -916,6 +916,10 @@ async function principal(argumentos) {
     const tentativas = it >= 0 ? Number(resto[it + 1]) : undefined;
     if (it >= 0 && (!Number.isInteger(tentativas) || tentativas < 1)) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
     validarPlano(microtarefas);
+    // As regras estáticas são lidas (e validadas) no pré-voo, ANTES de marcar o grafo: arquivo ilegível não pode deixar tarefa em_andamento sem processo.
+    const iRe = resto.indexOf('--regras-estaticas');
+    if (iRe >= 0 && !resto[iRe + 1]) throw new Error('a opção --regras-estaticas precisa do caminho do arquivo');
+    const estatico = resto.includes('--estatico') ? require('./estatico.js').lerRegras(iRe >= 0 ? path.resolve(resto[iRe + 1]) : undefined) : undefined;
     const controle = paralelo === 'auto'
       ? require('./paralelismo.js').criarControle({ refrescarMs: 5000, aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
       : paralelo;
@@ -932,7 +936,7 @@ async function principal(argumentos) {
       maxTentativas: tentativas,
       antagonico: resto.includes('--antagonico'),
       agentes,
-      estatico: resto.includes('--estatico') ? require('./estatico.js').lerRegras() : undefined,
+      estatico,
       liberacao: resto.includes('--liberacao') ? true : undefined,
     });
     // Se o lote lançar erro, as tarefas ficam em_andamento (morte de processo não confirmada): nunca voltam à fila sozinhas.
@@ -945,7 +949,7 @@ async function principal(argumentos) {
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--estatico] [--liberacao] [--grafo <arquivo>] | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--estatico [--regras-estaticas <arquivo>]] [--liberacao] [--grafo <arquivo>] | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');

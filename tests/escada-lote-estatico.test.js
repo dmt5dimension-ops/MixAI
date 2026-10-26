@@ -40,3 +40,22 @@ test('lote sem as opções continua igual: o Qwen resolve', async () => {
   const r = await escada.lote({ microtarefas: [micro('a')], verificadorDe, arquivos: arquivosTemp(d), agentes: { local: async () => 'ok', superiores: [] } });
   assert.strictEqual(r[0].resolvidoPor, 'local');
 });
+
+test('CLI: --estatico com arquivo de regras ilegível para no pré-voo e deixa a tarefa do grafo pendente', () => {
+  const { spawnSync } = require('node:child_process');
+  const grafo = require('../orquestra/grafo.js');
+  const d = dir();
+  const arq = path.join(d, 'grafo.json');
+  grafo.salvar(arq, grafo.adicionar(grafo.novo(), { id: 'a', titulo: 'A', agente: 'local', escopo: ['t/a'] }, '2026-10-23T12:00:00.000Z'));
+  const plano = path.join(d, 'plano.json');
+  fs.writeFileSync(plano, JSON.stringify([{ id: 'a', instrucao: 'faça', verificar: 'node -e 0', escopo: ['t/a'] }]));
+  const regras = path.join(d, 'regras-estaticas.json');
+  fs.writeFileSync(regras, '{ isto não é json');
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'orquestra', 'escada.js'), 'lote', plano, '--grafo', arq, '--estatico', '--regras-estaticas', regras], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+  assert.notStrictEqual(r.status, 0);
+  assert.strictEqual(grafo.carregar(arq).tarefas.a.estado, 'pendente', 'a tarefa ficou em_andamento sem nenhum agente iniciado');
+  const sem = spawnSync(process.execPath, [path.join(__dirname, '..', 'orquestra', 'escada.js'), 'lote', plano, '--grafo', arq, '--estatico', '--regras-estaticas'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+  assert.notStrictEqual(sem.status, 0);
+  assert.match(sem.stderr, /regras-estaticas/);
+  assert.strictEqual(grafo.carregar(arq).tarefas.a.estado, 'pendente');
+});
