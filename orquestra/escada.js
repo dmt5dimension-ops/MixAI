@@ -60,6 +60,28 @@ function normalizarModelo(modelo) {
   return modelo.trim();
 }
 
+// Degraus novos, ambos opt-in (sem as opções a escada é a de sempre):
+// - `estatico`: lista de regras estáticas confirmadas (orquestra/estatico.js). Antes de qualquer LLM, o aluno estático tenta; só vale se o
+//   VERIFICADOR aprovar a saída dele. Regra que casa e erra não vale nada: a tarefa segue para o Qwen como se ele não existisse.
+// - `liberacao: { tipo, arquivo? }`: o Qwen só trabalha de verdade se o tipo estiver liberado para o modelo na tabela da sombra
+//   (orquestra/sombra.js). Tipo não liberado, ou tabela ausente/ilegível, pula o Qwen e a tarefa sobe direto (a sombra continua medindo).
+async function tentarEstatico(estatico, entrada, verificar) {
+  if (!Array.isArray(estatico) || !estatico.length) return null;
+  const r = require('./estatico.js').resolver(estatico, entrada);
+  if (!r || typeof r.saida !== 'string' || !r.saida.trim()) return null;
+  // Só `{ ok: false }` é regra que errou. Exceção do verificador (inclusive `naoConfirmado`/`abortada`: morte do processo não confirmada) sobe
+  // para o chamador, como nos outros caminhos da escada; seguir para o Qwen com um verificador possivelmente vivo seria rodar dois ao mesmo tempo.
+  if ((await verificar(r.saida)).ok === true) return r;
+  return null;
+}
+
+function localLiberado(liberacao, modelo = MODELO_PADRAO) {
+  if (!liberacao) return true;
+  const { tipo, arquivo } = liberacao;
+  if (typeof tipo !== 'string' || !tipo.trim()) return false;
+  return arquivo ? require('./sombra.js').tipoLiberado(tipo, modelo, arquivo) : require('./sombra.js').tipoLiberado(tipo, modelo);
+}
+
 function escolherRegras(regras, entrada) {
   const texto = String(entrada).toLowerCase();
   return regras.filter((r) => r.status === 'confirmada' &&
@@ -140,7 +162,7 @@ async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior,
   return { regra: nova, regraSalva: nova.id };
 }
 
-async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto }) {
+async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, liberacao }) {
   const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
@@ -148,6 +170,13 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   const ids = usadas.map((r) => r.id);
   const base = { entrada, data: new Date().toISOString(), ...(modelo ? { modelo } : {}) };
   let saidaLocal = null;
+
+  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entrada, verificar) : null; // sem estático não ganha nem um turno a mais
+  if (doEstatico) {
+    registrarCaso(arquivos.casos, { ...base, regra: null, regrasUsadas: [], regraEstatica: doEstatico.regra, saida: doEstatico.saida, resolvidoPor: 'estatico' });
+    return { ok: true, resolvidoPor: 'estatico', saida: doEstatico.saida, regrasUsadas: [], regraSalva: null };
+  }
+  if (cabeNoLocal && !localLiberado(liberacao, modelo)) cabeNoLocal = false; // tipo ainda não liberado: o Qwen não trabalha de verdade
 
   if (cabeNoLocal) {
     saidaLocal = await tentar(agentes.local, montarPrompt(entrada, usadas));
@@ -466,7 +495,7 @@ function promptAntagonista(entrada, saida) {
 // Loop de tentativas: o Qwen tenta; se falha, o modelo grande lê o erro e reinstrui; repete até o limite.
 // Estourou o limite, o grande resolve direto. Cada falha resolvida vira caso de regressão (tests/falhas-escada.test.js).
 // Com `antagonico`, a resposta só vale se outro agente (nunca o que produziu) não achar defeito.
-async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto }) {
+async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, liberacao }) {
   const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   if (!Number.isInteger(maxTentativas) || maxTentativas < 1) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
@@ -498,8 +527,15 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
     return { ok: true, resolvidoPor, saida, tentativas, antagonista, regraSalva };
   };
 
+  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entrada, verificar) : null; // sem estático não ganha nem um turno a mais
+  if (doEstatico) {
+    registrarCaso(arquivos.casos, { ...base, regra: null, regrasUsadas: [], regraEstatica: doEstatico.regra, saida: doEstatico.saida, resolvidoPor: 'estatico' });
+    return { ok: true, resolvidoPor: 'estatico', saida: doEstatico.saida, tentativas: 0, antagonista: null, regraSalva: null };
+  }
+  const localPode = localLiberado(liberacao, modelo);
+
   let instrucao = entrada;
-  for (let t = 1; t <= maxTentativas; t += 1) {
+  for (let t = 1; t <= maxTentativas && localPode; t += 1) {
     const saida = await tentar(agentes.local, montarPrompt(instrucao, usadas));
     if (saida === null) {
       // Infraestrutura (sem memória, sem placa, processo caiu): o modelo nem respondeu, então não foi erro dele.
