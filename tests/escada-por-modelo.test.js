@@ -60,3 +60,23 @@ test('regra aprendida para um modelo nasce limitada a ele', async () => {
   }
   assert.strictEqual(lerCasos(arquivos.casos).at(-1).modelo, 'qwen-x');
 });
+
+test('modelo com espaço nas pontas é normalizado: a regra aprendida é achada na chamada seguinte', async () => {
+  const arquivos = pasta();
+  fs.writeFileSync(arquivos.regras, JSON.stringify({ regras: [] }));
+  let n = 0;
+  const agentes = {
+    local: async () => (++n === 1 ? 'errado' : 'certo'),
+    superiores: [{ nome: 'claude', chamar: async (p) => (p.includes('regra') || p.includes('Regra') ? JSON.stringify({ id: 'faca-assim', regra: 'faça assim', palavras: ['data'], exemplo: { entrada: 'x', saida: 'y' } }) : 'certo') }],
+  };
+  const verificar = async (s) => ({ ok: s === 'certo' });
+  const r = await resolver({ entrada: 'converta a data', cabeNoLocal: true, verificar, agentes, arquivos, modelo: ' qwen-x ' });
+  assert.ok(r.regraSalva);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(arquivos.regras, 'utf8')).regras.find((x) => x.id === r.regraSalva).modelos, ['qwen-x']);
+  assert.strictEqual(lerCasos(arquivos.casos).at(-1).modelo, 'qwen-x');
+  const prompts = [];
+  const r2 = await resolver({ entrada: 'converta a data', cabeNoLocal: true, verificar, agentes: { local: async (p) => { prompts.push(p); return 'certo'; }, superiores: [] }, arquivos, modelo: ' qwen-x ' });
+  assert.deepStrictEqual(r2.regrasUsadas, ['faca-assim'], 'a regra recém-aprendida não foi reaproveitada');
+  assert.ok(prompts[0].includes('faça assim'));
+  await assert.rejects(() => resolver({ entrada: 'x', cabeNoLocal: true, verificar, agentes, arquivos, modelo: '  ' }), /modelo sem nome/);
+});

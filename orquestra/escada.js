@@ -52,6 +52,14 @@ function regrasParaModelo(regras, modelo = MODELO_PADRAO) {
   return regrasDoModelo(regras, modelo);
 }
 
+// O nome do modelo é normalizado UMA vez (sem espaço nas pontas) antes de filtrar regra, gravar caso e salvar `modelos`,
+// senão a regra aprendida para " qwen-x " nunca seria achada por "qwen-x".
+function normalizarModelo(modelo) {
+  if (modelo === undefined) return undefined;
+  if (typeof modelo !== 'string' || !modelo.trim()) throw new Error('modelo sem nome');
+  return modelo.trim();
+}
+
 function escolherRegras(regras, entrada) {
   const texto = String(entrada).toLowerCase();
   return regras.filter((r) => r.status === 'confirmada' &&
@@ -132,7 +140,8 @@ async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior,
   return { regra: nova, regraSalva: nova.id };
 }
 
-async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo }) {
+async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto }) {
+  const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
   const usadas = escolherRegras(regrasParaModelo(lerRegras(arquivos.regras), modelo), entrada);
@@ -457,7 +466,8 @@ function promptAntagonista(entrada, saida) {
 // Loop de tentativas: o Qwen tenta; se falha, o modelo grande lê o erro e reinstrui; repete até o limite.
 // Estourou o limite, o grande resolve direto. Cada falha resolvida vira caso de regressão (tests/falhas-escada.test.js).
 // Com `antagonico`, a resposta só vale se outro agente (nunca o que produziu) não achar defeito.
-async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo }) {
+async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto }) {
+  const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   if (!Number.isInteger(maxTentativas) || maxTentativas < 1) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
   const usadas = escolherRegras(regrasParaModelo(lerRegras(arquivos.regras), modelo), entrada);
