@@ -30,7 +30,7 @@
     "etapa3": {
       "id": "etapa3",
       "titulo": "Aplicar a resposta do Qwen nos arquivos, dentro do escopo",
-      "estado": "em_andamento",
+      "estado": "feita",
       "depende": [
         "etapa2"
       ],
@@ -43,8 +43,8 @@
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:40:00.000Z",
-      "resultado": null
+      "atualizado": "2026-10-26T11:52:44.368Z",
+      "resultado": "PR #24 mesclado"
     },
     "etapa4": {
       "id": "etapa4",
@@ -62,13 +62,13 @@
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:40:00.000Z",
-      "resultado": "PR #16 aprovado pelo Codex, aguardando merge"
+      "atualizado": "2026-10-26T11:52:44.368Z",
+      "resultado": "PR #16 mesclado"
     },
     "etapa5": {
       "id": "etapa5",
       "titulo": "Ajustar paralelismo pelo uso do PC",
-      "estado": "em_revisao",
+      "estado": "feita",
       "depende": [
         "etapa2"
       ],
@@ -86,13 +86,13 @@
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:40:00.000Z",
-      "resultado": "PR #19 em revisão do Codex"
+      "atualizado": "2026-10-26T11:52:44.368Z",
+      "resultado": "PR #19 mesclado"
     },
     "etapa6": {
       "id": "etapa6",
       "titulo": "Grafo persistente de tarefas",
-      "estado": "em_revisao",
+      "estado": "feita",
       "depende": [
         "etapa4"
       ],
@@ -107,8 +107,8 @@
       ],
       "verificar": null,
       "tentativas": 0,
-      "atualizado": "2026-10-22T05:40:00.000Z",
-      "resultado": "PR #18 em revisão do Codex"
+      "atualizado": "2026-10-26T11:52:44.368Z",
+      "resultado": "PR #18 mesclado"
     }
   }
 }
