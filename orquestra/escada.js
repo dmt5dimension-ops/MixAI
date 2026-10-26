@@ -69,7 +69,9 @@ async function tentarEstatico(estatico, entrada, verificar) {
   if (!Array.isArray(estatico) || !estatico.length) return null;
   const r = require('./estatico.js').resolver(estatico, entrada);
   if (!r || typeof r.saida !== 'string' || !r.saida.trim()) return null;
-  try { if ((await verificar(r.saida)).ok === true) return r; } catch { /* verificador falhou: não vale */ }
+  // Só `{ ok: false }` é regra que errou. Exceção do verificador (inclusive `naoConfirmado`/`abortada`: morte do processo não confirmada) sobe
+  // para o chamador, como nos outros caminhos da escada; seguir para o Qwen com um verificador possivelmente vivo seria rodar dois ao mesmo tempo.
+  if ((await verificar(r.saida)).ok === true) return r;
   return null;
 }
 
