@@ -60,6 +60,28 @@ function normalizarModelo(modelo) {
   return modelo.trim();
 }
 
+// Degraus novos, ambos opt-in (sem as opções a escada é a de sempre):
+// - `estatico`: lista de regras estáticas confirmadas (orquestra/estatico.js). Antes de qualquer LLM, o aluno estático tenta; só vale se o
+//   VERIFICADOR aprovar a saída dele. Regra que casa e erra não vale nada: a tarefa segue para o Qwen como se ele não existisse.
+// - `liberacao: { tipo, arquivo? }`: o Qwen só trabalha de verdade se o tipo estiver liberado para o modelo na tabela da sombra
+//   (orquestra/sombra.js). Tipo não liberado, ou tabela ausente/ilegível, pula o Qwen e a tarefa sobe direto (a sombra continua medindo).
+async function tentarEstatico(estatico, entrada, verificar) {
+  if (!Array.isArray(estatico) || !estatico.length) return null;
+  const r = require('./estatico.js').resolver(estatico, entrada);
+  if (!r || typeof r.saida !== 'string' || !r.saida.trim()) return null;
+  // Só `{ ok: false }` é regra que errou. Exceção do verificador (inclusive `naoConfirmado`/`abortada`: morte do processo não confirmada) sobe
+  // para o chamador, como nos outros caminhos da escada; seguir para o Qwen com um verificador possivelmente vivo seria rodar dois ao mesmo tempo.
+  if ((await verificar(r.saida)).ok === true) return r;
+  return null;
+}
+
+function localLiberado(liberacao, modelo = MODELO_PADRAO) {
+  if (!liberacao) return true;
+  const { tipo, arquivo } = liberacao;
+  if (typeof tipo !== 'string' || !tipo.trim()) return false;
+  return arquivo ? require('./sombra.js').tipoLiberado(tipo, modelo, arquivo) : require('./sombra.js').tipoLiberado(tipo, modelo);
+}
+
 function escolherRegras(regras, entrada) {
   const texto = String(entrada).toLowerCase();
   return regras.filter((r) => r.status === 'confirmada' &&
@@ -140,7 +162,7 @@ async function aprenderRegra({ entrada, saidaLocal, saida, nome, chamarSuperior,
   return { regra: nova, regraSalva: nova.id };
 }
 
-async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto }) {
+async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, entradaEstatica, liberacao }) {
   const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   const ok = async (saida) => (await verificar(saida)).ok === true;
@@ -148,6 +170,13 @@ async function resolver({ entrada, cabeNoLocal, verificar, agentes, arquivos = A
   const ids = usadas.map((r) => r.id);
   const base = { entrada, data: new Date().toISOString(), ...(modelo ? { modelo } : {}) };
   let saidaLocal = null;
+
+  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entradaEstatica ?? entrada, verificar) : null; // sem estático não ganha nem um turno a mais
+  if (doEstatico) {
+    registrarCaso(arquivos.casos, { ...base, regra: null, regrasUsadas: [], regraEstatica: doEstatico.regra, saida: doEstatico.saida, resolvidoPor: 'estatico' });
+    return { ok: true, resolvidoPor: 'estatico', saida: doEstatico.saida, regrasUsadas: [], regraSalva: null };
+  }
+  if (cabeNoLocal && !localLiberado(liberacao, modelo)) cabeNoLocal = false; // tipo ainda não liberado: o Qwen não trabalha de verdade
 
   if (cabeNoLocal) {
     saidaLocal = await tentar(agentes.local, montarPrompt(entrada, usadas));
@@ -466,7 +495,7 @@ function promptAntagonista(entrada, saida) {
 // Loop de tentativas: o Qwen tenta; se falha, o modelo grande lê o erro e reinstrui; repete até o limite.
 // Estourou o limite, o grande resolve direto. Cada falha resolvida vira caso de regressão (tests/falhas-escada.test.js).
 // Com `antagonico`, a resposta só vale se outro agente (nunca o que produziu) não achar defeito.
-async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto }) {
+async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3, antagonico = false, verificarComando = null, arquivos = ARQUIVOS, modelo: modeloBruto, estatico, entradaEstatica, liberacao }) {
   const modelo = normalizarModelo(modeloBruto);
   if (typeof verificar !== 'function') throw new Error('Sem verificador não há como saber se a resposta está certa.');
   if (!Number.isInteger(maxTentativas) || maxTentativas < 1) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
@@ -498,8 +527,15 @@ async function resolverComLoop({ entrada, verificar, agentes, maxTentativas = 3,
     return { ok: true, resolvidoPor, saida, tentativas, antagonista, regraSalva };
   };
 
+  const doEstatico = Array.isArray(estatico) && estatico.length ? await tentarEstatico(estatico, entradaEstatica ?? entrada, verificar) : null; // sem estático não ganha nem um turno a mais
+  if (doEstatico) {
+    registrarCaso(arquivos.casos, { ...base, regra: null, regrasUsadas: [], regraEstatica: doEstatico.regra, saida: doEstatico.saida, resolvidoPor: 'estatico' });
+    return { ok: true, resolvidoPor: 'estatico', saida: doEstatico.saida, tentativas: 0, antagonista: null, regraSalva: null };
+  }
+  const localPode = localLiberado(liberacao, modelo);
+
   let instrucao = entrada;
-  for (let t = 1; t <= maxTentativas; t += 1) {
+  for (let t = 1; t <= maxTentativas && localPode; t += 1) {
     const saida = await tentar(agentes.local, montarPrompt(instrucao, usadas));
     if (saida === null) {
       // Infraestrutura (sem memória, sem placa, processo caiu): o modelo nem respondeu, então não foi erro dele.
@@ -598,7 +634,7 @@ async function lote(opcoes) {
     }
   }
 }
-async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS }) {
+async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS, estatico, entradaEstatica, liberacao }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -771,9 +807,11 @@ async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes
           });
         },
       };
+      // `liberacao` (true ou { arquivo }) liga a trava por tipo: o tipo vem do campo `tipo` da microtarefa; sem tipo, nada é liberado.
+      const liberacaoDaMicro = liberacao ? { tipo: m.tipo, ...(liberacao.arquivo ? { arquivo: liberacao.arquivo } : {}) } : undefined;
       const execucao = maxTentativas !== undefined || antagonico
-        ? resolverComLoop({ entrada, verificar, agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos })
-        : resolver({ entrada, cabeNoLocal: true, verificar, agentes: agentesDaMicro, arquivos });
+        ? resolverComLoop({ entrada, verificar, agentes: agentesDaMicro, maxTentativas: maxTentativas === undefined ? 1 : maxTentativas, antagonico, verificarComando: m.verificar, arquivos, estatico, entradaEstatica: m.instrucao.trim(), liberacao: liberacaoDaMicro })
+        : resolver({ entrada, cabeNoLocal: true, verificar, agentes: agentesDaMicro, arquivos, estatico, entradaEstatica: m.instrucao.trim(), liberacao: liberacaoDaMicro });
       const feito = execucao
         .catch((erro) => ({ ok: false, resolvidoPor: null, saida: null, erro: erro.message }))
         .then((r) => {
@@ -878,6 +916,10 @@ async function principal(argumentos) {
     const tentativas = it >= 0 ? Number(resto[it + 1]) : undefined;
     if (it >= 0 && (!Number.isInteger(tentativas) || tentativas < 1)) throw new Error('tentativas precisa ser um número inteiro maior que zero.');
     validarPlano(microtarefas);
+    // As regras estáticas são lidas (e validadas) no pré-voo, ANTES de marcar o grafo: arquivo ilegível não pode deixar tarefa em_andamento sem processo.
+    const iRe = resto.indexOf('--regras-estaticas');
+    if (iRe >= 0 && !resto[iRe + 1]) throw new Error('a opção --regras-estaticas precisa do caminho do arquivo');
+    const estatico = resto.includes('--estatico') ? require('./estatico.js').lerRegras(iRe >= 0 ? path.resolve(resto[iRe + 1]) : undefined) : undefined;
     const controle = paralelo === 'auto'
       ? require('./paralelismo.js').criarControle({ refrescarMs: 5000, aoDecidir: (d) => console.error(`paralelo ${d.alvo}: ${d.motivo}`) })
       : paralelo;
@@ -894,6 +936,8 @@ async function principal(argumentos) {
       maxTentativas: tentativas,
       antagonico: resto.includes('--antagonico'),
       agentes,
+      estatico,
+      liberacao: resto.includes('--liberacao') ? true : undefined,
     });
     // Se o lote lançar erro, as tarefas ficam em_andamento (morte de processo não confirmada): nunca voltam à fila sozinhas.
     ligacao?.terminar(resultados);
@@ -905,7 +949,7 @@ async function principal(argumentos) {
     return 0;
   }
   if (comando !== 'resolver' || !alvo) {
-    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--grafo <arquivo>] | regras | exportar');
+    console.error('Uso: node orquestra/escada.js resolver <arquivo-da-tarefa> [--cabe-no-local] --verificar "<comando que lê a resposta e sai 0 se estiver certa>" | lote <plano.json> [--paralelo N] [--tentativas N] [--antagonico] [--estatico [--regras-estaticas <arquivo>]] [--liberacao] [--grafo <arquivo>] | regras | exportar');
     return 2;
   }
   const iv = resto.indexOf('--verificar');
