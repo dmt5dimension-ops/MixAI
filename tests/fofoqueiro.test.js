@@ -450,3 +450,46 @@ test('falha ao consultar os PRs é registrada e escalada (uma vez por janela), n
     assert.ok(logs.length >= 1, 'registrou no log');
   }
 });
+
+test('canal: mensagens velhas não acordam agente; só as dentro da idade máxima contam', () => {
+  const canal = [
+    '### 2026-10-20 — Codex → Claude (velha 1)\nA.\n',
+    '### 2026-10-21 — Codex → Claude (velha 2)\nB.\n',
+    '### 2026-10-22 — Codex → Claude (velha 3)\nC.\n',
+    '### 2026-10-26 — Codex → Claude (de hoje)\nD.\n',
+  ].join('\n');
+  const agora = new Date('2026-10-26T12:00:00Z');
+  assert.equal(vigia.pendenciasDoCanal(canal).length, 4, 'sem agora/idade não há corte (comportamento anterior)');
+  const pend = vigia.pendenciasDoCanal(canal, agora, 12);
+  assert.deepEqual(pend.map((x) => x.motivo.match(/\((.+)\)/)[1]), ['de hoje']);
+  // data com hora completa vale a hora; só a data vale até o fim do dia
+  const iso = '### 2026-10-26T01:00:00.000Z — Codex → Claude (madrugada)\nE.\n';
+  assert.equal(vigia.pendenciasDoCanal(iso, agora, 12).length, 1);
+  assert.equal(vigia.pendenciasDoCanal(iso, new Date('2026-10-26T14:00:00Z'), 12).length, 0);
+});
+
+test('passo usa a idade máxima do canal: histórico antigo do Codex não gera disparo', () => {
+  const canal = ['### 2026-10-20 — Codex → Claude (velha)\nA.\n', '### 2026-10-26 — Codex → Claude (hoje)\nB.\n'].join('\n');
+  const a = vigia.passo({
+    agora: () => new Date('2026-10-26T12:00:00Z'), lerGrafo: () => criar(), lerEstado: () => ({}), lerSemCota: () => ({}),
+    lerCanal: () => canal, executar: () => { throw new Error('agente foi chamado'); }, simular: true,
+  }, CFG);
+  assert.deepEqual(a.filter((x) => x.agente === 'claude').map((x) => x.motivo), ['Nova mensagem no canal: ### 2026-10-26 — Codex → Claude (hoje)']);
+});
+
+test('agentes do supervisor rodam sem chave de API no ambiente (assinatura, nunca cobrança por token)', () => {
+  const env = { PATH: 'x', OPENAI_API_KEY: 'sk-a', ANTHROPIC_API_KEY: 'sk-b', anthropic_base_url: 'http://x', CODEX_API_KEY: 'c', ANTHROPIC_AUTH_TOKEN: 't', HOME: 'h' };
+  const limpo = vigia.ambienteDosAgentes(env);
+  assert.deepEqual(Object.keys(limpo).sort(), ['HOME', 'PATH']);
+  assert.equal(env.OPENAI_API_KEY, 'sk-a', 'o ambiente original não é alterado');
+  for (const agente of ['codex', 'claude']) {
+    let opcoes;
+    const spawn = (cmd, args, o) => { opcoes = o; return { status: 0, stdout: '{}', stderr: '' }; };
+    vigia.acordar({ tipo: 'acordar', agente, motivo: 'm', ids: [] }, { ...CFG, tempoMaximoDisparoMinutos: 1 }, grafo.novo(), spawn, 'linux', env);
+    assert.equal(opcoes.env.OPENAI_API_KEY, undefined);
+    assert.equal(opcoes.env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(opcoes.env.ANTHROPIC_BASE_URL, undefined);
+    assert.equal(opcoes.env.anthropic_base_url, undefined);
+    assert.equal(opcoes.env.PATH, 'x');
+  }
+});
