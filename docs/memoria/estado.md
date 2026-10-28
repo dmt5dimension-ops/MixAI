@@ -67,6 +67,7 @@ Regra: o que está em "Já funciona" não se mexe sem pedido explícito do dono.
 | Escada sem `modelo` = Qwen padrão: regra exclusiva de outro aluno nunca entra no prompt dele (resolver e resolverComLoop) | `orquestra/escada.js` | `tests/escada-por-modelo.test.js` |
 | Testes de paralelismo não abrem mais janela do Terminal no Windows: todo `spawn` do teste leva `windowsHide: true` | `tests/paralelismo.test.js` | `tests/sem-janela-windows.test.js` |
 | Escada com aluno estático e liberação por tipo (opcionais): `estatico` tenta antes de qualquer LLM e só vale se o verificador aprovar; `liberacao: {tipo}` pula o Qwen enquanto o tipo não estiver liberado para o modelo na tabela da sombra. Sem as opções nada muda. No lote/CLI: `lote --estatico` (o estático lê só a `instrucao` da microtarefa, não o prompt com escopo) e `lote --liberacao` (o tipo vem do campo `tipo` da microtarefa; sem tipo nada é liberado) | `orquestra/escada.js` | `tests/escada-estatico-liberacao.test.js`, `tests/escada-lote-estatico.test.js` |
+| Plano da rodada em sombra pronto (80 tarefas, 20 por tipo; só falta rodar no PC com o Qwen) | `docs/planos/rodada-sombra.md`, `docs/planos/sombra-plano-80.json` | `tests/plano-sombra.test.js` |
 
 ## Em andamento
 

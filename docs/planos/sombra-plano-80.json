@@ -1,0 +1,562 @@
+[
+  {
+    "id": "data-iso-001",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 25/02/1999 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1999-02-25\"",
+    "referencia": "1999-02-25"
+  },
+  {
+    "id": "contar-vogais-002",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"ozaydaazzie\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"6\"",
+    "referencia": "6"
+  },
+  {
+    "id": "inverter-texto-003",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"ghheeid\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"dieehhg\"",
+    "referencia": "dieehhg"
+  },
+  {
+    "id": "regex-digitos-004",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 5 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExIiwiNzc3NzAiXSwicnVpbnMiOlsiMTExMTExIiwiMTExMSIsImFhYWFhIiwiIl19",
+    "referencia": "\\d{5}"
+  },
+  {
+    "id": "data-iso-005",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 11/07/1993 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1993-07-11\"",
+    "referencia": "1993-07-11"
+  },
+  {
+    "id": "contar-vogais-006",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"ydbzbiibb\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2\"",
+    "referencia": "2"
+  },
+  {
+    "id": "inverter-texto-007",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"hagjcfd\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"dfcjgah\"",
+    "referencia": "dfcjgah"
+  },
+  {
+    "id": "regex-digitos-008",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 4 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTEiLCI3NzcwIl0sInJ1aW5zIjpbIjExMTExIiwiMTExIiwiYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{4}"
+  },
+  {
+    "id": "data-iso-009",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 23/08/2009 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2009-08-23\"",
+    "referencia": "2009-08-23"
+  },
+  {
+    "id": "contar-vogais-010",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"dbyoezibc\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"3\"",
+    "referencia": "3"
+  },
+  {
+    "id": "inverter-texto-011",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"febebaghb\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"bhgabebef\"",
+    "referencia": "bhgabebef"
+  },
+  {
+    "id": "regex-digitos-012",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 6 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMSIsIjc3Nzc3MCJdLCJydWlucyI6WyIxMTExMTExIiwiMTExMTEiLCJhYWFhYWEiLCIiXX0=",
+    "referencia": "\\d{6}"
+  },
+  {
+    "id": "data-iso-013",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 09/06/2018 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2018-06-09\"",
+    "referencia": "2018-06-09"
+  },
+  {
+    "id": "contar-vogais-014",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"eeuyiixzdyc\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"5\"",
+    "referencia": "5"
+  },
+  {
+    "id": "inverter-texto-015",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"jhcac\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"cachj\"",
+    "referencia": "cachj"
+  },
+  {
+    "id": "regex-digitos-016",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 7 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMTEiLCI3Nzc3NzcwIl0sInJ1aW5zIjpbIjExMTExMTExIiwiMTExMTExIiwiYWFhYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{7}"
+  },
+  {
+    "id": "data-iso-017",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 18/02/2019 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2019-02-18\"",
+    "referencia": "2019-02-18"
+  },
+  {
+    "id": "contar-vogais-018",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"ixedd\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2\"",
+    "referencia": "2"
+  },
+  {
+    "id": "inverter-texto-019",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"icgge\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"eggci\"",
+    "referencia": "eggci"
+  },
+  {
+    "id": "regex-digitos-020",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 4 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTEiLCI3NzcwIl0sInJ1aW5zIjpbIjExMTExIiwiMTExIiwiYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{4}"
+  },
+  {
+    "id": "data-iso-021",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 30/01/2010 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2010-01-30\"",
+    "referencia": "2010-01-30"
+  },
+  {
+    "id": "contar-vogais-022",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"beixyx\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2\"",
+    "referencia": "2"
+  },
+  {
+    "id": "inverter-texto-023",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"gfahi\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"ihafg\"",
+    "referencia": "ihafg"
+  },
+  {
+    "id": "regex-digitos-024",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 6 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMSIsIjc3Nzc3MCJdLCJydWlucyI6WyIxMTExMTExIiwiMTExMTEiLCJhYWFhYWEiLCIiXX0=",
+    "referencia": "\\d{6}"
+  },
+  {
+    "id": "data-iso-025",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 30/08/2022 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2022-08-30\"",
+    "referencia": "2022-08-30"
+  },
+  {
+    "id": "contar-vogais-026",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"xezz\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1\"",
+    "referencia": "1"
+  },
+  {
+    "id": "inverter-texto-027",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"ciijj\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"jjiic\"",
+    "referencia": "jjiic"
+  },
+  {
+    "id": "regex-digitos-028",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 3 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMSIsIjc3MCJdLCJydWlucyI6WyIxMTExIiwiMTEiLCJhYWEiLCIiXX0=",
+    "referencia": "\\d{3}"
+  },
+  {
+    "id": "data-iso-029",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 15/11/2023 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2023-11-15\"",
+    "referencia": "2023-11-15"
+  },
+  {
+    "id": "contar-vogais-030",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"zczyu\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1\"",
+    "referencia": "1"
+  },
+  {
+    "id": "inverter-texto-031",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"dbaabha\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"ahbaabd\"",
+    "referencia": "ahbaabd"
+  },
+  {
+    "id": "regex-digitos-032",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 5 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExIiwiNzc3NzAiXSwicnVpbnMiOlsiMTExMTExIiwiMTExMSIsImFhYWFhIiwiIl19",
+    "referencia": "\\d{5}"
+  },
+  {
+    "id": "data-iso-033",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 31/10/2008 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2008-10-31\"",
+    "referencia": "2008-10-31"
+  },
+  {
+    "id": "contar-vogais-034",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"coieiaucebx\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"7\"",
+    "referencia": "7"
+  },
+  {
+    "id": "inverter-texto-035",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"ebjafbid\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"dibfajbe\"",
+    "referencia": "dibfajbe"
+  },
+  {
+    "id": "regex-digitos-036",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 6 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMSIsIjc3Nzc3MCJdLCJydWlucyI6WyIxMTExMTExIiwiMTExMTEiLCJhYWFhYWEiLCIiXX0=",
+    "referencia": "\\d{6}"
+  },
+  {
+    "id": "data-iso-037",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 22/09/2007 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2007-09-22\"",
+    "referencia": "2007-09-22"
+  },
+  {
+    "id": "contar-vogais-038",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"dudaxo\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"3\"",
+    "referencia": "3"
+  },
+  {
+    "id": "inverter-texto-039",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"hfccjha\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"ahjccfh\"",
+    "referencia": "ahjccfh"
+  },
+  {
+    "id": "regex-digitos-040",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 4 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTEiLCI3NzcwIl0sInJ1aW5zIjpbIjExMTExIiwiMTExIiwiYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{4}"
+  },
+  {
+    "id": "data-iso-041",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 13/11/2009 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2009-11-13\"",
+    "referencia": "2009-11-13"
+  },
+  {
+    "id": "contar-vogais-042",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"izez\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2\"",
+    "referencia": "2"
+  },
+  {
+    "id": "inverter-texto-043",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"jcej\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"jecj\"",
+    "referencia": "jecj"
+  },
+  {
+    "id": "regex-digitos-044",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 4 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTEiLCI3NzcwIl0sInJ1aW5zIjpbIjExMTExIiwiMTExIiwiYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{4}"
+  },
+  {
+    "id": "data-iso-045",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 18/03/1995 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1995-03-18\"",
+    "referencia": "1995-03-18"
+  },
+  {
+    "id": "contar-vogais-046",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"bdaibuzeaye\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"6\"",
+    "referencia": "6"
+  },
+  {
+    "id": "inverter-texto-047",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"fhcd\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"dchf\"",
+    "referencia": "dchf"
+  },
+  {
+    "id": "regex-digitos-048",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 6 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMSIsIjc3Nzc3MCJdLCJydWlucyI6WyIxMTExMTExIiwiMTExMTEiLCJhYWFhYWEiLCIiXX0=",
+    "referencia": "\\d{6}"
+  },
+  {
+    "id": "data-iso-049",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 08/01/2023 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2023-01-08\"",
+    "referencia": "2023-01-08"
+  },
+  {
+    "id": "contar-vogais-050",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"obaczoxuxbu\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"5\"",
+    "referencia": "5"
+  },
+  {
+    "id": "inverter-texto-051",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"ajfdi\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"idfja\"",
+    "referencia": "idfja"
+  },
+  {
+    "id": "regex-digitos-052",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 7 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMTEiLCI3Nzc3NzcwIl0sInJ1aW5zIjpbIjExMTExMTExIiwiMTExMTExIiwiYWFhYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{7}"
+  },
+  {
+    "id": "data-iso-053",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 31/08/2011 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2011-08-31\"",
+    "referencia": "2011-08-31"
+  },
+  {
+    "id": "contar-vogais-054",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"eyzx\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1\"",
+    "referencia": "1"
+  },
+  {
+    "id": "inverter-texto-055",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"jajcf\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"fcjaj\"",
+    "referencia": "fcjaj"
+  },
+  {
+    "id": "regex-digitos-056",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 8 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMTExIiwiNzc3Nzc3NzAiXSwicnVpbnMiOlsiMTExMTExMTExIiwiMTExMTExMSIsImFhYWFhYWFhIiwiIl19",
+    "referencia": "\\d{8}"
+  },
+  {
+    "id": "data-iso-057",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 18/11/2005 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2005-11-18\"",
+    "referencia": "2005-11-18"
+  },
+  {
+    "id": "contar-vogais-058",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"uyicceeuy\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"5\"",
+    "referencia": "5"
+  },
+  {
+    "id": "inverter-texto-059",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"bhegib\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"bigehb\"",
+    "referencia": "bigehb"
+  },
+  {
+    "id": "regex-digitos-060",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 8 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMTExIiwiNzc3Nzc3NzAiXSwicnVpbnMiOlsiMTExMTExMTExIiwiMTExMTExMSIsImFhYWFhYWFhIiwiIl19",
+    "referencia": "\\d{8}"
+  },
+  {
+    "id": "data-iso-061",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 01/04/2019 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2019-04-01\"",
+    "referencia": "2019-04-01"
+  },
+  {
+    "id": "contar-vogais-062",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"edbdecu\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"3\"",
+    "referencia": "3"
+  },
+  {
+    "id": "inverter-texto-063",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"ijha\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"ahji\"",
+    "referencia": "ahji"
+  },
+  {
+    "id": "regex-digitos-064",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 6 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMSIsIjc3Nzc3MCJdLCJydWlucyI6WyIxMTExMTExIiwiMTExMTEiLCJhYWFhYWEiLCIiXX0=",
+    "referencia": "\\d{6}"
+  },
+  {
+    "id": "data-iso-065",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 21/03/2023 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2023-03-21\"",
+    "referencia": "2023-03-21"
+  },
+  {
+    "id": "contar-vogais-066",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"xddbx\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"0\"",
+    "referencia": "0"
+  },
+  {
+    "id": "inverter-texto-067",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"aeeeid\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"dieeea\"",
+    "referencia": "dieeea"
+  },
+  {
+    "id": "regex-digitos-068",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 7 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMTEiLCI3Nzc3NzcwIl0sInJ1aW5zIjpbIjExMTExMTExIiwiMTExMTExIiwiYWFhYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{7}"
+  },
+  {
+    "id": "data-iso-069",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 25/12/1992 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1992-12-25\"",
+    "referencia": "1992-12-25"
+  },
+  {
+    "id": "contar-vogais-070",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"iocceyyd\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"3\"",
+    "referencia": "3"
+  },
+  {
+    "id": "inverter-texto-071",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"bcgiih\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"hiigcb\"",
+    "referencia": "hiigcb"
+  },
+  {
+    "id": "regex-digitos-072",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 8 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExMTExIiwiNzc3Nzc3NzAiXSwicnVpbnMiOlsiMTExMTExMTExIiwiMTExMTExMSIsImFhYWFhYWFhIiwiIl19",
+    "referencia": "\\d{8}"
+  },
+  {
+    "id": "data-iso-073",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 09/05/1995 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"1995-05-09\"",
+    "referencia": "1995-05-09"
+  },
+  {
+    "id": "contar-vogais-074",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"uecxzbice\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"4\"",
+    "referencia": "4"
+  },
+  {
+    "id": "inverter-texto-075",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"dcja\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"ajcd\"",
+    "referencia": "ajcd"
+  },
+  {
+    "id": "regex-digitos-076",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 4 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTEiLCI3NzcwIl0sInJ1aW5zIjpbIjExMTExIiwiMTExIiwiYWFhYSIsIiJdfQ==",
+    "referencia": "\\d{4}"
+  },
+  {
+    "id": "data-iso-077",
+    "tipo": "data-iso",
+    "entrada": "Converta a data 14/09/2019 (dia, mês, ano) para o formato ISO AAAA-MM-DD. Responda só com a data.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"2019-09-14\"",
+    "referencia": "2019-09-14"
+  },
+  {
+    "id": "contar-vogais-078",
+    "tipo": "contar-vogais",
+    "entrada": "Quantas vogais (a, e, i, o, u) tem o texto \"eoxcoui\"? Responda só com o número.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"5\"",
+    "referencia": "5"
+  },
+  {
+    "id": "inverter-texto-079",
+    "tipo": "inverter-texto",
+    "entrada": "Escreva o texto \"bjhb\" de trás para frente. Responda só com o resultado.",
+    "verificar": "node orquestra/sombra-plano/confere.js igual \"bhjb\"",
+    "referencia": "bhjb"
+  },
+  {
+    "id": "regex-digitos-080",
+    "tipo": "regex-digitos",
+    "entrada": "Escreva uma expressão regular que aceite apenas strings com exatamente 5 dígitos (usada com correspondência completa). Responda só com a regex.",
+    "verificar": "node orquestra/sombra-plano/confere.js regex64 eyJib25zIjpbIjExMTExIiwiNzc3NzAiXSwicnVpbnMiOlsiMTExMTExIiwiMTExMSIsImFhYWFhIiwiIl19",
+    "referencia": "\\d{5}"
+  }
+]
