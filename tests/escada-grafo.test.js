@@ -184,3 +184,47 @@ test("linha de comando: parâmetro inválido do lote (--paralelo, --tentativas) 
     assert.equal(estado(arq, "a"), "pendente", `${extra.join(" ")}: tarefa não pode ficar em_andamento`);
   }
 });
+
+const arquivosDoTeste = (arq) => {
+  const dir = path.dirname(arq);
+  return { regras: path.join(dir, 'regras.json'), casos: path.join(dir, 'casos.jsonl'), treino: path.join(dir, 'treino.jsonl'), falhas: path.join(dir, 'falhas.jsonl'), pendentes: path.join(dir, 'pendentes.jsonl') };
+};
+
+test('lote chamado por código liga o grafo antes dos agentes e registra sucesso e falha', async () => {
+  const arq = arquivoComTarefas();
+  const microtarefas = [planoDe({ id: 'a', escopo: ['t/a'] }), planoDe({ id: 'b', escopo: ['t/b'] })];
+  const resultados = await escada.lote({
+    microtarefas, grafo: arq, arquivos: arquivosDoTeste(arq), paralelismo: 2, maxTentativas: 1,
+    verificadorDe: (m) => (saida) => ({ ok: saida === m.id }),
+    agentes: { local: async (prompt) => {
+      assert.equal(estado(arq, 'a'), 'em_andamento');
+      assert.equal(estado(arq, 'b'), 'em_andamento');
+      return prompt.includes('t/a') ? 'a' : 'errado';
+    }, superiores: [] },
+  });
+  assert.deepEqual(resultados.map((r) => [r.id, r.ok]), [['a', true], ['b', false]]);
+  assert.equal(estado(arq, 'a'), 'feita');
+  assert.equal(estado(arq, 'b'), 'pendente'); // grafo.falhar devolve à fila na primeira tentativa
+  assert.equal(grafo.carregar(arq).tarefas.b.tentativas, 1);
+});
+
+test('lote chamado sem grafo não altera o arquivo do grafo', async () => {
+  const arq = arquivoComTarefas();
+  const antes = fs.readFileSync(arq, 'utf8');
+  const resultados = await escada.lote({
+    microtarefas: [planoDe({ id: 'a', escopo: ['t/a'] })], arquivos: arquivosDoTeste(arq),
+    verificadorDe: () => (saida) => ({ ok: saida === 'a' }),
+    agentes: { local: async () => { assert.equal(estado(arq, 'a'), 'pendente'); return 'a'; }, superiores: [] },
+  });
+  assert.equal(resultados[0].ok, true);
+  assert.equal(fs.readFileSync(arq, 'utf8'), antes);
+});
+
+test('lote direto valida o paralelismo antes de marcar o grafo', async () => {
+  const arq = arquivoComTarefas();
+  await assert.rejects(() => escada.lote({
+    microtarefas: [planoDe({ id: 'a', escopo: ['t/a'] })], grafo: arq, paralelismo: 0,
+    verificadorDe: () => () => ({ ok: true }), agentes: { local: async () => 'a', superiores: [] },
+  }), /paralelismo/);
+  assert.equal(estado(arq, 'a'), 'pendente');
+});
