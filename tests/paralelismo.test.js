@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const RAIZ = path.resolve(__dirname, "..");
 const matarGrupo = (pid) => {
-  if (process.platform === "win32") require("node:child_process").spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+  if (process.platform === "win32") require("node:child_process").spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
   else { try { process.kill(-pid, "SIGKILL"); } catch { /* limpeza do teste */ } }
 };
 const matarReal = (f) => escada.matarArvore(f);
@@ -21,7 +21,7 @@ afterEach(() => { for (const pid of rastreados) matarGrupo(pid); rastreados.clea
 const rastrear = (matar) => (f) => { rastreados.add(f.pid); return matar(f); };
 const semente = () => process.platform === "win32" ? {} : {
   plataforma: "win32",
-  lancar: (c, fd) => { const f = require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true }); rastreados.add(f.pid); return f; },
+  lancar: (c, fd) => { const f = require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true, windowsHide: true }); rastreados.add(f.pid); return f; },
   matar: (f) => { matarGrupo(f.pid); return true; },
   orfaos: (f) => { matarGrupo(f.pid); return []; },
 };
@@ -535,13 +535,13 @@ test("naoConfirmado: o comando larga o processo e fecha os pipes, então o Node 
     const ctl = new AbortController();
     const comando = '"' + process.execPath + '" -e "setTimeout(()=>{},20000)"';
     let pidPreso;
-    const lancar = (c, fd) => require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true });
+    const lancar = (c, fd) => require("node:child_process").spawn(c, { shell: true, stdio: [fd, "pipe", "pipe"], detached: true, windowsHide: true });
     escada.chamarComando(comando, { lancar, orfaos: () => [], matar: (f) => { pidPreso = f.pid; return false; }, reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal)
       .catch((e) => console.log(e.naoConfirmado ? "naoConfirmado " + pidPreso : "outro"));
     setTimeout(() => ctl.abort(), 100);
   `);
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 15000 });
+  const r = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 15000, windowsHide: true });
   assert.match(r.stdout.trim(), /^naoConfirmado \d+$/);
   assert.ok(Date.now() - t0 < 10000, `o Node terminou sozinho (${Date.now() - t0} ms)`);
   matarGrupo(Number(r.stdout.trim().split(" ")[1]));
@@ -602,7 +602,7 @@ test("abortar mata também o processo descendente (neto), em qualquer sistema", 
   const netoJs = path.join(dir, "neto.js");
   const paiJs = path.join(dir, "pai.js");
   fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},30000);`);
-  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'inherit' }); setTimeout(()=>{},30000);`);
+  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'inherit', windowsHide: true }); setTimeout(()=>{},30000);`);
   const ctl = new AbortController();
   const chamada = chamar(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
   for (let i = 0; i < 150 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 20));
@@ -794,7 +794,7 @@ test("chamarComando (Windows simulado): aborta, termina logo, e a conferência v
   const { spawn } = require("node:child_process");
   const lancados = [];
   // sem shell: no Windows de verdade, matar o cmd.exe não mataria o node dentro dele (quem cuida disso é o Job Object, que este teste não usa)
-  const lancar = (comando, fd) => { lancados.push(comando); return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] }); };
+  const lancar = (comando, fd) => { lancados.push(comando); return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"], windowsHide: true }); };
   const consultas = [];
   const executar = (cmd, args, opcoes, cb) => { consultas.push([cmd, args]); cb(null, "FECHADO\n"); };
   const orfaos = (f) => escada.orfaosVivos(f, { plataforma: "win32", executar });
@@ -827,7 +827,7 @@ test("Windows de verdade: abortar mata o neto (o comando roda dentro do Job Obje
   const paiJs = path.join(dir, "pai.js");
   fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},60000);`);
   // o pai cria o neto e SAI: o neto fica órfão, fora de qualquer foto de árvore
-  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true }).unref(); setTimeout(()=>{},60000);`);
+  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true, windowsHide: true }).unref(); setTimeout(()=>{},60000);`);
   const ctl = new AbortController();
   const chamada = chamar(`"${process.execPath}" "${paiJs}"`)("x", ctl.signal);
   for (let i = 0; i < 400 && !fs.existsSync(marca); i++) await new Promise((r) => setTimeout(r, 50));
@@ -847,7 +847,7 @@ test("Windows de verdade: o pai SAI deixando o neto desacoplado vivo, e a confer
   const netoJs = path.join(dir, "neto.js");
   const paiJs = path.join(dir, "pai.js");
   fs.writeFileSync(netoJs, `require('fs').writeFileSync(${JSON.stringify(marca)}, String(process.pid)); setTimeout(()=>{},60000);`);
-  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true }).unref(); setTimeout(()=>process.exit(0), 600);`);
+  fs.writeFileSync(paiJs, `require('child_process').spawn(process.execPath, [${JSON.stringify(netoJs)}], { stdio: 'ignore', detached: true, windowsHide: true }).unref(); setTimeout(()=>process.exit(0), 600);`);
   const resposta = await chamar(`"${process.execPath}" "${paiJs}"`)("x");
   assert.strictEqual(resposta, "");
   assert.ok(fs.existsSync(marca), "o neto chegou a nascer");
@@ -1090,7 +1090,7 @@ test("o uso-windows.ps1 dá null (não 0) para placa sem motor no formato pid_, 
 
 test("conferência lenta do job não vira 'tempo máximo' num comando que já acabou, e conferência sem resposta tem prazo próprio", async () => {
   const { spawn } = require("node:child_process");
-  const lancar = (comando, fd) => spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] });
+  const lancar = (comando, fd) => spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"], windowsHide: true });
   const lenta = () => new Promise((ok) => setTimeout(() => ok([]), 400));
   assert.strictEqual(await escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar, orfaos: lenta, tempoMaximoMs: 150, prazoDeFechamentoMs: 3000 })("x"), "ok");
   await assert.rejects(
@@ -1152,7 +1152,7 @@ test("fatal com UM só id sem morte confirmada que a mensagem não cita: o erro 
 
 test("aborto que chega DURANTE a conferência do job conta: a chamada rejeita como abortada, nunca é sucesso", async () => {
   const { spawn } = require("node:child_process");
-  const lancar = (comando, fd) => spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] });
+  const lancar = (comando, fd) => spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"], windowsHide: true });
   const ctl = new AbortController();
   const orfaos = () => new Promise((ok) => { setTimeout(() => ctl.abort(), 30); setTimeout(() => ok([]), 150); }); // o aborto vem no meio da conferência
   await assert.rejects(
@@ -1168,7 +1168,7 @@ test("sinal já abortado antes da chamada: não cria arquivo nem processo (o com
   ctl.abort();
   let lancou = 0;
   const { spawn } = require("node:child_process");
-  const lancar = (comando, fd) => { lancou += 1; return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"] }); };
+  const lancar = (comando, fd) => { lancou += 1; return spawn(process.execPath, ["-e", comando], { stdio: [fd, "pipe", "pipe"], windowsHide: true }); };
   await assert.rejects(
     chamar(`require('fs').writeFileSync(${JSON.stringify(marca)}, 'x')`, { plataforma: "win32", lancar, orfaos: () => [] })("x", ctl.signal),
     (erro) => erro.abortada === true,
@@ -1321,7 +1321,7 @@ test("prompt temporário fica em pasta privada: pasta aberta para outros é recu
   // pasta privada nova: funciona, e o arquivo some no fim
   const privada = path.join(base, "privada");
   const { spawn } = require("node:child_process");
-  const resposta = await escada.chamarComando("process.stdin.pipe(process.stdout)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [], pastaPrompts: privada })("olá");
+  const resposta = await escada.chamarComando("process.stdin.pipe(process.stdout)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"], windowsHide: true }), orfaos: () => [], pastaPrompts: privada })("olá");
   assert.strictEqual(resposta, "olá");
   assert.strictEqual((fs.statSync(privada).mode & 0o077), 0, "pasta criada só para o dono");
   assert.deepStrictEqual(fs.readdirSync(privada), [], "o prompt temporário foi apagado");
@@ -1478,7 +1478,7 @@ test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fic
     const controle = mk();
     const teto = modos.noite.agentesMax;
     // o lote concede vagas e termina com morte não confirmada de um agente (processo "vivo": este mesmo processo)
-    const vivo = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)"], { stdio: "ignore" });
+    const vivo = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{},20000)"], { stdio: "ignore", windowsHide: true });
     t.after?.(() => { try { vivo.kill("SIGKILL"); } catch { /* já foi */ } });
     const local = () => { throw Object.assign(new Error("não morreu"), { naoConfirmado: true, pid: vivo.pid }); };
     await assert.rejects(escada.lote({ microtarefas: [microDe("a")], verificadorDe: verificadorOk, paralelismo: controle, arquivos: arquivosTemp(), agentes: { local, superiores: [] } }), /o lote parou/);
@@ -1515,7 +1515,7 @@ test("morte NÃO confirmada: o lote não devolve a reserva dessas vagas; ela fic
 
 test("o erro naoConfirmado leva o PID do processo (a reserva fica retida por ele)", async () => {
   const { spawn } = require("node:child_process");
-  const lancar = (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] });
+  const lancar = (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"], windowsHide: true });
   let filho;
   const erro = await escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = lancar(c, fd)), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", AbortSignal.abort()).catch((e) => e);
   assert.ok(erro.abortada, "já abortado: nem lança");
@@ -1621,7 +1621,7 @@ test("o erro naoConfirmado do comando leva o NOME DO JOB e o lote passa os Jobs 
   const { spawn } = require("node:child_process");
   const ctl = new AbortController();
   let filho;
-  const p = escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] })), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal);
+  const p = escada.chamarComando("setTimeout(()=>{},3000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"], windowsHide: true })), matar: () => false, orfaos: () => [], reintentoMs: 10, tentativasDeMatar: 2 })("x", ctl.signal);
   setTimeout(() => ctl.abort(), 50);
   const e = await p.catch((x) => x);
   try { filho.kill("SIGKILL"); } catch { /* já foi */ }
@@ -1721,7 +1721,7 @@ test("chamada ainda pendente quando o lote desiste de esperar: a retenção guar
   const arquivos = arquivosTemp();
   let recebido;
   const paralelismo = Object.assign(() => 2, { liberar: (r) => { recebido = r; } });
-  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] })), matar: () => true, orfaos: () => [], reintentoMs: 50, tentativasDeMatar: 100, prazoDeFechamentoMs: 600000 });
+  const chamada = escada.chamarComando("setTimeout(()=>{},30000)", { plataforma: "win32", lancar: (c, fd) => (filho = spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"], windowsHide: true })), matar: () => true, orfaos: () => [], reintentoMs: 50, tentativasDeMatar: 100, prazoDeFechamentoMs: 600000 });
   // a parada é aceita mas a chamada nunca termina (descendente segurando): fica pendente
   // a microtarefa "b" falha com morte não confirmada (sem identificador); a "a" está pendente e é abortada sem nunca terminar
   const local = (prompt, signal) => (prompt.includes("contexto de b") ? new Promise((ok, no) => setTimeout(() => no(Object.assign(new Error("não morreu"), { naoConfirmado: true })), 150)) : chamada(prompt, signal));
@@ -1774,7 +1774,7 @@ test("o lote escreve na reserva os Jobs dos agentes dele assim que nascem", () =
   const arquivoEstado = path.join(dir, "e.json");
   const pasta = `${arquivoEstado}.lotes`;
   const controle = par.criarControle({ leitor: { ler: () => ({ ...PARADO, ociosoSegundos: 7200 }) }, modo: "noite", arquivoEstado, relogio: Date.now, cacheMs: 0, modos, config });
-  const chamada = escada.chamarComando("setTimeout(()=>process.stdout.write('ok'),600)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [] });
+  const chamada = escada.chamarComando("setTimeout(()=>process.stdout.write('ok'),600)", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"], windowsHide: true }), orfaos: () => [] });
   // Confere a reserva no instante em que o lote confirma sua gravação, antes de liberar o agente.
   // Temporizadores podem não executar enquanto outros testes bloqueiam o processo sob carga.
   let vistos = [];
@@ -1864,7 +1864,7 @@ r.definirAgentes(() => [{ jobNome: "Local\\\\MixAI-saida", pid: ${process.pid} }
 r.reservar({ alvo: 1, agentes: 1, teto: 3 });
 `);
   const { spawnSync } = require("node:child_process");
-  const res = spawnSync(process.execPath, [script], { encoding: "utf8" });
+  const res = spawnSync(process.execPath, [script], { encoding: "utf8", windowsHide: true });
   assert.strictEqual(res.status, 0, res.stderr);
   const arquivos = fs.readdirSync(pasta).filter((n) => n.endsWith(".json"));
   assert.strictEqual(arquivos.length, 1, "a reserva ficou");
@@ -2002,7 +2002,7 @@ r.definirAgentes(() => { if (falha) throw new Error("x"); return [{ jobNome: "Lo
 r.reservar({ alvo: 1, agentes: 1, teto: 3 });
 falha = true;
 `);
-  const res = require("node:child_process").spawnSync(process.execPath, [script], { encoding: "utf8" });
+  const res = require("node:child_process").spawnSync(process.execPath, [script], { encoding: "utf8", windowsHide: true });
   assert.strictEqual(res.status, 0, res.stderr);
   const arq2 = path.join(dir, "lotes2", fs.readdirSync(path.join(dir, "lotes2")).find((n) => n.endsWith(".json")));
   const guardada = JSON.parse(fs.readFileSync(arq2, "utf8"));
@@ -2079,7 +2079,7 @@ test("se a remoção do arquivo de liberação falha, o arquivo do prompt é apa
   let falhasDoLiberar = 0;
   fs.rmSync = (arquivo, ...resto) => { if (String(arquivo).endsWith(".liberar")) { falhasDoLiberar += 1; throw new Error("em uso"); } return original(arquivo, ...resto); };
   try {
-    const chamada = escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"] }), orfaos: () => [], pastaPrompts: dir });
+    const chamada = escada.chamarComando("process.stdout.write('ok')", { plataforma: "win32", lancar: (c, fd) => spawn(process.execPath, ["-e", c], { stdio: [fd, "pipe", "pipe"], windowsHide: true }), orfaos: () => [], pastaPrompts: dir });
     assert.strictEqual(await chamada("x"), "ok");
     assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.startsWith("prompt-") && !n.endsWith(".liberar")), [], "o prompt foi apagado");
     assert.ok(falhasDoLiberar >= 1);
