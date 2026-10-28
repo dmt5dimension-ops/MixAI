@@ -4,5 +4,6 @@
   "maxDisparosPorHora": 4,
   "esperaMinimaMinutos": 3,
   "prazoParadaMinutos": 30,
-  "tempoMaximoDisparoMinutos": 45
+  "tempoMaximoDisparoMinutos": 45,
+  "canalIdadeMaximaHoras": 12
 }

@@ -48,19 +48,33 @@ function ultimaMensagem(texto) {
   }
   return null;
 }
-function pendenciasDoCanal(texto) {
+// Quando a mensagem foi escrita, lida do título (`### 2026-10-23 — ...` ou ISO completo). Só a data vale até o fim do dia (UTC),
+// para nunca tratar como velha uma mensagem de hoje. Sem data legível devolve null (e a mensagem não é descartada).
+function quandoDaMensagem(titulo) {
+  const m = String(titulo).match(/^###\s+(\d{4}-\d{2}-\d{2})(T[\d:.]+Z)?/);
+  if (!m) return null;
+  const t = m[2] ? ms(m[1] + m[2]) : ms(`${m[1]}T23:59:59.999Z`);
+  return Number.isFinite(t) ? t : null;
+}
+// `agora` + `idadeMaximaHoras` descartam mensagens antigas: o canal guarda dias de histórico e cada resposta fecha só um pedido,
+// então sem esse corte o supervisor acordaria os agentes por centenas de mensagens já resolvidas. Sem `agora` não há corte.
+function pendenciasDoCanal(texto, agora = null, idadeMaximaHoras = null) {
   const partes = String(texto).split(/^(?=### )/m).filter((p) => p.startsWith('### '));
+  const limite = agora != null && Number.isFinite(idadeMaximaHoras) ? ms(agora) - idadeMaximaHoras * 3600000 : null;
   const pendentes = [];
   for (const p of partes) {
     const m = ultimaMensagem(p);
     if (!m?.de || !m.para || m.de === m.para) continue;
+    const quando = quandoDaMensagem(m.titulo);
+    // Mensagem velha não entra, mas continua podendo fechar pedidos (ela já está no passado de todos).
+    m.velha = limite != null && quando != null && quando < limite;
     // Uma resposta (sentido contrário) fecha só o pedido mais recente a que responde; os outros continuam pendentes.
     for (let i = pendentes.length - 1; i >= 0; i--) {
       if (pendentes[i].de === m.para && pendentes[i].para === m.de) { pendentes.splice(i, 1); break; }
     }
     pendentes.push(m);
   }
-  return pendentes.map((m) => ({ tipo: 'acordar', agente: m.para, motivo: `Nova mensagem no canal: ${m.titulo}`, ids: [], chave: m.chave }));
+  return pendentes.filter((m) => !m.velha).map((m) => ({ tipo: 'acordar', agente: m.para, motivo: `Nova mensagem no canal: ${m.titulo}`, ids: [], chave: m.chave }));
 }
 // `revisados`: número do PR -> head em que a label de revisão foi vista. A label sozinha não prova revisão do head atual:
 // um commit novo depois da revisão chama o revisor de novo.
@@ -272,7 +286,7 @@ function passo(deps, cfg = configPadrao) {
   if (acoes.length === 1 && acoes[0].tipo === 'escalar' && acoes[0].id === null) {
     return escalarErro(acoes[0], g);
   }
-  if (deps.lerCanal) acoes.push(...filtrarExternas(pendenciasDoCanal(deps.lerCanal()), estado, agora, c));
+  if (deps.lerCanal) acoes.push(...filtrarExternas(pendenciasDoCanal(deps.lerCanal(), agora, c.canalIdadeMaximaHoras), estado, agora, c));
   if (!deps.simular && deps.listarPRs) {
     let prs = null;
     try { prs = deps.listarPRs(); } catch { prs = null; }
@@ -433,10 +447,18 @@ function promptDe(a, g) {
     .map((t) => `Tarefa ${t.id}: ${t.titulo}\nEscopo: ${t.escopo.join(', ')}\nVerificar: ${t.verificar || 'não definido'}`);
   return [a.motivo, ...tarefas, `Leia AGENTS.md e ${ARQ_CANAL}. Siga somente a tarefa indicada, crie branch/worktree antes de alterar arquivos, registre o progresso no canal e, ao terminar, atualize a tarefa no grafo com revisar (resultado "PR #<número>", para o supervisor acompanhar o CI) ou concluir. Não faça merge do próprio PR.`].join('\n\n');
 }
-function acordar(a, cfg, g, spawn = spawnSync, plataforma = process.platform) {
+// Os agentes do supervisor rodam pela assinatura (Claude Pro, conta do ChatGPT), nunca pela API: chave de API herdada do ambiente
+// do usuário faria a CLI cobrar por token. Só o ambiente do processo filho é limpo; as variáveis do Windows não são tocadas.
+const VARIAVEIS_DE_API = ['OPENAI_API_KEY', 'CODEX_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'];
+function ambienteDosAgentes(env = process.env) {
+  const limpo = { ...env };
+  for (const k of Object.keys(limpo)) if (VARIAVEIS_DE_API.includes(k.toUpperCase())) delete limpo[k];
+  return limpo;
+}
+function acordar(a, cfg, g, spawn = spawnSync, plataforma = process.platform, env = process.env) {
   const prompt = promptDe(a, g);
   const args = a.agente === 'codex' ? ['exec', '-s', 'workspace-write', '-'] : ['-p', '--output-format', 'json'];
-  const r = chamarCli(a.agente, args, { input: prompt, cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 }, spawn, plataforma);
+  const r = chamarCli(a.agente, args, { input: prompt, cwd: RAIZ, env: ambienteDosAgentes(env), encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 }, spawn, plataforma);
   const saida = String(r.stdout || '') + String(r.stderr || '');
   return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0, error: r.error ? { code: r.error.code } : undefined };
 }
@@ -451,7 +473,7 @@ function executarReal(a, g, cfg, deps = {}) {
     fs.mkdirSync(PASTA_CANAL, { recursive: true });
     const plano = path.join(PASTA_CANAL, `fofoqueiro-plano-${crypto.randomBytes(8).toString('hex')}.json`);
     fs.writeFileSync(plano, JSON.stringify(microtarefas), { flag: 'wx', mode: 0o600 });
-    try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
+    try { return spawnSync(process.execPath, [path.join(__dirname, 'escada.js'), 'lote', plano, '--paralelo', 'auto'], { cwd: RAIZ, env: ambienteDosAgentes(), encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true }); }
     finally { fs.rmSync(plano, { force: true }); }
   });
   if (a.tipo === 'reabrir') {
@@ -597,5 +619,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, listarReverts, prsFeitos, prsCitados, devolucoesPorCI, fechamentosDePR, revertidosDePR, executarReal, principal };
+module.exports = { ambienteDosAgentes, ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, atualizarRevisados, decidir, registrar, passo, pegarTrava, promptDe, acordar, listarPRs, listarPRsFechados, listarReverts, prsFeitos, prsCitados, devolucoesPorCI, fechamentosDePR, revertidosDePR, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });
