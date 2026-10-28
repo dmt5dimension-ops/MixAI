@@ -612,6 +612,7 @@ async function lote(opcoes) {
   // Os agentes deste lote (Job e PID) vão para a reserva dele: se o lote morrer deixando agentes vivos, a vaga segue reservada.
   const ponte = {};
   const controle = opcoes?.paralelismo;
+  const ligacao = opcoes?.grafo ? ligarAoGrafo(path.resolve(opcoes.grafo), opcoes.microtarefas) : null;
   let soltarOuvinte = null;
   if (typeof controle?.fornecerAgentes === 'function' && typeof controle?.atualizarAgentes === 'function') {
     controle.fornecerAgentes(() => ponte.agentes?.() ?? []);
@@ -622,7 +623,11 @@ async function lote(opcoes) {
       }
     });
   }
-  try { return await loteSemLiberar({ ...opcoes, ponte }); } catch (erro) {
+  try {
+    const resultados = await loteSemLiberar({ ...opcoes, ponte, iniciarGrafo: ligacao ? () => ligacao.iniciar() : undefined });
+    ligacao?.terminar(resultados);
+    return resultados;
+  } catch (erro) {
     if (erro?.naoConfirmados?.length) retidas = { naoConfirmados: erro.naoConfirmados.length, itens: erro.itensNaoConfirmados ?? [] };
     erroDoLote = erro;
     throw erro;
@@ -634,7 +639,7 @@ async function lote(opcoes) {
     }
   }
 }
-async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS, estatico, entradaEstatica, liberacao }) {
+async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes, paralelismo = 1, reavaliarMs = 15000, tempoParaConfirmarMs = 60000, maxTentativas, antagonico = false, arquivos = ARQUIVOS, estatico, entradaEstatica, liberacao, iniciarGrafo }) {
   validarPlano(microtarefas);
   // `paralelismo` pode ser um número ou uma função (orquestra/paralelismo.js) que diz quantos agentes cabem agora.
   const dinamico = typeof paralelismo === 'function';
@@ -670,6 +675,7 @@ async function loteSemLiberar({ ponte = {}, microtarefas, verificadorDe, agentes
     }
   };
   limiteAgora(); // recusa cedo um limite inválido
+  iniciarGrafo?.(); // só marca o grafo depois do pré-voo, antes de iniciar agentes
   iniciado = true;
   let acordaLoop;
   let mudanca = new Promise((ok) => { acordaLoop = ok; });
