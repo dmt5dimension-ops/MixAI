@@ -54,24 +54,35 @@ function pendenciasDoCanal(texto) {
   for (const p of partes) {
     const m = ultimaMensagem(p);
     if (!m?.de || !m.para || m.de === m.para) continue;
-    for (let i = pendentes.length - 1; i >= 0; i--) {
-      if (pendentes[i].de === m.para && pendentes[i].para === m.de) pendentes.splice(i, 1);
-    }
+    // Uma resposta resolve o pedido MAIS ANTIGO do outro lado, mais os que ela cita por #N; os demais seguem pendentes.
+    const citados = new Set((m.corpo.match(/#\d+/g) || []));
+    const doOutro = pendentes.map((x, i) => [x, i]).filter(([x]) => x.de === m.para && x.para === m.de);
+    const resolver = new Set();
+    for (const [x, i] of doOutro) if ([...citados].some((n) => x.titulo.includes(n))) resolver.add(i);
+    if (!resolver.size && doOutro.length) resolver.add(doOutro[0][1]); // sem citação: o mais antigo
+    for (const i of [...resolver].sort((p, q) => q - p)) pendentes.splice(i, 1);
     pendentes.push(m);
   }
   return pendentes.map((m) => ({ tipo: 'acordar', agente: m.para, motivo: `Nova mensagem no canal: ${m.titulo}`, ids: [], chave: m.chave }));
 }
-function pendenciasDosPRs(prs) {
+function pendenciasDosPRs(prs, vistos = {}) {
   const acoes = [];
   for (const pr of prs || []) {
     const labels = (pr.labels || []).map((l) => l.name);
     const feito = AGENTES.find((a) => labels.includes(`feito-por:${a}`));
     if (!feito) continue;
     const revisor = feito === 'claude' ? 'codex' : 'claude';
-    const falhou = (pr.statusCheckRollup || []).some((c) => ['FAILURE', 'ERROR', 'TIMED_OUT'].includes(String(c.conclusion || '').toUpperCase()));
+    const ruim = ['FAILURE', 'ERROR', 'TIMED_OUT'];
+    const falhou = (pr.statusCheckRollup || []).some((c) => ruim.includes(String(c.conclusion || '').toUpperCase()) || ruim.includes(String(c.state || '').toUpperCase()));
     const sha = String(pr.headRefOid || '').slice(0, 8);
     if (falhou) acoes.push({ tipo: 'acordar', agente: feito, ids: [], motivo: `PR #${pr.number} está com teste vermelho`, chave: `ci:${pr.number}:${sha}` });
-    else if (!labels.includes(`revisado-por:${revisor}`)) acoes.push({ tipo: 'acordar', agente: revisor, ids: [], motivo: `PR #${pr.number} precisa de revisão cruzada`, chave: `rev:${pr.number}:${sha}` });
+    else {
+      const revisado = labels.includes(`revisado-por:${revisor}`);
+      const shaRevisado = vistos[pr.number];
+      // A label vale só para o head em que foi vista; commit novo depois dela exige nova revisão.
+      const velha = revisado && shaRevisado && shaRevisado !== sha;
+      if (!revisado || velha) acoes.push({ tipo: 'acordar', agente: revisor, ids: [], motivo: `PR #${pr.number} precisa de revisão cruzada${velha ? ' (commit novo depois da revisão)' : ''}`, chave: `rev:${pr.number}:${sha}` });
+    }
   }
   return acoes;
 }
@@ -188,7 +199,26 @@ function passo(deps, cfg = configPadrao) {
     return escalarErro(acoes[0], g);
   }
   if (deps.lerCanal) acoes.push(...filtrarExternas(pendenciasDoCanal(deps.lerCanal()), estado, agora, c));
-  if (!deps.simular && deps.listarPRs) acoes.push(...filtrarExternas(pendenciasDosPRs(deps.listarPRs()), estado, agora, c));
+  if (!deps.simular && deps.listarPRs) {
+    const prs = deps.listarPRs();
+    if (prs == null) {
+      // gh falhou: não pode ficar silencioso (revisões e CI ficariam sem acompanhamento); deduplicada pela chave.
+      acoes.push(...filtrarExternas([{ tipo: 'escalar', id: null, agente: 'claude', motivo: 'não consegui consultar os PRs (gh falhou); revisões e CI ficaram sem acompanhamento', chave: 'gh:prs' }], estado, agora, c));
+    } else {
+      const vistos = { ...(estado.prsRevisados || {}) };
+      acoes.push(...filtrarExternas(pendenciasDosPRs(prs, vistos), estado, agora, c));
+      // guarda o SHA em que cada label de revisão foi vista pela primeira vez (e esquece PR sem label)
+      const novos = {};
+      for (const pr of prs) {
+        const labels = (pr.labels || []).map((l) => l.name);
+        if (labels.some((n) => n.startsWith('revisado-por:'))) novos[pr.number] = vistos[pr.number] || String(pr.headRefOid || '').slice(0, 8);
+      }
+      if (JSON.stringify(novos) !== JSON.stringify(estado.prsRevisados || {})) {
+        estado = { ...estado, prsRevisados: novos };
+        deps.salvarEstado(estado);
+      }
+    }
+  }
   const usadas = new Set(), realizadas = [];
   for (const a of acoes) {
     if (noPrazo(a.chave)) continue;
@@ -271,7 +301,8 @@ function acordar(a, cfg, g) {
   const args = a.agente === 'codex' ? ['exec', '-s', 'workspace-write', '-'] : ['-p', prompt, '--output-format', 'json'];
   const r = spawnSync(a.agente, args, { input: a.agente === 'codex' ? prompt : undefined, cwd: RAIZ, encoding: 'utf8', timeout: cfg.tempoMaximoDisparoMinutos * 60000, windowsHide: true, maxBuffer: 20 * 1024 * 1024 });
   const saida = String(r.stdout || '') + String(r.stderr || '');
-  return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0 };
+  const naoIniciou = r.status == null && !!r.error && ['ENOENT', 'EACCES', 'EPERM', 'EINVAL'].includes(r.error.code);
+  return { status: r.status, limite: LIMITE.test(saida) && r.status !== 0, naoIniciou };
 }
 function executarReal(a, g, cfg, deps = {}) {
   const arquivoGrafo = deps.arquivoGrafo || ARQ_GRAFO;
@@ -324,6 +355,22 @@ function executarReal(a, g, cfg, deps = {}) {
     try { r = chamarAgente(a); }
     catch (e) { r = { status: 1, limite: false }; log(`falha ao chamar ${a.agente}: ${e.code || 'erro'}`); }
     log(`${a.tipo} ${a.agente}: status=${r.status}${r.limite ? ' cota' : ''}`);
+    if (r.naoIniciou) {
+      // A CLI não existe ou está sem permissão: nenhum agente rodou, então a tarefa volta à fila (não fica "em andamento" sem dono).
+      if (a.tipo === 'acordar' && a.ids?.length) {
+        grafoApi.atualizar(arquivoGrafo, (x) => {
+          if (x.tarefas[a.ids[0]]?.estado !== 'em_andamento') return x;
+          const y = JSON.parse(JSON.stringify(x));
+          y.tarefas[a.ids[0]].estado = 'pendente';
+          y.tarefas[a.ids[0]].atualizado = new Date().toISOString();
+          y.tarefas[a.ids[0]].resultado = 'agente não iniciou';
+          return y;
+        });
+      }
+      escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (agente não iniciou)\n\nA CLI de ${a.agente} não iniciou (não existe ou está sem permissão); tarefa devolvida a pendente. Confira a instalação.\n`);
+      log(`${a.agente}: CLI não iniciou`);
+      return;
+    }
     if (r.status == null) {
       escreverCanal(`\n### ${new Date().toISOString()} — Fofoqueiro → Claude (agente sem morte confirmada)\n\n${a.agente} terminou sem confirmação de saída; tarefa mantida em andamento. Confira os processos antes de retomar.\n`);
       return;
@@ -388,5 +435,5 @@ async function principal(args) {
     }
   } finally { trava.soltar(); }
 }
-module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, decidir, registrar, passo, pegarTrava, promptDe, executarReal, principal };
+module.exports = { ultimaMensagem, pendenciasDoCanal, pendenciasDosPRs, decidir, registrar, passo, pegarTrava, promptDe, acordar, executarReal, principal };
 if (require.main === module) principal(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(`Fofoqueiro: ${e.message}`); process.exitCode = 1; });

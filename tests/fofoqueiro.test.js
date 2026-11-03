@@ -301,3 +301,90 @@ test('morte incerta de agente pago também mantém tarefa em andamento', () => {
   vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false }), log: () => {}, escreverCanal: () => {} });
   assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'em_andamento');
 });
+
+// ---- 5 pontos do parecer do Claude no #29 (a3c1709) ----
+const prCom = (n, sha, labels, status = []) => ({ number: n, headRefOid: sha, labels: labels.map((name) => ({ name })), statusCheckRollup: status });
+
+test('revisão antiga não vale depois de commit novo: a label fica, o SHA muda e o revisor é chamado de novo', () => {
+  const vistos = {};
+  const A = prCom(40, 'aaaaaaaa11', ['feito-por:codex', 'revisado-por:claude']);
+  assert.deepEqual(vigia.pendenciasDosPRs([A], vistos), [], 'com a label e sem histórico, registra o SHA e não age');
+  vistos[40] = 'aaaaaaaa';
+  const B = prCom(40, 'bbbbbbbb22', ['feito-por:codex', 'revisado-por:claude']);
+  const acoes = vigia.pendenciasDosPRs([B], vistos);
+  assert.deepEqual(acoes.map((x) => [x.agente, x.tipo]), [['claude', 'acordar']]);
+  assert.match(acoes[0].chave, /bbbbbbbb/);
+});
+
+test('passo grava o SHA revisado quando vê a label e re-dispara quando o head muda', () => {
+  let estado = {};
+  const chamados = [];
+  const base = (prs, agora) => ({
+    agora: () => agora, lerGrafo: () => grafo.novo(), lerEstado: () => estado, lerSemCota: () => ({}), listarPRs: () => prs,
+    salvarEstado: (e) => { estado = e; }, executar: (a) => chamados.push(a),
+  });
+  vigia.passo(base([prCom(41, 'aaaaaaaa11', ['feito-por:codex', 'revisado-por:claude'])], AGORA), CFG);
+  assert.equal(chamados.length, 0);
+  assert.equal(estado.prsRevisados[41], 'aaaaaaaa');
+  vigia.passo(base([prCom(41, 'bbbbbbbb22', ['feito-por:codex', 'revisado-por:claude'])], new Date(AGORA.getTime() + 11 * 60000)), CFG);
+  assert.deepEqual(chamados.map((x) => [x.tipo, x.agente]), [['acordar', 'claude']]);
+});
+
+test('uma resposta resolve o pedido mais antigo, não todos: o segundo pedido continua pendente', () => {
+  const canal = [
+    '### 2026-10-23 — Claude → Codex (pedido um)\nFaça A.\n',
+    '### 2026-10-23 — Claude → Codex (pedido dois)\nFaça B.\n',
+    '### 2026-10-23 — Codex → Claude (resposta)\nFiz A.\n',
+  ].join('\n');
+  const p = vigia.pendenciasDoCanal(canal).filter((x) => x.agente === 'codex');
+  assert.deepEqual(p.map((x) => x.agente), ['codex']);
+  assert.match(p[0].motivo, /pedido dois/);
+});
+
+test('resposta que cita o pedido (#N) resolve esse pedido', () => {
+  const canal = [
+    '### 2026-10-23 — Claude → Codex (revise #29)\nRevise.\n',
+    '### 2026-10-23 — Claude → Codex (revise #30)\nRevise.\n',
+    '### 2026-10-23 — Codex → Claude (#30 aprovado)\nOk no #30.\n',
+  ].join('\n');
+  const p = vigia.pendenciasDoCanal(canal).filter((x) => x.agente === 'codex');
+  assert.equal(p.length, 1);
+  assert.match(p[0].motivo, /#29/);
+});
+
+test('CLI inexistente (ENOENT) não iniciou: tarefa volta a pendente e escala; timeout continua incerto', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fofoqueiro-enoent-'));
+  const arquivo = path.join(dir, 'grafo.json');
+  grafo.salvar(arquivo, criar(tarefa('a')));
+  const a = vigia.decidir(grafo.carregar(arquivo), {}, AGORA, CFG)[0];
+  const canal = [];
+  vigia.executarReal(a, grafo.carregar(arquivo), CFG, { arquivoGrafo: arquivo, chamarAgente: () => ({ status: null, limite: false, naoIniciou: true }), log: () => {}, escreverCanal: (t) => canal.push(t) });
+  assert.equal(grafo.carregar(arquivo).tarefas.a.estado, 'pendente');
+  assert.match(canal.join(''), /não iniciou/i);
+});
+
+test('acordar marca naoIniciou quando o spawn falha com ENOENT', () => {
+  const r = vigia.acordar({ agente: 'agente-que-nao-existe-xyz', tipo: 'acordar', ids: [], motivo: 'x' }, { tempoMaximoDisparoMinutos: 1 }, grafo.novo());
+  assert.equal(r.naoIniciou, true);
+  assert.equal(r.status, null);
+});
+
+test('status de commit com falha em `state` também aciona o autor', () => {
+  const pr = prCom(42, 'cccccccc33', ['feito-por:codex'], [{ context: 'ci', state: 'FAILURE' }]);
+  const a = vigia.pendenciasDosPRs([pr], {});
+  assert.deepEqual(a.map((x) => [x.agente, x.motivo.includes('vermelho')]), [['codex', true]]);
+});
+
+test('falha ao consultar os PRs (gh) é escalada uma vez, sem ficar silenciosa', () => {
+  let estado = {};
+  const executadas = [];
+  const deps = (agora) => ({
+    agora: () => agora, lerGrafo: () => grafo.novo(), lerEstado: () => estado, lerSemCota: () => ({}), listarPRs: () => null,
+    salvarEstado: (e) => { estado = e; }, executar: (a) => executadas.push(a),
+  });
+  vigia.passo(deps(AGORA), CFG);
+  vigia.passo(deps(new Date(AGORA.getTime() + 60000)), CFG);
+  const esc = executadas.filter((x) => x.tipo === 'escalar');
+  assert.equal(esc.length, 1);
+  assert.match(esc[0].motivo, /PRs/);
+});
