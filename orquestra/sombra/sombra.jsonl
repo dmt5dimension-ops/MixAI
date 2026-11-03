@@ -1,0 +1,30 @@
+{"id":"data-iso-001","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:44:30.746Z"}
+{"id":"contar-vogais-002","tipo":"contar-vogais","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:44:35.234Z"}
+{"id":"inverter-texto-003","tipo":"inverter-texto","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:44:40.390Z"}
+{"id":"regex-digitos-004","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:44:45.147Z"}
+{"id":"data-iso-005","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:44:49.956Z"}
+{"id":"contar-vogais-006","tipo":"contar-vogais","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:44:54.397Z"}
+{"id":"inverter-texto-007","tipo":"inverter-texto","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:44:59.132Z"}
+{"id":"regex-digitos-008","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:45:03.794Z"}
+{"id":"data-iso-009","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:45:08.598Z"}
+{"id":"contar-vogais-010","tipo":"contar-vogais","acertou":true,"motivo":"","data":"2026-10-23T16:45:13.337Z"}
+{"id":"inverter-texto-011","tipo":"inverter-texto","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:45:18.290Z"}
+{"id":"regex-digitos-012","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:45:23.038Z"}
+{"id":"data-iso-013","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:45:27.996Z"}
+{"id":"contar-vogais-014","tipo":"contar-vogais","acertou":true,"motivo":"","data":"2026-10-23T16:45:32.649Z"}
+{"id":"inverter-texto-015","tipo":"inverter-texto","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:45:37.255Z"}
+{"id":"regex-digitos-016","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:45:42.074Z"}
+{"id":"data-iso-017","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:45:46.997Z"}
+{"id":"contar-vogais-018","tipo":"contar-vogais","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:45:51.503Z"}
+{"id":"inverter-texto-019","tipo":"inverter-texto","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:45:56.189Z"}
+{"id":"regex-digitos-020","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:46:00.791Z"}
+{"id":"data-iso-021","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:46:05.474Z"}
+{"id":"contar-vogais-022","tipo":"contar-vogais","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:46:09.929Z"}
+{"id":"inverter-texto-023","tipo":"inverter-texto","acertou":true,"motivo":"","data":"2026-10-23T16:46:14.479Z"}
+{"id":"regex-digitos-024","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:46:18.999Z"}
+{"id":"data-iso-025","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:46:23.750Z"}
+{"id":"contar-vogais-026","tipo":"contar-vogais","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:46:28.273Z"}
+{"id":"inverter-texto-027","tipo":"inverter-texto","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:46:32.743Z"}
+{"id":"regex-digitos-028","tipo":"regex-digitos","acertou":true,"motivo":"","data":"2026-10-23T16:46:37.363Z"}
+{"id":"data-iso-029","tipo":"data-iso","acertou":true,"motivo":"","data":"2026-10-23T16:46:42.068Z"}
+{"id":"contar-vogais-030","tipo":"contar-vogais","acertou":false,"motivo":"saiu com 1","data":"2026-10-23T16:46:46.508Z"}
