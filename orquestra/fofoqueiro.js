@@ -7,7 +7,7 @@ const grafoApi = require('./grafo.js');
 const configPadrao = require('./fofoqueiro.json');
 
 const RAIZ = path.resolve(__dirname, '..');
-const PASTA_CANAL = process.env.MIXAI_CANAL_DIR || path.join('D:', 'MixAI-coordenacao');
+const PASTA_CANAL = process.env.MIXAI_CANAL_DIR || path.join('D:', 'MixAI', '.coordenacao');
 const ARQ_CANAL = path.join(PASTA_CANAL, 'coordenacao.md');
 const ARQ_ESTADO = path.join(PASTA_CANAL, 'fofoqueiro-estado.json');
 const ARQ_LOG = path.join(PASTA_CANAL, 'fofoqueiro.log');

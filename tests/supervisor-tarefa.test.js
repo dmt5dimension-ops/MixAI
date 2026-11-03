@@ -20,8 +20,8 @@ test("inicia no login e reinicia se cair", () => {
   assert.match(script, /-MultipleInstances IgnoreNew/);
 });
 
-test("o log fica em D:\\MixAI-coordenacao, separado do canal, sem criar cópia do canal", () => {
-  assert.match(script, /D:\\MixAI-coordenacao/);
+test("o log fica em D:\\MixAI\\.coordenacao, separado do canal, sem criar cópia do canal", () => {
+  assert.match(script, /D:\\MixAI\\\.coordenacao/);
   assert.match(script, /supervisor-tarefa\.log/);
   assert.doesNotMatch(script, /coordenacao\.md/);
 });

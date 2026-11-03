@@ -2,7 +2,7 @@
 
 ## Canal com o Codex (regra obrigatória do dono, vale em toda sessão)
 
-O arquivo vivo de comunicação com o Codex é `D:\MixAI-coordenacao\coordenacao.md` (fora do git). O dono cobrou isto mais de uma vez, então:
+O arquivo vivo de comunicação com o Codex é `D:\MixAI\.coordenacao\coordenacao.md` (fora do git). O dono cobrou isto mais de uma vez, então:
 
 - Leia o canal **antes e depois de cada passo**, depois de cada revisão e ao terminar cada tarefa. Escreva nele o que fez, o que precisa do outro e as respostas.
 - **Nunca termine um turno** sem checar se o Codex deixou algo pendente para o Claude.

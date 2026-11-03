@@ -1,10 +1,10 @@
 # Registra (ou remove) a tarefa agendada do Windows que mantém o supervisor (orquestra/fofoqueiro.js) rodando.
-# Inicia no login, reinicia se cair e grava a saída num log próprio em D:\MixAI-coordenacao (não é o canal).
+# Inicia no login, reinicia se cair e grava a saída num log próprio em D:\MixAI\.coordenacao (não é o canal).
 # Uso: powershell -ExecutionPolicy Bypass -File ferramentas\supervisor-tarefa.ps1
 #      powershell -ExecutionPolicy Bypass -File ferramentas\supervisor-tarefa.ps1 -Remover
 param(
   [switch]$Remover,
-  [string]$PastaLog = 'D:\MixAI-coordenacao'
+  [string]$PastaLog = 'D:\MixAI\.coordenacao'
 )
 
 $ErrorActionPreference = 'Stop'
