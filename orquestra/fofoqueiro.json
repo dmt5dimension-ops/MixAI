@@ -1,0 +1,14 @@
+{
+  "repo": "dmt5dimension-ops/MixAI",
+  "intervaloSegundos": 30,
+  "intervaloGhSegundos": 120,
+  "maxDisparosPorHora": 4,
+  "esperaMinimaMinutos": 3,
+  "tempoMaximoDisparoMinutos": 45,
+  "noite": { "inicio": 22, "fim": 7 },
+  "resumoLocalDeNoite": true,
+  "comandos": {
+    "claude": "claude -p --output-format json --permission-mode acceptEdits --allowedTools \"Bash(git:*)\" \"Bash(gh:*)\" \"Bash(npm:*)\" \"Bash(node:*)\"",
+    "codex": "codex exec -s workspace-write -"
+  }
+}
