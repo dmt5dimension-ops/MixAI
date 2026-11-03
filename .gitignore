@@ -5,3 +5,7 @@ orquestra/grafo.json.lock.*
 orquestra/grafo.json.*.tmp
 docs/memoria/mapa.json
 docs/memoria/mapa.md
+
+# Fora do git, mas dentro da pasta única do projeto (regra do dono, 03/11/2026)
+.coordenacao/
+ferramentas/mcp-local-llm/

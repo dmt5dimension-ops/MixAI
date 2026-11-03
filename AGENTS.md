@@ -114,7 +114,7 @@ Quem implementa nunca aprova o próprio trabalho.
 
 ## Canal de coordenação entre Claude e Codex
 
-O dono não faz de pombo-correio entre os dois agentes. O canal fixo é `D:\MixAI-coordenacao\coordenacao.md`, um arquivo fora do git, que os dois leem e escrevem sem commit e sem trocar de branch (a cópia em `docs/memoria/coordenacao.md` é só registro).
+O dono não faz de pombo-correio entre os dois agentes. O canal fixo é `D:\MixAI\.coordenacao\coordenacao.md`, um arquivo fora do git, que os dois leem e escrevem sem commit e sem trocar de branch (a cópia em `docs/memoria/coordenacao.md` é só registro).
 
 - Leia o canal **antes e depois** de cada etapa, depois de cada revisão e ao terminar cada passo.
 - Escreva nele uma seção por mensagem (data, de quem para quem): o que está fazendo, o que precisa do outro, o que respondeu.

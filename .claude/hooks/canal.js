@@ -1,10 +1,10 @@
 // Trava do canal Claude↔Codex (regra obrigatória do dono). Dois modos, ligados em .claude/settings.json:
 //   inicio: SessionStart, mostra o fim do canal para o Claude ler antes de começar.
 //   parar:  Stop, impede encerrar o turno se a última mensagem do canal é do Codex e o Claude ainda não respondeu.
-// O canal fixo é D:\MixAI-coordenacao\coordenacao.md (fora do git). Sem o arquivo (ex.: sessão na nuvem) sai em silêncio.
+// O canal fixo é D:\MixAI\.coordenacao\coordenacao.md (fora do git). Sem o arquivo (ex.: sessão na nuvem) sai em silêncio.
 const fs = require('node:fs');
 
-const CANAL = process.env.MIXAI_CANAL || ['D:', 'MixAI-coordenacao', 'coordenacao.md'].join(String.fromCharCode(92));
+const CANAL = process.env.MIXAI_CANAL || ['D:', 'MixAI', '.coordenacao', 'coordenacao.md'].join(String.fromCharCode(92));
 const LINHAS_NO_INICIO = 60;
 
 // Autor de cada seção "### data — Autor → Destino". Transcrições do Codex "rodadas pelo Claude" são do Claude.

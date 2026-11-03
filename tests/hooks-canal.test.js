@@ -63,7 +63,7 @@ test("script de linha de comando: inicio mostra o fim do canal; parar bloqueia c
 
 test("regra global do Codex: o repositório guarda o texto que vai para ~/.codex/AGENTS.md", () => {
   const texto = fs.readFileSync(path.join(RAIZ, "ferramentas", "codex-agents-global.md"), "utf8");
-  assert.ok(texto.includes(["D:", "MixAI-coordenacao", "coordenacao.md"].join(String.fromCharCode(92))));
+  assert.ok(texto.includes(["D:", "MixAI", ".coordenacao", "coordenacao.md"].join(String.fromCharCode(92))));
   assert.match(texto, /antes e depois/i);
 });
 
